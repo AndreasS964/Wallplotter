@@ -105,3 +105,50 @@ def test_parse_status_rejects_garbage():
 def test_status_via_client():
     api, _ = client(text="<Idle|MPos:1.000,2.000,0.000>")
     assert api.status().position == (1.0, 2.0, 0.0)
+
+
+def test_jog_is_relative_and_metric():
+    api, session = client()
+    api.jog(dx=-100, dy=25, feed=800)
+    assert session.calls[0][2] == {"plain": "$J=G91 G21 X-100.000 Y25.000 F800"}
+
+
+def test_jog_to_is_absolute():
+    api, session = client()
+    api.jog_to(1200, 300)
+    assert session.calls[0][2]["plain"].startswith("$J=G90 G21 X1200.000 Y300.000")
+
+
+def test_jog_without_movement_is_rejected():
+    api, _ = client()
+    with pytest.raises(FluidNCError, match="ohne Weg"):
+        api.jog()
+
+
+def test_jog_without_feed_is_rejected():
+    api, _ = client()
+    with pytest.raises(FluidNCError, match="Vorschub"):
+        api.jog(dx=10, feed=0)
+
+
+def test_jog_cancel_sends_the_realtime_byte():
+    api, session = client()
+    api.jog_cancel()
+    assert session.calls[0][2] == {"plain": "\x85"}
+
+
+def test_set_zero_uses_g92():
+    api, session = client()
+    api.set_zero()
+    assert session.calls[0][2] == {"plain": "G92 X0 Y0"}
+
+
+def test_position_returns_xy():
+    api, _ = client(text="<Idle|MPos:120.500,340.000,0.000>")
+    assert api.position() == (120.5, 340.0)
+
+
+def test_position_without_data_raises():
+    api, _ = client(text="<Idle|FS:0,0>")
+    with pytest.raises(FluidNCError, match="ohne Position"):
+        api.position()

@@ -46,6 +46,15 @@ class PlotConfig:
     margin_mm: float = 50.0
     """Rand, der auf allen vier Seiten frei bleibt."""
 
+    origin_x_mm: float = 0.0
+    origin_y_mm: float = 0.0
+    """Untere linke Ecke der Zeichenfläche in Maschinenkoordinaten.
+
+    Wo die Fläche tatsächlich liegt, hängt an der Aufhängung und steht erst
+    nach dem Kalibrieren fest (siehe :mod:`wallplotter.calibration`). Bis
+    dahin fällt sie mit dem Maschinennullpunkt zusammen.
+    """
+
     draw_feed: float = 1500.0
     """Vorschub bei Stift-auf-Wand (G1)."""
 

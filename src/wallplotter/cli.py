@@ -39,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Geometrie ist bereits in Maschinenkoordinaten, nicht einpassen",
     )
     area.add_argument(
+        "--calibration",
+        type=Path,
+        help="Fläche aus einer Kalibrierdatei nehmen (überschreibt --width/--height)",
+    )
+    area.add_argument(
         "--no-invert-y",
         action="store_true",
         help="Y-Achse nicht spiegeln (Standard: SVG oben links → Maschine unten links)",
@@ -108,6 +113,19 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
+    if args.calibration:
+        from .calibration import AreaCalibration, CalibrationError  # noqa: PLC0415
+
+        try:
+            plot_config = AreaCalibration.load(args.calibration).to_plot_config(plot_config)
+        except CalibrationError as exc:
+            print(str(exc), file=sys.stderr)
+            return 6
+        print(
+            f"Kalibrierte Fläche: {plot_config.width_mm:.0f} × {plot_config.height_mm:.0f} mm "
+            f"ab X{plot_config.origin_x_mm:.1f} Y{plot_config.origin_y_mm:.1f}"
+        )
+
     optimize_kwargs = {
         "simplify_tolerance_mm": args.simplify,
         "merge_tolerance_mm": args.merge,
@@ -155,13 +173,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"GCode geschrieben: {out_path}")
 
     if args.preview:
-        # ungespiegelt, weil SVG wie die Zeichnung den Ursprung oben links hat
+        # ungespiegelt und ohne Flächenversatz — SVG hat wie die Zeichnung den
+        # Ursprung oben links, und die Maschinenkoordinaten helfen beim Ansehen nicht
         preview_lines = prepare_geometry(
-            lines, plot_config, fit=not args.no_fit, invert_y=False
+            lines, plot_config, fit=not args.no_fit, invert_y=False, apply_origin=False
         )
         args.preview.write_text(
             lines_to_svg(
-                preview_lines, args.width, args.height, travel_stroke="#d64545"
+                preview_lines,
+                plot_config.width_mm,
+                plot_config.height_mm,
+                travel_stroke="#d64545",
             ),
             encoding="utf-8",
         )

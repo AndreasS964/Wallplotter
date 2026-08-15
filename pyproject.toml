@@ -27,6 +27,8 @@ dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [project.scripts]
 plot = "wallplotter.cli:main"
+wallplotter-calibrate = "wallplotter.calibrate_cli:main"
+wallplotter-kinematics = "wallplotter.kinematics:main"
 
 [project.urls]
 Repository = "https://github.com/AndreasS964/Wallplotter"

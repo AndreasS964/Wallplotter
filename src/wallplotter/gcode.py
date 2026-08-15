@@ -18,6 +18,7 @@ from .geometry import (
     estimate_duration_s,
     fit_to_area,
     flip_y,
+    transform,
     travel_length,
 )
 
@@ -30,13 +31,15 @@ def prepare_geometry(
     *,
     fit: bool = True,
     invert_y: bool | None = None,
+    apply_origin: bool = True,
 ) -> Lines:
-    """Rohlinien in Plot-Geometrie überführen: einpassen und ggf. spiegeln.
+    """Rohlinien in Plot-Geometrie überführen: einpassen, spiegeln, versetzen.
 
     Damit rechnen GCode-Export, Statistik und Vorschau auf derselben Geometrie
     — sonst weicht z. B. die geschätzte Plotdauer von der tatsächlichen ab.
-    Für die Vorschau ``invert_y=False`` setzen: SVG hat wie die Zeichnung den
-    Ursprung oben links, nur die Maschine nicht.
+    Für die Vorschau ``invert_y=False`` und ``apply_origin=False`` setzen: SVG
+    hat wie die Zeichnung den Ursprung oben links, und der Versatz der Fläche
+    in Maschinenkoordinaten interessiert dort nicht.
     """
     cfg = config or PlotConfig()
     geometry: Lines = [list(line) for line in lines if len(line) >= 2]
@@ -46,6 +49,8 @@ def prepare_geometry(
         )
     if cfg.invert_y if invert_y is None else invert_y:
         geometry = flip_y(geometry, cfg.height_mm)
+    if apply_origin and (cfg.origin_x_mm or cfg.origin_y_mm):
+        geometry = transform(geometry, 1.0, cfg.origin_x_mm, cfg.origin_y_mm)
     return geometry
 
 

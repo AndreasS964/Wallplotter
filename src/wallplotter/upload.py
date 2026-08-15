@@ -156,6 +156,39 @@ class FluidNCClient:
         """Soft-Reset (Ctrl-X) — bricht einen laufenden SD-Job ab."""
         return self.send_command("\x18")
 
+    # -- Jog & Kalibrierung -----------------------------------------------
+
+    def jog(self, dx: float = 0.0, dy: float = 0.0, feed: float = 1000.0) -> str:
+        """Relativ verfahren (GRBL-Jog).
+
+        ``$J=`` läuft an der Jobsteuerung vorbei und lässt sich mit
+        :meth:`jog_cancel` sauber abbrechen — anders als ein normales ``G1``.
+        """
+        if dx == 0 and dy == 0:
+            raise FluidNCError("Jog ohne Weg")
+        if feed <= 0:
+            raise FluidNCError("Jog braucht einen Vorschub > 0")
+        return self.send_command(f"$J=G91 G21 X{dx:.3f} Y{dy:.3f} F{feed:.0f}")
+
+    def jog_to(self, x: float, y: float, feed: float = 1000.0) -> str:
+        """Absolut verfahren, ohne den Stift abzusetzen."""
+        return self.send_command(f"$J=G90 G21 X{x:.3f} Y{y:.3f} F{feed:.0f}")
+
+    def jog_cancel(self) -> str:
+        """Laufende Jog-Bewegung abbrechen (Realtime-Byte 0x85)."""
+        return self.send_command("\x85")
+
+    def set_zero(self) -> str:
+        """Aktuelle Position zum Nullpunkt erklären (Homing per Anschlag)."""
+        return self.send_command("G92 X0 Y0")
+
+    def position(self) -> tuple[float, float]:
+        """Aktuelle XY-Position in Maschinenkoordinaten."""
+        machine = self.status()
+        if machine.position is None:
+            raise FluidNCError(f"Status ohne Position: {machine.raw}")
+        return (machine.position[0], machine.position[1])
+
     # -- intern -----------------------------------------------------------
 
     @staticmethod
