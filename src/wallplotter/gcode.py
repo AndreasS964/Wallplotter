@@ -117,14 +117,20 @@ def lines_to_gcode(
     *,
     fit: bool = True,
     header_comment: str | None = None,
+    feeds: Sequence[float] | None = None,
 ) -> str:
     """Linien (in mm) in ein vollständiges GCode-Programm übersetzen.
 
     Mit ``fit=True`` (Standard) wird die Zeichnung proportional in die
     bezeichnete Fläche abzüglich Rand eingepasst. Ist die Geometrie bereits in
-    Maschinenkoordinaten, ``fit=False`` setzen.
+    Flächenkoordinaten (etwa ein Testmuster), ``fit=False`` setzen.
+
+    ``feeds`` setzt den Vorschub je Linie statt für alle gleich — gedacht für
+    den Vorschub-Test aus :mod:`wallplotter.patterns`.
     """
     cfg = config or PlotConfig()
+    if feeds is not None and len(feeds) != len([line for line in lines if len(line) >= 2]):
+        raise ValueError("feeds muss genauso viele Einträge haben wie es Linien gibt")
     geometry = prepare_geometry(lines, cfg, fit=fit)
     stats = PlotStats(geometry, cfg)
     out: list[str] = []
@@ -142,7 +148,8 @@ def lines_to_gcode(
     travel_cmd = f"G1 F{_fmt(cfg.travel_feed, 1)}" if cfg.travel_as_g1 else "G0"
     pen_is_down = False
 
-    for line in geometry:
+    for index, line in enumerate(geometry):
+        feed = feeds[index] if feeds is not None else cfg.draw_feed
         start_x, start_y = line[0]
         if pen_is_down:
             out.extend(_pen_up(cfg.pen))
@@ -151,9 +158,7 @@ def lines_to_gcode(
         out.extend(_pen_down(cfg.pen))
         pen_is_down = True
 
-        out.append(
-            f"G1 X{_fmt(line[1][0])} Y{_fmt(line[1][1])} F{_fmt(cfg.draw_feed, 1)}"
-        )
+        out.append(f"G1 X{_fmt(line[1][0])} Y{_fmt(line[1][1])} F{_fmt(feed, 1)}")
         for x, y in line[2:]:
             out.append(f"G1 X{_fmt(x)} Y{_fmt(y)}")
 

@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PenConfig, PlotConfig
 from .gcode import lines_to_gcode, prepare_geometry, stats_for
+from .patterns import PATTERNS, build, describe
 from .pipeline import VpypeNotAvailable, image_to_lines, lines_to_svg, svg_to_lines
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
@@ -23,7 +25,18 @@ def build_parser() -> argparse.ArgumentParser:
         prog="plot",
         description="SVG oder Foto in FluidNC-GCode für den Wandplotter übersetzen.",
     )
-    parser.add_argument("input", type=Path, help="SVG- oder Bilddatei")
+    parser.add_argument("input", type=Path, nargs="?", help="SVG- oder Bilddatei")
+    parser.add_argument(
+        "--pattern",
+        choices=sorted(PATTERNS),
+        help="Testmuster statt einer Datei plotten (Maße 1:1, ohne Einpassen)",
+    )
+    parser.add_argument(
+        "--pattern-spacing", type=float, help="Teilung für grid/circles in mm"
+    )
+    parser.add_argument(
+        "--list-patterns", action="store_true", help="verfügbare Testmuster zeigen"
+    )
     parser.add_argument(
         "-o", "--out", type=Path, help="Zieldatei (Standard: <input>.gcode)"
     )
@@ -96,9 +109,17 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    if not args.input.exists():
-        print(f"Datei nicht gefunden: {args.input}", file=sys.stderr)
-        return 2
+    if args.list_patterns:
+        print(describe())
+        return 0
+
+    if not args.pattern:
+        if args.input is None:
+            print("Entweder eine Datei oder --pattern angeben.", file=sys.stderr)
+            return 2
+        if not args.input.exists():
+            print(f"Datei nicht gefunden: {args.input}", file=sys.stderr)
+            return 2
 
     plot_config = PlotConfig(
         width_mm=args.width,
@@ -134,23 +155,47 @@ def main(argv: list[str] | None = None) -> int:
         "remove_hidden": args.occult,
     }
 
-    try:
-        if args.input.suffix.lower() in IMAGE_SUFFIXES:
-            lines = image_to_lines(
-                args.input,
-                pitch_mm=args.pitch,
-                levels=tuple(args.levels),
-                blur=args.blur,
-                image_suffix=args.input.suffix.lower(),
-                **optimize_kwargs,
+    feeds: list[float] | None = None
+    source_name = args.input.name if args.input else ""
+
+    if args.pattern:
+        # Testmuster stehen schon in Flächenkoordinaten und werden nicht eingepasst
+        extra = {"spacing": args.pattern_spacing} if args.pattern_spacing else {}
+        try:
+            pattern = build(
+                args.pattern,
+                plot_config.width_mm,
+                plot_config.height_mm,
+                plot_config.margin_mm,
+                **extra,
             )
-        else:
-            lines = svg_to_lines(
-                args.input, quantization_mm=args.quantization, **optimize_kwargs
-            )
-    except VpypeNotAvailable as exc:
-        print(str(exc), file=sys.stderr)
-        return 3
+        except (KeyError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        lines, feeds, source_name = pattern.lines, pattern.feeds, pattern.name
+        args.no_fit = True
+        # Muster sind bereits in Maschinenkoordinaten (Y nach oben) geschrieben,
+        # anders als SVGs — sonst läge beim Vorschub-Test die langsamste Linie oben
+        plot_config = replace(plot_config, invert_y=False)
+        print(pattern.description)
+    else:
+        try:
+            if args.input.suffix.lower() in IMAGE_SUFFIXES:
+                lines = image_to_lines(
+                    args.input,
+                    pitch_mm=args.pitch,
+                    levels=tuple(args.levels),
+                    blur=args.blur,
+                    image_suffix=args.input.suffix.lower(),
+                    **optimize_kwargs,
+                )
+            else:
+                lines = svg_to_lines(
+                    args.input, quantization_mm=args.quantization, **optimize_kwargs
+                )
+        except VpypeNotAvailable as exc:
+            print(str(exc), file=sys.stderr)
+            return 3
 
     if not lines:
         print("Keine Linien gefunden — falsche Datei oder leeres SVG?", file=sys.stderr)
@@ -160,23 +205,31 @@ def main(argv: list[str] | None = None) -> int:
         lines,
         plot_config,
         fit=not args.no_fit,
-        header_comment=f"Quelle: {args.input.name}",
+        header_comment=f"Quelle: {source_name}",
+        feeds=feeds,
     )
 
     # Statistik auf der Maschinen-Geometrie: die Leerwege zum Nullpunkt hängen
     # an der Spiegelung, sonst weicht die Schätzung vom GCode-Header ab
     machine_lines = prepare_geometry(lines, plot_config, fit=not args.no_fit)
 
-    out_path = args.out or args.input.with_suffix(".gcode")
+    out_path = args.out or (
+        Path(f"{args.pattern}.gcode") if args.pattern else args.input.with_suffix(".gcode")
+    )
     out_path.write_text(gcode, encoding="utf-8")
     print(f"{stats_for(machine_lines, plot_config)}")
     print(f"GCode geschrieben: {out_path}")
 
     if args.preview:
-        # ungespiegelt und ohne Flächenversatz — SVG hat wie die Zeichnung den
-        # Ursprung oben links, und die Maschinenkoordinaten helfen beim Ansehen nicht
+        # Vorschau-SVG hat den Ursprung oben links: eine SVG-Vorlage bleibt also
+        # unangetastet, ein Muster in Maschinenkoordinaten muss dafür gespiegelt
+        # werden. Der Flächenversatz hilft beim Ansehen nicht.
         preview_lines = prepare_geometry(
-            lines, plot_config, fit=not args.no_fit, invert_y=False, apply_origin=False
+            lines,
+            plot_config,
+            fit=not args.no_fit,
+            invert_y=bool(args.pattern),
+            apply_origin=False,
         )
         args.preview.write_text(
             lines_to_svg(
