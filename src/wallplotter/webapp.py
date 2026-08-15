@@ -20,10 +20,12 @@ from dataclasses import replace
 from .calibration import CORNERS, AreaCalibration
 from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PenConfig, PlotConfig
 from .gcode import lines_to_gcode, prepare_geometry, stats_for
+from .imaging import TECHNIQUES, ImagingError
+from .imaging import image_to_lines as image_lines
 from .location import DEFAULT_PATH as LOCATIONS_PATH
 from .location import Location, LocationBook, LocationError
 from .patterns import PATTERNS, build
-from .pipeline import VpypeNotAvailable, image_to_lines, lines_to_svg, svg_to_lines
+from .pipeline import VpypeNotAvailable, lines_to_svg, svg_to_lines
 from .upload import FluidNCClient, FluidNCError
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
@@ -103,19 +105,45 @@ class WallplotterUI:
     # -- Zeichnung laden --------------------------------------------------
 
     def load_upload(self, event) -> None:
-        data = event.content.read()
-        suffix = os.path.splitext(event.name)[1].lower()
+        self.upload_data = event.content.read()
+        self.upload_name = event.name
+        self.render_upload()
+
+    def render_upload(self) -> None:
+        """Hochgeladene Vorlage (neu) übersetzen — auch beim Verfahrenswechsel."""
+        if not getattr(self, "upload_data", None):
+            return
+        suffix = os.path.splitext(self.upload_name)[1].lower()
+        config = self.plot_config()
         try:
             if suffix in IMAGE_SUFFIXES:
-                self.lines = image_to_lines(data, pitch_mm=self.pitch.value, image_suffix=suffix)
+                options = {}
+                if self.technique.value in ("hatch", "spiral"):
+                    options["pitch_mm"] = self.pitch.value
+                self.lines = image_lines(
+                    self.upload_data,
+                    config.width_mm,
+                    config.height_mm,
+                    self.technique.value,
+                    margin_mm=config.margin_mm,
+                    image_suffix=suffix,
+                    **options,
+                )
+                # Bildverfahren rechnen selbst in Millimetern
+                self.source_is_pattern = False
+                self.fit_source = False
+                name = f"{self.upload_name} ({self.technique.value})"
             else:
-                self.lines = svg_to_lines(data)
-        except VpypeNotAvailable as exc:
+                self.lines = svg_to_lines(self.upload_data)
+                self.fit_source = True
+                self.source_is_pattern = False
+                name = self.upload_name
+        except (VpypeNotAvailable, ImagingError) as exc:
             self.ui.notify(str(exc), type="negative", multi_line=True)
             return
-        self.feeds, self.source_name, self.source_is_pattern = None, event.name, False
+        self.feeds, self.source_name = None, name
         self.regenerate()
-        self.ui.notify(f"{len(self.lines)} Linien optimiert", type="positive")
+        self.ui.notify(f"{len(self.lines)} Linien", type="positive")
 
     def load_pattern(self, name: str) -> None:
         config = self.plot_config()
@@ -126,6 +154,7 @@ class WallplotterUI:
             return
         self.lines, self.feeds = pattern.lines, pattern.feeds
         self.source_name, self.source_is_pattern = pattern.name, True
+        self.fit_source = False
         self.regenerate()
         self.ui.notify(pattern.description, multi_line=True)
 
@@ -133,7 +162,7 @@ class WallplotterUI:
         if not self.lines:
             return
         config = self.plot_config()
-        fit = not self.source_is_pattern
+        fit = getattr(self, "fit_source", True) and not self.source_is_pattern
         self.gcode = lines_to_gcode(
             self.lines, config, fit=fit, header_comment=self.source_name, feeds=self.feeds
         )
@@ -362,9 +391,20 @@ class WallplotterUI:
                     self.pen_dwell = ui.number("Servo-Wartezeit s", value=0.25, step=0.05).props(
                         "dense outlined"
                     )
-                    self.pitch = ui.number("Schraffur-Pitch mm", value=3.0, step=0.5).props(
+                    self.technique = (
+                        ui.select(
+                            {name: f"{name} — {text.split(' — ')[0]}" for name, text in TECHNIQUES.items()},
+                            value="spiral",
+                            label="Verfahren für Fotos",
+                            on_change=lambda _: self.render_upload(),
+                        )
+                        .props("dense outlined")
+                        .tooltip("tsp und spiral zeichnen ohne Stiftheben")
+                    )
+                    self.pitch = ui.number("Bahnabstand mm", value=25.0, step=1.0).props(
                         "dense outlined"
                     )
+                    self.pitch.on_value_change(lambda _: self.render_upload())
 
                 for field in (
                     self.width,

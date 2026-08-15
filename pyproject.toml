@@ -21,7 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 geometry = ["vpype>=1.14"]
-photo = ["vpype[all]>=1.14", "hatched>=0.3"]
+photo = ["pillow>=10.0", "hatched>=0.2"]
 web = ["nicegui>=2.0"]
 dev = ["pytest>=8.0", "ruff>=0.6", "pyyaml>=6.0"]
 

@@ -20,7 +20,6 @@ from .geometry import Lines
 __all__ = [
     "VpypeNotAvailable",
     "svg_to_lines",
-    "image_to_lines",
     "optimize_commands",
     "lines_to_svg",
 ]
@@ -136,36 +135,16 @@ def svg_to_lines(
             path.unlink(missing_ok=True)
 
 
-def image_to_lines(
-    image: bytes | str | os.PathLike,
-    *,
-    pitch_mm: float = 3.0,
-    levels: tuple[int, int, int] = (64, 128, 192),
-    blur: int = 0,
-    image_suffix: str = ".png",
-    optimize: bool = True,
-    extra_commands: Sequence[str] = (),
-    **optimize_kwargs,
-) -> Lines:
-    """Foto → Schraffur-Linien über das vpype-Plugin ``hatched``.
+def image_to_lines(*args, **kwargs):
+    """Weggezogen nach :mod:`wallplotter.imaging`.
 
-    Stufe 5 der Roadmap. Benötigt ``pip install -e .[photo]``; ohne das Plugin
-    scheitert der Aufruf mit :class:`VpypeNotAvailable`.
+    Der frühere Weg über das vpype-Kommando ``hatched`` funktionierte nicht:
+    das Paket registriert je nach Version gar kein Kommando, sondern nur eine
+    Python-API. Und Schraffur ist ohnehin nur eins von vier Verfahren.
     """
-    path, temporary = _as_temp_file(image, image_suffix)
-    try:
-        levels_arg = " ".join(str(level) for level in levels)
-        commands = [
-            f"hatched --levels {levels_arg} --pitch {pitch_mm}mm "
-            f"--blur {blur} {shlex.quote(str(path))}"
-        ]
-        if optimize:
-            commands += optimize_commands(**optimize_kwargs)
-        commands += list(extra_commands)
-        return _run(commands)
-    finally:
-        if temporary:
-            path.unlink(missing_ok=True)
+    raise NotImplementedError(
+        "Bildverfahren stehen jetzt in wallplotter.imaging.image_to_lines"
+    )
 
 
 def lines_to_svg(

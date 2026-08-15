@@ -74,6 +74,68 @@ def flip_y(lines: Sequence[Line], height_mm: float) -> Lines:
     return [[(x, height_mm - y) for x, y in line] for line in lines]
 
 
+def simplify(line: Sequence[Point], tolerance: float) -> Line:
+    """Douglas-Peucker: Stützpunkte ausdünnen, ohne die Form zu ändern.
+
+    Vpype kann das auch, aber die Bildverfahren erzeugen ihre Punkte selbst und
+    sollen nicht die halbe Toolchain brauchen, nur um gerade Abschnitte
+    loszuwerden.
+    """
+    if tolerance <= 0 or len(line) < 3:
+        return list(line)
+
+    keep = [False] * len(line)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(line) - 1)]
+    while stack:
+        start, end = stack.pop()
+        if end <= start + 1:
+            continue
+        ax, ay = line[start]
+        bx, by = line[end]
+        dx, dy = bx - ax, by - ay
+        length = math.hypot(dx, dy)
+        worst_index, worst_distance = -1, 0.0
+        for index in range(start + 1, end):
+            px, py = line[index]
+            if length == 0:
+                distance = math.hypot(px - ax, py - ay)
+            else:
+                distance = abs(dy * px - dx * py + bx * ay - by * ax) / length
+            if distance > worst_distance:
+                worst_index, worst_distance = index, distance
+        if worst_distance > tolerance:
+            keep[worst_index] = True
+            stack += [(start, worst_index), (worst_index, end)]
+    return [point for point, keeper in zip(line, keep, strict=True) if keeper]
+
+
+def sort_lines(lines: Sequence[Line], start: Point = (0.0, 0.0)) -> Lines:
+    """Linien greedy nach kürzestem Leerweg ordnen, Richtung frei wählbar.
+
+    vpype kann das mit ``linesort`` besser, aber die Bildverfahren erzeugen
+    ihre Geometrie ohne vpype — und ungeordnet kostet eine zerschnittene
+    Spirale mehr Leerweg als Zeichenweg.
+    """
+    remaining = [list(line) for line in lines if len(line) >= 2]
+    ordered: Lines = []
+    position = start
+    while remaining:
+        best_index, best_distance, best_flip = 0, math.inf, False
+        for index, line in enumerate(remaining):
+            for flip in (False, True):
+                head = line[-1] if flip else line[0]
+                distance = math.hypot(head[0] - position[0], head[1] - position[1])
+                if distance < best_distance:
+                    best_index, best_distance, best_flip = index, distance, flip
+        line = remaining.pop(best_index)
+        if best_flip:
+            line.reverse()
+        ordered.append(line)
+        position = line[-1]
+    return ordered
+
+
 def draw_length(lines: Iterable[Line]) -> float:
     """Summierte Strecke mit Stift unten, in mm."""
     total = 0.0

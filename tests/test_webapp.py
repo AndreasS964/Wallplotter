@@ -140,3 +140,39 @@ def test_ui_survives_having_no_location_at_all(tmp_path):
     assert instance.location is None
     instance.record_corner("bottom-left")   # darf nicht abstürzen
     assert instance.plot_config().width_mm == 2000.0
+
+
+def test_photo_technique_can_be_switched(app, tmp_path):
+    """Verfahrenswechsel muss die Vorlage neu übersetzen, nicht nur den Regler drehen."""
+    pytest.importorskip("PIL.Image")
+    from PIL import Image
+
+    image = Image.new("L", (60, 75), 128)
+    path = tmp_path / "foto.png"
+    image.save(path)
+
+    app.upload_data = path.read_bytes()
+    app.upload_name = "foto.png"
+
+    app.technique.set_value("spiral")
+    app.render_upload()
+    assert len(app.lines) >= 1
+    spiral_points = sum(len(line) for line in app.lines)
+
+    app.technique.set_value("tsp")
+    app.render_upload()
+    assert len(app.lines) == 1                      # eine durchgehende Linie
+    assert sum(len(line) for line in app.lines) != spiral_points
+    assert "tsp" in app.source_name
+
+
+def test_photo_geometry_is_not_fitted_again(app, tmp_path):
+    """Bildverfahren liefern schon Millimeter — erneutes Einpassen würde skalieren."""
+    pytest.importorskip("PIL.Image")
+    from PIL import Image
+
+    path = tmp_path / "foto.png"
+    Image.new("L", (60, 75), 100).save(path)
+    app.upload_data, app.upload_name = path.read_bytes(), "foto.png"
+    app.render_upload()
+    assert app.fit_source is False

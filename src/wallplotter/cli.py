@@ -14,8 +14,10 @@ from pathlib import Path
 
 from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PenConfig, PlotConfig
 from .gcode import lines_to_gcode, prepare_geometry, stats_for
+from .imaging import TECHNIQUES, ImagingError, image_to_lines
+from .imaging import describe as describe_techniques
 from .patterns import PATTERNS, build, describe
-from .pipeline import VpypeNotAvailable, image_to_lines, lines_to_svg, svg_to_lines
+from .pipeline import VpypeNotAvailable, lines_to_svg, svg_to_lines
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
@@ -94,12 +96,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--occult", action="store_true", help="verdeckte Linien entfernen (Plugin occult)"
     )
 
-    photo = parser.add_argument_group("Foto-Zweig (Plugin hatched)")
-    photo.add_argument("--pitch", type=float, default=3.0, help="Schraffurabstand in mm")
+    photo = parser.add_argument_group("Foto-Zweig")
     photo.add_argument(
-        "--levels", type=int, nargs=3, default=(64, 128, 192), metavar=("L1", "L2", "L3")
+        "--technique",
+        choices=sorted(TECHNIQUES),
+        default="spiral",
+        help="Verfahren für Bildvorlagen (Standard: spiral)",
     )
-    photo.add_argument("--blur", type=int, default=0)
+    photo.add_argument(
+        "--list-techniques", action="store_true", help="Bildverfahren erklären"
+    )
+    photo.add_argument("--pitch", type=float, help="Bahnabstand in mm (hatch/spiral)")
+    photo.add_argument("--spacing", type=float, help="Punktabstand in Pixeln (stipple/tsp)")
+    photo.add_argument("--dot", type=float, help="Punktlänge in mm (stipple)")
 
     net = parser.add_argument_group("FluidNC")
     net.add_argument("--host", default="fluidnc.local", help="Hostname oder IP")
@@ -117,6 +126,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.list_patterns:
         print(describe())
+        return 0
+
+    if args.list_techniques:
+        print(describe_techniques())
         return 0
 
     if not args.pattern:
@@ -193,19 +206,30 @@ def main(argv: list[str] | None = None) -> int:
     else:
         try:
             if args.input.suffix.lower() in IMAGE_SUFFIXES:
+                options = {}
+                if args.pitch and args.technique in ("hatch", "spiral"):
+                    options["pitch_mm"] = args.pitch
+                if args.spacing and args.technique in ("stipple", "tsp"):
+                    options["spacing_px"] = args.spacing
+                if args.dot and args.technique == "stipple":
+                    options["dot_mm"] = args.dot
                 lines = image_to_lines(
                     args.input,
-                    pitch_mm=args.pitch,
-                    levels=tuple(args.levels),
-                    blur=args.blur,
+                    plot_config.width_mm,
+                    plot_config.height_mm,
+                    args.technique,
+                    margin_mm=plot_config.margin_mm,
                     image_suffix=args.input.suffix.lower(),
-                    **optimize_kwargs,
+                    **options,
                 )
+                # Bildverfahren rechnen selbst in Millimetern
+                args.no_fit = True
+                source_name = f"{args.input.name} ({args.technique})"
             else:
                 lines = svg_to_lines(
                     args.input, quantization_mm=args.quantization, **optimize_kwargs
                 )
-        except VpypeNotAvailable as exc:
+        except (VpypeNotAvailable, ImagingError) as exc:
             print(str(exc), file=sys.stderr)
             return 3
 

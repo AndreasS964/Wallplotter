@@ -94,7 +94,7 @@ zum Riemenspringen).
 ```bash
 plot examples/testmuster.svg --out out/test.gcode --preview out/test-preview.svg
 plot examples/testmuster.svg --host 192.168.1.42 --upload --run
-plot foto.jpg --pitch 2.5 --levels 64 128 192      # Foto-Zweig
+plot foto.jpg --technique tsp                      # Foto-Zweig
 ```
 
 Wichtige Optionen: `--width/--height/--margin` (Fläche in mm), `--draw-feed`,
@@ -134,6 +134,44 @@ gcode = lines_to_gcode(lines, PlotConfig(width_mm=2000, height_mm=2500, margin_m
 upload_and_run(gcode, "bild.gcode")
 ```
 
+## Druckqualität
+
+Nachgerechnet mit der eigenen Kinematik (`docs/kinematik.md`): Die Auflösung
+(0,013 mm) und die Segmentierung (0,0003 mm) sind *nicht* der Flaschenhals —
+die **Riemendehnung** ist es, mit 0,12 bis 0,83 mm über die Fläche. Daraus
+folgt:
+
+* **Riemen mit Stahlkern** statt Glasfaser drückt das um Faktor 5. Der
+  billigste und wirksamste Hebel, und einer, der vor dem Kauf entschieden
+  werden will.
+* `wallplotter.correction` rechnet den Rest gegen: entweder physikalisch aus
+  den Zugkräften (`StretchCorrection`, ein Materialwert, aus Messpunkten
+  bestimmbar) oder empirisch aus einem nachgemessenen Raster
+  (`MeasuredCorrection`, Polynom bis Grad 3). Das Modell gewinnt deutlich —
+  ein angepasster Materialwert schlägt zehn Polynomkoeffizienten.
+* Die Gondel ist ein **Pendel** mit 1,3–2 Hz. Trifft die Umkehrfrequenz einer
+  Schraffur diesen Bereich, werden die Linien wellig; `wallplotter.motion`
+  warnt vorher und nennt zwei Auswege.
+
+### Verfahren für Fotos
+
+Für Bildvorlagen entscheidet das Verfahren mehr als die Mechanik:
+
+```bash
+plot --list-techniques
+plot foto.jpg --technique spiral --pitch 25
+```
+
+| Verfahren | Charakter | Stifthübe |
+| --- | --- | --- |
+| `hatch` | Schraffur nach Helligkeitsstufen, grafisch | viele |
+| `stipple` | Punktraster, fotografisch | einer je Punkt |
+| `tsp` | dieselben Punkte als eine durchgehende Linie | keine |
+| `spiral` | Spirale mit dunkelheitsabhängiger Auslenkung | keine |
+
+`tsp` und `spiral` zeichnen ohne abzusetzen — damit entfallen Servo-Artefakte
+und die Pendelstöße durch Leerfahrten ganz.
+
 ## Aufbau
 
 | Modul | Aufgabe |
@@ -147,6 +185,9 @@ upload_and_run(gcode, "bild.gcode")
 | `wallplotter.calibration` | angefahrene Ecken → nutzbare Fläche mit Versatz |
 | `wallplotter.location` | Standorte: Ankermaße + Fläche je Aufhängung |
 | `wallplotter.patterns` | Testmuster für die Erstinbetriebnahme |
+| `wallplotter.imaging` | Fotos → Linien: hatch, stipple, tsp, spiral |
+| `wallplotter.correction` | Vorverzerrung gegen Riemendehnung und Messfehler |
+| `wallplotter.motion` | Pendelresonanz, positionsabhängiger Vorschub |
 | `wallplotter.cli` | Stufe 2 der Roadmap |
 | `wallplotter.calibrate_cli` | Jog, Nullpunkt, Ecken aufnehmen |
 | `wallplotter.location_cli` | Standorte anlegen, wechseln, Kinematikblock ausgeben |
