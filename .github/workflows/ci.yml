@@ -1,9 +1,10 @@
 name: CI
 
 on:
+  # bewusst ohne Branch-Filter: läuft auf jedem Push, egal wie der
+  # Default-Branch gerade heißt. Die Ergebnisse hängen am Commit und
+  # tauchen damit auch in einem PR auf.
   push:
-    branches: ["main"]
-  pull_request:
   workflow_dispatch:
 
 jobs:
