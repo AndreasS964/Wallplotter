@@ -19,6 +19,8 @@ from pathlib import Path
 
 from .calibration import CORNERS, AreaCalibration, CalibrationError
 from .config import FluidNCConfig
+from .location import DEFAULT_PATH as LOCATION_PATH
+from .location import LocationBook, LocationError
 from .upload import FluidNCClient, FluidNCError
 
 
@@ -28,7 +30,13 @@ def build_parser() -> argparse.ArgumentParser:
         description="Zeichenfläche durch Anfahren der Ecken ausmessen.",
     )
     parser.add_argument("--host", default="fluidnc.local")
-    parser.add_argument("--file", type=Path, default=Path("calibration.json"))
+    parser.add_argument(
+        "--file",
+        type=Path,
+        help="Kalibrierdatei — ohne Angabe geht es in den aktiven Standort",
+    )
+    parser.add_argument("--locations", type=Path, default=LOCATION_PATH)
+    parser.add_argument("--location", help="Standort, falls nicht der aktive gemeint ist")
     parser.add_argument("--feed", type=float, default=1000.0, help="Jog-Vorschub in mm/min")
 
     sub = parser.add_subparsers(dest="command", required=True)
@@ -53,11 +61,35 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _load(path: Path) -> AreaCalibration:
-    try:
-        return AreaCalibration.load(path)
-    except CalibrationError:
-        return AreaCalibration()
+class _Store:
+    """Kalibrierung liegt entweder in einer eigenen Datei oder im Standort.
+
+    Der Standort ist der Normalfall — nur so gehören Ankermaße und Fläche
+    zusammen. Die Einzeldatei bleibt für schnelle Versuche.
+    """
+
+    def __init__(self, args) -> None:
+        self.path = args.file
+        self.book = None if args.file else LocationBook.load(args.locations)
+        self.locations_path = args.locations
+        self.location_name = args.location
+
+    def load(self) -> AreaCalibration:
+        if self.book is None:
+            try:
+                return AreaCalibration.load(self.path)
+            except CalibrationError:
+                return AreaCalibration()
+        return self.book.get(self.location_name).calibration
+
+    def save(self, calibration: AreaCalibration) -> str:
+        if self.book is None:
+            calibration.save(self.path)
+            return str(self.path)
+        location = self.book.get(self.location_name)
+        location.calibration = calibration
+        self.book.save(self.locations_path)
+        return f"Standort {location.name}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -81,11 +113,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "record":
-            calibration = _load(args.file)
+            store = _Store(args)
+            calibration = store.load()
             position = tuple(args.at) if args.at else client.position()
             calibration.record(args.corner, position)
-            calibration.save(args.file)
-            print(f"{args.corner} bei X{position[0]:.1f} Y{position[1]:.1f} gespeichert.")
+            target = store.save(calibration)
+            print(f"{args.corner} bei X{position[0]:.1f} Y{position[1]:.1f} → {target}")
             if calibration.complete:
                 print(calibration.summary())
             else:
@@ -93,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "goto":
-            calibration = AreaCalibration.load(args.file)
+            calibration = _Store(args).load()
             if args.corner not in calibration.points:
                 print(f"{args.corner} ist nicht kalibriert.", file=sys.stderr)
                 return 4
@@ -103,15 +136,16 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "show":
-            print(AreaCalibration.load(args.file).summary())
+            print(_Store(args).load().summary())
             return 0
 
         if args.command == "clear":
-            args.file.unlink(missing_ok=True)
-            print(f"{args.file} gelöscht.")
+            store = _Store(args)
+            store.save(AreaCalibration())
+            print("Kalibrierung verworfen.")
             return 0
 
-    except CalibrationError as exc:
+    except (CalibrationError, LocationError) as exc:
         print(str(exc), file=sys.stderr)
         return 3
     except FluidNCError as exc:

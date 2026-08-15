@@ -22,19 +22,22 @@ kinematics:
     left_axis: 0
     right_axis: 1
 
-    # Ankerpunkte in Maschinenkoordinaten, gemessen vom Maschinennullpunkt.
-    # Der Nullpunkt entsteht beim Referenzieren per Anschlag + G92 (siehe unten),
-    # liegt also dort, wo die Gondel am oberen Anschlag steht.
+    # STANDORTABHÄNGIG — diese vier Zeilen gehören nicht ins Repo, sondern zur
+    # jeweiligen Aufhängung. Der Plotter soll an verschiedenen Wänden hängen,
+    # und damit ändern sich Ankerabstand und -höhe jedes Mal.
     #
-    # PRÜFEN: Diese Werte gelten für die Startgeometrie aus docs/kinematik.md
-    # (Anker 150 mm seitlich neben und 150 mm über der 2000x2500-Fläche, Gondel
-    # startet mittig unter den Ankern). Nach der Wandmontage nachmessen und
-    # ersetzen — die Auswertung dort zeigt: mehr Höhe über der Fläche hilft
-    # deutlich mehr als mehr seitlicher Überstand.
+    # Nach dem Aufhängen drei Maße nehmen (Gondel am Referenzpunkt, G92 gesetzt):
+    # Abstand der Umlenkpunkte, linke Riemenlänge, rechte Riemenlänge. Dann:
+    #
+    #   wallplotter-location new <Name> --span 2300 --left 1450 --right 1470
+    #   wallplotter-location config <Name>
+    #
+    # Das gibt genau diesen Block mit den passenden Zahlen aus. Die Werte unten
+    # sind nur ein Beispiel für eine symmetrische Aufhängung.
     left_anchor_x: -1150.000
-    left_anchor_y: 0.000
+    left_anchor_y: 900.000
     right_anchor_x: 1150.000
-    right_anchor_y: 0.000
+    right_anchor_y: 900.000
 
     # Länge, in die FluidNC gerade Strecken zerlegt. Kleiner = runder, aber
     # mehr Rechenlast. 1 mm ist bei 2,5 m Wand ein guter Kompromiss.

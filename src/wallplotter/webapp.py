@@ -17,9 +17,11 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
-from .calibration import CORNERS, AreaCalibration, CalibrationError
+from .calibration import CORNERS, AreaCalibration
 from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PenConfig, PlotConfig
 from .gcode import lines_to_gcode, prepare_geometry, stats_for
+from .location import DEFAULT_PATH as LOCATIONS_PATH
+from .location import Location, LocationBook, LocationError
 from .patterns import PATTERNS, build
 from .pipeline import VpypeNotAvailable, image_to_lines, lines_to_svg, svg_to_lines
 from .upload import FluidNCClient, FluidNCError
@@ -49,19 +51,32 @@ class WallplotterUI:
     Verbindung an einer Stelle liegen — die drei Reiter greifen alle darauf zu.
     """
 
-    def __init__(self, ui, host: str = "fluidnc.local", calibration_path: str = "calibration.json"):
+    def __init__(self, ui, host: str = "fluidnc.local", locations_path: str = str(LOCATIONS_PATH)):
         self.ui = ui
         self.host = host
-        self.calibration_path = calibration_path
+        self.locations_path = locations_path
         self.lines: list = []
         self.feeds: list[float] | None = None
         self.source_name = ""
         self.source_is_pattern = False
         self.gcode: str | None = None
+        self.book = LocationBook.load(locations_path)
+
+    @property
+    def location(self) -> Location | None:
+        """Der aktive Standort, falls schon einer angelegt ist."""
         try:
-            self.calibration = AreaCalibration.load(calibration_path)
-        except CalibrationError:
-            self.calibration = AreaCalibration()
+            return self.book.get()
+        except LocationError:
+            return None
+
+    @property
+    def calibration(self) -> AreaCalibration:
+        location = self.location
+        return location.calibration if location else AreaCalibration()
+
+    def save_book(self) -> None:
+        self.book.save(self.locations_path)
 
     # -- Konfiguration ----------------------------------------------------
 
@@ -179,8 +194,11 @@ class WallplotterUI:
         except Exception as exc:
             self.ui.notify(f"Position nicht lesbar: {exc}", type="negative")
             return
+        if self.location is None:
+            self.ui.notify("Erst einen Standort anlegen", type="warning")
+            return
         self.calibration.record(corner, position)
-        self.calibration.save(self.calibration_path)
+        self.save_book()
         self.refresh_calibration()
         self.ui.notify(f"{corner} bei X{position[0]:.0f} Y{position[1]:.0f}", type="positive")
 
@@ -194,11 +212,53 @@ class WallplotterUI:
         )
 
     def clear_calibration(self) -> None:
-        self.calibration = AreaCalibration()
-        self.calibration.save(self.calibration_path)
+        location = self.location
+        if location is None:
+            return
+        location.calibration = AreaCalibration()
+        self.save_book()
+        self.refresh_calibration()
+
+    # -- Standorte --------------------------------------------------------
+
+    def add_location(self) -> None:
+        try:
+            location = Location(
+                name=self.new_name.value.strip() or "Standort",
+                anchor_span_mm=self.new_span.value or 0,
+                left_belt_zero_mm=self.new_left.value or 0,
+                right_belt_zero_mm=self.new_right.value or 0,
+            )
+        except LocationError as exc:
+            self.ui.notify(str(exc), type="negative", multi_line=True)
+            return
+        self.book.add(location)
+        self.save_book()
+        self.location_select.set_options(sorted(self.book.locations), value=location.name)
+        self.refresh_calibration()
+        self.ui.notify(f"Standort {location.name} angelegt", type="positive")
+
+    def switch_location(self, name: str | None) -> None:
+        if not name:
+            return
+        try:
+            self.book.use(name)
+        except LocationError as exc:
+            self.ui.notify(str(exc), type="negative")
+            return
+        self.save_book()
         self.refresh_calibration()
 
     def refresh_calibration(self) -> None:
+        location = self.location
+        self.location_label.set_text(
+            location.report().splitlines()[2].strip() if location else "Kein Standort angelegt"
+        )
+        self.geometry_label.set_text(
+            "\n".join(location.analysis().verdict(location.kinematics().motor))
+            if location and location.calibration.complete
+            else ""
+        )
         self.calibration_label.set_text(self.calibration.summary())
         for corner, badge in self.corner_badges.items():
             done = corner in self.calibration.points
@@ -234,7 +294,18 @@ class WallplotterUI:
         ui.add_head_html("<style>body{background:#f6f6f7}</style>")
 
         with ui.header().classes("items-center justify-between px-4 py-2"):
-            ui.label("Wandplotter").classes("text-xl font-medium")
+            with ui.row().classes("items-center gap-3"):
+                ui.label("Wandplotter").classes("text-xl font-medium")
+                self.location_select = (
+                    ui.select(
+                        sorted(self.book.locations),
+                        value=self.book.active,
+                        on_change=lambda e: self.switch_location(e.value),
+                    )
+                    .props("dense outlined dark options-dense label-color=white")
+                    .classes("w-40")
+                    .tooltip("Standort — jede Aufhängung hat eigene Ankermaße")
+                )
             with ui.row().classes("items-center gap-2"):
                 self.status_badge = ui.badge("", color="grey").props("rounded")
                 self.status_label = ui.label("—").classes("text-sm")
@@ -361,6 +432,26 @@ class WallplotterUI:
                         "flat size=sm color=negative"
                     )
 
+            with ui.card().classes("w-80 max-lg:w-full"):
+                ui.label("Standort").classes("text-sm text-grey-8")
+                self.location_label = ui.label("").classes("text-xs text-grey")
+                self.geometry_label = ui.label("").classes(
+                    "text-xs whitespace-pre-line text-grey-8"
+                )
+                ui.separator()
+                ui.label("Neue Aufhängung eintragen").classes("text-sm text-grey-8")
+                ui.label(
+                    "Gondel am Referenzpunkt, Nullpunkt gesetzt, dann drei Maße "
+                    "mit dem Zollstock nehmen."
+                ).classes("text-xs text-grey")
+                self.new_name = ui.input("Name").props("dense outlined")
+                self.new_span = ui.number("Abstand der Umlenkpunkte mm").props("dense outlined")
+                self.new_left = ui.number("linker Riemen mm").props("dense outlined")
+                self.new_right = ui.number("rechter Riemen mm").props("dense outlined")
+                ui.button("Standort anlegen", icon="add_location_alt", on_click=self.add_location).props(
+                    "outline"
+                ).classes("w-full")
+
     def _jog_pad(self) -> None:
         ui = self.ui
         ui.label("Gondel bewegen").classes("text-sm text-grey-8")
@@ -416,10 +507,10 @@ class WallplotterUI:
             ).classes("text-xs text-grey")
 
 
-def create_app(host: str = "fluidnc.local", calibration_path: str = "calibration.json"):
+def create_app(host: str = "fluidnc.local", locations_path: str = str(LOCATIONS_PATH)):
     """UI aufbauen und das ``ui``-Modul zurückgeben (Start über :func:`main`)."""
     ui = _require_nicegui()
-    app = WallplotterUI(ui, host, calibration_path)
+    app = WallplotterUI(ui, host, locations_path)
     app.build_ui()
     app.refresh_calibration()
     return ui

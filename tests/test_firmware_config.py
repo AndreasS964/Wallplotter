@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from wallplotter.kinematics import Motor, default_kinematics
+from wallplotter.kinematics import Motor
 
 yaml = pytest.importorskip("yaml")
 
@@ -48,10 +48,12 @@ def test_motor_current_stays_at_the_rated_1_2_amps(config):
         assert driver["hold_amps"] == 1.2
 
 
-def test_anchor_span_matches_the_analysed_geometry(config):
+def test_anchors_are_plausible_and_marked_as_location_specific(config):
     wall = config["kinematics"]["WallPlotter"]
-    span = wall["right_anchor_x"] - wall["left_anchor_x"]
-    assert span == default_kinematics().anchors.span
+    assert wall["right_anchor_x"] > wall["left_anchor_x"]
+    # beide Anker gleich hoch und oberhalb des Nullpunkts
+    assert wall["left_anchor_y"] == wall["right_anchor_y"] > 0
+    assert "STANDORTABHÄNGIG" in CONFIG_PATH.read_text(encoding="utf-8")
 
 
 def test_pen_lift_runs_on_pwm_not_on_a_laser_mode(config):

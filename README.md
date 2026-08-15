@@ -11,6 +11,8 @@ dieses Repo enthält die Software drumherum: SVG oder Foto → optimierte Linien
 * Hardware, Mechanik und Entscheidungen: [`docs/projektidee.md`](docs/projektidee.md)
 * Software-Stufen und UI-Architektur: [`docs/software-roadmap.md`](docs/software-roadmap.md)
 * Nachgerechnete Kinematik (Auflösung, Riemenlängen, Zugkräfte): [`docs/kinematik.md`](docs/kinematik.md)
+  — die Zahlen dort gelten für *eine* Beispielaufhängung; für den echten Aufbau
+  rechnet `wallplotter-location show` dasselbe mit den gemessenen Werten
 * Firmware-Konfiguration: [`config/fluidnc-wallplotter.yaml`](config/fluidnc-wallplotter.yaml)
 
 ## Warum eigener GCode-Export?
@@ -36,29 +38,50 @@ nur das Einlesen von SVG/Bildern braucht vpype.
 
 ## Benutzung
 
-### Fläche einmessen
+### Standort einrichten
 
-Wie groß die bemalbare Fläche wirklich ist, hängt an der Aufhängung — also
-nicht messen, sondern anfahren:
+Der Plotter soll an wechselnden Wänden hängen — Ankerabstand und -höhe sind
+deshalb keine Konstanten, sondern gehören zum jeweiligen Aufbau. Pro Standort
+drei Maße mit dem Zollstock, alles Weitere folgt daraus:
 
 ```bash
-wallplotter-calibrate --host 192.168.1.42 zero          # am Anschlag: Nullpunkt
+wallplotter-calibrate --host 192.168.1.42 zero      # Gondel am Referenzpunkt
+wallplotter-location new Keller --span 2300 --left 1450 --right 1470
+wallplotter-location config Keller                  # Kinematikblock für die config.yaml
+```
+
+`--span` ist der Abstand der beiden Umlenkpunkte, `--left`/`--right` die
+Riemenlängen vom jeweiligen Umlenkpunkt zur Gondel am Nullpunkt. Daraus fallen
+die Ankerkoordinaten per Trilateration heraus — die kommen in die
+`config.yaml`, nicht ins Repo.
+
+`wallplotter-location list` zeigt alle Aufhängungen, `use <Name>` wechselt.
+In der Web-UI steht die Auswahl oben in der Kopfzeile.
+
+### Fläche einmessen
+
+Wie groß die bemalbare Fläche ist, hängt ebenfalls am Aufbau — also nicht
+messen, sondern anfahren:
+
+```bash
 wallplotter-calibrate --host 192.168.1.42 jog --dx -100 # Gondel bewegen
 wallplotter-calibrate --host 192.168.1.42 record bottom-left
 # ... die übrigen drei Ecken, dann:
 wallplotter-calibrate show
-plot bild.svg --calibration calibration.json --upload --run
+plot bild.svg --location --upload --run
 ```
 
-Vier Ecken sind ideal (dann warnt das Tool auch bei schiefer Aufhängung), zwei
-diagonale reichen. Das Ergebnis ist bewusst das größte Rechteck *innerhalb* der
-angefahrenen Punkte: lieber etwas kleiner als neben der Wand.
+Die Ecken landen im aktiven Standort. Vier sind ideal (dann warnt das Tool auch
+bei schiefer Aufhängung), zwei diagonale reichen. Das Ergebnis ist bewusst das
+größte Rechteck *innerhalb* der angefahrenen Punkte: lieber etwas kleiner als
+neben der Wand. `wallplotter-location show` rechnet dann Auflösung, Riemenkräfte
+und Riemenlänge für genau diese Fläche durch.
 
 ### Testmuster
 
 ```bash
 plot --list-patterns
-plot --pattern frame --calibration calibration.json --upload --run
+plot --pattern frame --location --upload --run
 plot --pattern feed-ramp --out out/tempo.gcode
 ```
 
@@ -95,7 +118,7 @@ Reiter für die drei Situationen vor der Wand:
 * **Plotten** — Upload oder Testmuster, Flächen- und Stiftparameter, Vorschau
   (Zeichenwege blau, Leerwege rot gestrichelt), Plot starten
 * **Kalibrieren** — Jog-Pad, Nullpunkt setzen, Ecken übernehmen und wieder
-  anfahren, Schiefstandswarnung
+  anfahren, Schiefstandswarnung, Standort anlegen samt Kinematik-Urteil
 * **Maschine** — SD-Fortschritt, Pause/Weiter/Stopp
 
 Auf dem Handy stapeln sich die Karten, das Jog-Pad steht dabei oben.
@@ -122,9 +145,11 @@ upload_and_run(gcode, "bild.gcode")
 | `wallplotter.upload` | FluidNC-Web-API: Upload, `$SD/Run`, Status, Pause/Stop |
 | `wallplotter.kinematics` | Auflösung, Riemenlängen, Zugkräfte nachrechnen |
 | `wallplotter.calibration` | angefahrene Ecken → nutzbare Fläche mit Versatz |
+| `wallplotter.location` | Standorte: Ankermaße + Fläche je Aufhängung |
 | `wallplotter.patterns` | Testmuster für die Erstinbetriebnahme |
 | `wallplotter.cli` | Stufe 2 der Roadmap |
 | `wallplotter.calibrate_cli` | Jog, Nullpunkt, Ecken aufnehmen |
+| `wallplotter.location_cli` | Standorte anlegen, wechseln, Kinematikblock ausgeben |
 | `wallplotter.webapp` | Stufen 3–6 der Roadmap (NiceGUI) |
 
 CLI und Web-UI nutzen dieselben Funktionen — es gibt bewusst keine zweite

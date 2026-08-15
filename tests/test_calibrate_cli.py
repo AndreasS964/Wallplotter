@@ -1,7 +1,5 @@
 """Die CLI gegen einen simulierten Client — ohne Board im Netz."""
 
-import json
-
 import pytest
 
 from wallplotter import calibrate_cli
@@ -80,13 +78,16 @@ def test_goto_uncalibrated_corner_fails_cleanly(board, tmp_path, capsys):
     assert "nicht kalibriert" in capsys.readouterr().err
 
 
-def test_show_without_file_returns_error_code(board, tmp_path, capsys):
-    assert calibrate_cli.main(["--file", str(tmp_path / "weg.json"), "show"]) == 3
-    assert "Keine Kalibrierung" in capsys.readouterr().err
+def test_show_without_file_lists_what_is_missing(board, tmp_path, capsys):
+    # kein Fehler, sondern die nützlichere Auskunft: es ist noch nichts aufgenommen
+    assert calibrate_cli.main(["--file", str(tmp_path / "weg.json"), "show"]) == 0
+    out = capsys.readouterr().out
+    assert "es fehlen" in out
+    assert "bottom-left" in out
 
 
-def test_clear_removes_the_file(board, tmp_path):
+def test_clear_empties_the_calibration(board, tmp_path):
     path = tmp_path / "cal.json"
-    path.write_text(json.dumps({"points": {}}), encoding="utf-8")
+    calibrate_cli.main(["--file", str(path), "record", "top-left", "--at", "1", "2"])
     assert calibrate_cli.main(["--file", str(path), "clear"]) == 0
-    assert not path.exists()
+    assert AreaCalibration.load(path).points == {}

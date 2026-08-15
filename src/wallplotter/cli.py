@@ -57,6 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fläche aus einer Kalibrierdatei nehmen (überschreibt --width/--height)",
     )
     area.add_argument(
+        "--location",
+        nargs="?",
+        const="",
+        help="Fläche aus einem Standort nehmen (ohne Namen: der aktive)",
+    )
+    area.add_argument(
         "--no-invert-y",
         action="store_true",
         help="Y-Achse nicht spiegeln (Standard: SVG oben links → Maschine unten links)",
@@ -134,12 +140,18 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
-    if args.calibration:
+    if args.calibration or args.location is not None:
         from .calibration import AreaCalibration, CalibrationError  # noqa: PLC0415
+        from .location import LocationBook, LocationError  # noqa: PLC0415
 
         try:
-            plot_config = AreaCalibration.load(args.calibration).to_plot_config(plot_config)
-        except CalibrationError as exc:
+            if args.calibration:
+                plot_config = AreaCalibration.load(args.calibration).to_plot_config(plot_config)
+            else:
+                location = LocationBook.load().get(args.location or None)
+                plot_config = location.plot_config(plot_config)
+                print(f"Standort {location.name}")
+        except (CalibrationError, LocationError) as exc:
             print(str(exc), file=sys.stderr)
             return 6
         print(
