@@ -41,7 +41,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("zero", help="aktuelle Position zum Nullpunkt erklären (G92)")
+    zero = sub.add_parser("zero", help="aktuelle Position zum Nullpunkt erklären (G92)")
+    zero.add_argument(
+        "--corner",
+        choices=CORNERS,
+        help="verlorenen Nullpunkt wiederherstellen: diese kalibrierte Ecke anfahren "
+        "und ihre Koordinaten setzen",
+    )
     sub.add_parser("status", help="Status und Position abfragen")
     sub.add_parser("show", help="gespeicherte Kalibrierung auswerten")
 
@@ -98,8 +104,17 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "zero":
-            client.set_zero()
-            print("Nullpunkt gesetzt.")
+            if args.corner:
+                calibration = _Store(args).load()
+                if args.corner not in calibration.points:
+                    print(f"{args.corner} ist nicht kalibriert.", file=sys.stderr)
+                    return 4
+                x, y = calibration.points[args.corner]
+                client.set_zero(x, y)
+                print(f"Nullpunkt über {args.corner} wiederhergestellt: X{x:.1f} Y{y:.1f}")
+            else:
+                client.set_zero()
+                print("Nullpunkt gesetzt.")
             return 0
 
         if args.command == "status":

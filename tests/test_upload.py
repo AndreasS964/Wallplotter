@@ -140,7 +140,7 @@ def test_jog_cancel_sends_the_realtime_byte():
 def test_set_zero_uses_g92():
     api, session = client()
     api.set_zero()
-    assert session.calls[0][2] == {"plain": "G92 X0 Y0"}
+    assert session.calls[0][2] == {"plain": "G92 X0.000 Y0.000"}
 
 
 def test_position_returns_xy():
@@ -152,3 +152,24 @@ def test_position_without_data_raises():
     api, _ = client(text="<Idle|FS:0,0>")
     with pytest.raises(FluidNCError, match="ohne Position"):
         api.position()
+
+
+def test_set_zero_can_restore_a_known_point():
+    api, session = client()
+    api.set_zero(120.5, 340.0)
+    assert session.calls[0][2] == {"plain": "G92 X120.500 Y340.000"}
+
+
+def test_network_failures_become_fluidnc_errors():
+    class Dead:
+        def get(self, *a, **k):
+            raise OSError("Netzwerk weg")
+
+        def post(self, *a, **k):
+            raise OSError("Netzwerk weg")
+
+    api = FluidNCClient(FluidNCConfig(host="x"), Dead())
+    with pytest.raises(FluidNCError, match="Netzwerk weg"):
+        api.status()
+    with pytest.raises(FluidNCError, match="Netzwerk weg"):
+        api.upload("G21", "x.gcode")

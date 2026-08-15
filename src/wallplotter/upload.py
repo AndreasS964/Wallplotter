@@ -9,6 +9,7 @@ sind Pfad und Endpunkt hier konfigurierbar statt fest verdrahtet.
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,6 +28,22 @@ _STATUS_RE = re.compile(r"<([^>]*)>")
 
 class FluidNCError(RuntimeError):
     """Kommunikation mit dem Board fehlgeschlagen."""
+
+
+@contextmanager
+def _as_fluidnc_error(message: str):
+    """Netzwerkfehler in FluidNCError übersetzen.
+
+    Ein nicht erreichbares Board ist der Normalfall, nicht die Ausnahme — die
+    Oberfläche soll das melden können, statt an einer requests-Ausnahme
+    hängenzubleiben.
+    """
+    try:
+        yield
+    except FluidNCError:
+        raise
+    except Exception as exc:
+        raise FluidNCError(f"{message}: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -115,11 +132,12 @@ class FluidNCClient:
 
     def send_command(self, command: str) -> str:
         """GRBL-/FluidNC-Kommando senden und die Antwort als Text liefern."""
-        response = self.session.get(
-            f"{self.config.base_url}/command",
-            params={"plain": command},
-            timeout=self.config.timeout_s,
-        )
+        with _as_fluidnc_error(f"Kommando {command!r} fehlgeschlagen"):
+            response = self.session.get(
+                f"{self.config.base_url}/command",
+                params={"plain": command},
+                timeout=self.config.timeout_s,
+            )
         return self._text_or_raise(response, f"Kommando {command!r} fehlgeschlagen")
 
     def upload(self, data: bytes | str, filename: str) -> str:
@@ -128,12 +146,13 @@ class FluidNCClient:
         remote_dir = self.config.remote_dir if self.config.remote_dir.endswith("/") else self.config.remote_dir + "/"
         remote_path = f"{remote_dir}{filename}"
 
-        response = self.session.post(
-            f"{self.config.base_url}/upload",
-            data={"path": remote_dir, f"{remote_path}S": str(len(payload))},
-            files={remote_path: (filename, payload, "text/plain")},
-            timeout=self.config.timeout_s,
-        )
+        with _as_fluidnc_error(f"Upload von {filename!r} fehlgeschlagen"):
+            response = self.session.post(
+                f"{self.config.base_url}/upload",
+                data={"path": remote_dir, f"{remote_path}S": str(len(payload))},
+                files={remote_path: (filename, payload, "text/plain")},
+                timeout=self.config.timeout_s,
+            )
         self._text_or_raise(response, f"Upload von {filename!r} fehlgeschlagen")
         return remote_path
 
@@ -178,9 +197,16 @@ class FluidNCClient:
         """Laufende Jog-Bewegung abbrechen (Realtime-Byte 0x85)."""
         return self.send_command("\x85")
 
-    def set_zero(self) -> str:
-        """Aktuelle Position zum Nullpunkt erklären (Homing per Anschlag)."""
-        return self.send_command("G92 X0 Y0")
+    def set_zero(self, x: float = 0.0, y: float = 0.0) -> str:
+        """Der aktuellen Position feste Koordinaten zuweisen (G92).
+
+        Ohne Argumente ist das der Nullpunkt beim Referenzieren am Anschlag.
+        Mit Argumenten lässt sich ein verlorener Nullpunkt wiederherstellen:
+        eine kalibrierte Ecke anfahren und ihre gespeicherten Koordinaten
+        setzen. Genau das braucht man, wenn eine mehrfarbige Zeichnung über
+        mehrere Tage entsteht und das Board zwischendurch aus war.
+        """
+        return self.send_command(f"G92 X{x:.3f} Y{y:.3f}")
 
     def position(self) -> tuple[float, float]:
         """Aktuelle XY-Position in Maschinenkoordinaten."""

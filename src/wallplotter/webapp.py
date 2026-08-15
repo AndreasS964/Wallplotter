@@ -19,13 +19,13 @@ from dataclasses import replace
 
 from .calibration import CORNERS, AreaCalibration
 from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PenConfig, PlotConfig
-from .gcode import lines_to_gcode, prepare_geometry, stats_for
+from .gcode import layers_to_gcode, lines_to_gcode, prepare_geometry, stats_for
 from .imaging import TECHNIQUES, ImagingError
 from .imaging import image_to_lines as image_lines
 from .location import DEFAULT_PATH as LOCATIONS_PATH
 from .location import Location, LocationBook, LocationError
 from .patterns import PATTERNS, build
-from .pipeline import VpypeNotAvailable, lines_to_svg, svg_to_lines
+from .pipeline import VpypeNotAvailable, lines_to_svg, svg_to_layers
 from .upload import FluidNCClient, FluidNCError
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
@@ -62,6 +62,7 @@ class WallplotterUI:
         self.source_name = ""
         self.source_is_pattern = False
         self.gcode: str | None = None
+        self.layers: list = []
         self.book = LocationBook.load(locations_path)
 
     @property
@@ -134,14 +135,20 @@ class WallplotterUI:
                 self.fit_source = False
                 name = f"{self.upload_name} ({self.technique.value})"
             else:
-                self.lines = svg_to_lines(self.upload_data)
+                self.layers = svg_to_layers(self.upload_data)
+                self.lines = [line for layer in self.layers for line in layer.lines]
                 self.fit_source = True
                 self.source_is_pattern = False
                 name = self.upload_name
+                if len(self.layers) > 1:
+                    name += f" ({len(self.layers)} Farben)"
         except (VpypeNotAvailable, ImagingError) as exc:
             self.ui.notify(str(exc), type="negative", multi_line=True)
             return
+        if suffix in IMAGE_SUFFIXES:
+            self.layers = []
         self.feeds, self.source_name = None, name
+        self.refresh_layers()
         self.regenerate()
         self.ui.notify(f"{len(self.lines)} Linien", type="positive")
 
@@ -187,6 +194,47 @@ class WallplotterUI:
             travel_stroke="#d64545",
             style="max-height:68vh;display:block;margin:auto",
         )
+
+    def refresh_layers(self) -> None:
+        """Farbebenen auflisten — jede lässt sich einzeln auf die Wand schicken."""
+        self.layer_box.clear()
+        if len(self.layers) < 2:
+            return
+        ui = self.ui
+        with self.layer_box:
+            ui.label("Farbebenen — nacheinander plotten, Stift dazwischen wechseln").classes(
+                "text-xs text-grey"
+            )
+            for position, layer in enumerate(self.layers, start=1):
+                with ui.row().classes("items-center gap-2 w-full no-wrap"):
+                    ui.html(
+                        f'<span style="display:inline-block;width:14px;height:14px;'
+                        f'border-radius:3px;border:1px solid #bbb;background:{layer.color}"></span>'
+                    )
+                    ui.label(f"{position}. {layer.label}").classes("text-xs flex-grow")
+                    ui.label(f"{len(layer.lines)} Linien").classes("text-xs text-grey")
+                    ui.button(
+                        icon="send", on_click=lambda i=position - 1: self.send_layer(i)
+                    ).props("flat dense").tooltip("nur diese Farbe plotten")
+
+    def send_layer(self, index: int) -> None:
+        if not (0 <= index < len(self.layers)):
+            return
+        layer = self.layers[index]
+        config = self.plot_config()
+        # gemeinsame Einpassung über alle Ebenen, sonst passt der Passer nicht
+        programs = layers_to_gcode(self.layers, config, separate=True)
+        program = programs.get(layer.label)
+        if not program:
+            self.ui.notify("Ebene ist leer", type="warning")
+            return
+        try:
+            remote = self.client().upload(program, "plot.gcode")
+            self.client().run_file(remote)
+        except FluidNCError as exc:
+            self.ui.notify(str(exc), type="negative", multi_line=True)
+            return
+        self.ui.notify(f"Ebene {layer.label} gestartet", type="positive")
 
     # -- Maschine ---------------------------------------------------------
 
@@ -424,6 +472,7 @@ class WallplotterUI:
                     with ui.row().classes("items-center gap-3 text-xs text-grey-7"):
                         ui.html('<span style="color:#1a4fd6">▬</span> Stift unten')
                         ui.html('<span style="color:#d64545">┅</span> Leerweg')
+                self.layer_box = ui.column().classes("gap-1 w-full")
                 self.info = ui.label("Noch nichts geladen").classes("text-sm")
                 ui.button("Auf Wand plotten", icon="send", on_click=self.send_plot).classes(
                     "w-full"

@@ -22,7 +22,13 @@ from .geometry import (
     travel_length,
 )
 
-__all__ = ["lines_to_gcode", "prepare_geometry", "PlotStats", "stats_for"]
+__all__ = [
+    "lines_to_gcode",
+    "layers_to_gcode",
+    "prepare_geometry",
+    "PlotStats",
+    "stats_for",
+]
 
 
 def prepare_geometry(
@@ -142,11 +148,22 @@ def lines_to_gcode(
     if feeds is not None and len(feeds) != len([line for line in lines if len(line) >= 2]):
         raise ValueError("feeds muss genauso viele Einträge haben wie es Linien gibt")
     geometry = prepare_geometry(lines, cfg, fit=fit, correction=correction)
+    return _program(geometry, cfg, header=header_comment, feeds=feeds)
+
+
+def _program(
+    geometry: Lines,
+    cfg: PlotConfig,
+    *,
+    header: str | None = None,
+    feeds: Sequence[float] | None = None,
+) -> str:
+    """GCode-Programm aus fertiger Maschinengeometrie."""
     stats = PlotStats(geometry, cfg)
     out: list[str] = []
 
-    if header_comment:
-        out.append(f"; {header_comment}")
+    if header:
+        out.append(f"; {header}")
     out.append("; erzeugt mit wallplotter")
     out.append(f"; Flaeche {_fmt(cfg.width_mm)} x {_fmt(cfg.height_mm)} mm, Rand {_fmt(cfg.margin_mm)} mm")
     out.append(f"; {stats}")
@@ -178,3 +195,101 @@ def lines_to_gcode(
     out.append(f"{travel_cmd} X0 Y0")
     out.append("M2 ; Programmende")
     return "\n".join(out) + "\n"
+
+
+def _program_with_pauses(blocks: Sequence[tuple[str, str, Lines]], cfg: PlotConfig) -> str:
+    """Alle Ebenen in einem Programm, dazwischen Halt zum Stiftwechsel."""
+    parts = []
+    for position, (header, _, geometry) in enumerate(blocks):
+        program = _program(geometry, cfg, header=header)
+        body = program.splitlines()
+        if position > 0:
+            # Kopfzeilen der Folgeebenen kürzen, die Grundeinstellungen stehen schon
+            body = [line for line in body if not line.startswith(("G21", "G90", "G17"))]
+        # Programmende nur ganz am Schluss
+        if position < len(blocks) - 1:
+            body = [line for line in body if not line.startswith("M2 ")]
+            next_label = blocks[position + 1][1]
+            body += [f"M0 ; anhalten — Stift wechseln auf: {next_label}"]
+        parts.append("\n".join(body))
+    return "\n".join(parts) + "\n"
+
+
+def layers_to_gcode(
+    layers: Sequence,
+    config: PlotConfig | None = None,
+    *,
+    separate: bool = True,
+    fit: bool = True,
+    correction=None,
+) -> dict[str, str] | str:
+    """Mehrfarbige Zeichnung in GCode übersetzen — eine Ebene je Stiftfarbe.
+
+    Mit ``separate=True`` (Standard) kommt je Ebene eine eigene Datei heraus.
+    Das ist für mehrstündige Plots das Vernünftige: man plottet Schwarz heute,
+    Rot morgen, und muss nicht danebenstehen.
+
+    Mit ``separate=False`` entsteht ein einziges Programm, das zwischen den
+    Farben mit ``M0`` anhält. Bequemer, aber es setzt voraus, dass die
+    Firmware ``M0`` als Pause versteht und jemand zum Weiterdrücken da ist.
+
+    Wichtig für die Passgenauigkeit: Alle Ebenen werden *gemeinsam*
+    eingepasst, nicht jede für sich — sonst zöge jede Farbe ihre eigene
+    Skalierung und die Zeichnung fiele auseinander.
+    """
+    cfg = config or PlotConfig()
+    entries = [layer for layer in layers if any(len(line) >= 2 for line in layer.lines)]
+    if not entries:
+        return {} if separate else ""
+
+    # gemeinsame Einpassung: Grenzen über alle Ebenen bestimmen und dann
+    # jede Ebene mit derselben Abbildung behandeln
+    combined = [line for layer in entries for line in layer.lines]
+    if fit:
+        merged = prepare_geometry(combined, cfg, fit=True, correction=None)
+        source_bounds = _bounds(combined)
+        target_bounds = _bounds(merged)
+        mapper = _mapping(source_bounds, target_bounds)
+    else:
+        mapper = None
+
+    def geometry_of(layer):
+        lines = [list(line) for line in layer.lines if len(line) >= 2]
+        if mapper:
+            lines = [[mapper(point) for point in line] for line in lines]
+        return prepare_geometry(lines, cfg, fit=False, correction=correction)
+
+    if separate:
+        result: dict[str, str] = {}
+        for position, layer in enumerate(entries, start=1):
+            result[layer.label] = _program(
+                geometry_of(layer),
+                cfg,
+                header=f"Ebene {position}/{len(entries)}: {layer.label}",
+            )
+        return result
+
+    blocks = [
+        (f"Ebene {position}/{len(entries)}: {layer.label}", layer.label, geometry_of(layer))
+        for position, layer in enumerate(entries, start=1)
+    ]
+    return _program_with_pauses(blocks, cfg)
+
+
+def _bounds(lines: Sequence[Line]) -> tuple[float, float, float, float]:
+    xs = [x for line in lines for x, _ in line]
+    ys = [y for line in lines for _, y in line]
+    return (min(xs), min(ys), max(xs), max(ys)) if xs else (0.0, 0.0, 0.0, 0.0)
+
+
+def _mapping(source, target):
+    sx0, sy0, sx1, sy1 = source
+    tx0, ty0, tx1, ty1 = target
+    scale_x = (tx1 - tx0) / (sx1 - sx0) if sx1 > sx0 else 1.0
+    scale_y = (ty1 - ty0) / (sy1 - sy0) if sy1 > sy0 else 1.0
+    scale = min(scale_x, scale_y)
+
+    def mapper(point):
+        return (tx0 + (point[0] - sx0) * scale, ty0 + (point[1] - sy0) * scale)
+
+    return mapper

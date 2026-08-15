@@ -77,6 +77,28 @@ größte Rechteck *innerhalb* der angefahrenen Punkte: lieber etwas kleiner als
 neben der Wand. `wallplotter-location show` rechnet dann Auflösung, Riemenkräfte
 und Riemenlänge für genau diese Fläche durch.
 
+### Mehrfarbig plotten
+
+```bash
+plot bild.svg --layers                 # je Strichfarbe eine GCode-Datei
+plot bild.svg --layers --one-file      # eine Datei, M0-Pause zum Stiftwechsel
+```
+
+Getrennt ist für mehrstündige Plots das Vernünftige: Schwarz heute, Rot
+morgen. Alle Ebenen werden *gemeinsam* eingepasst — würde jede für sich
+skaliert, fiele die Zeichnung auseinander.
+
+Wenn das Board zwischen zwei Farben aus war, ist der G92-Nullpunkt weg. Dann
+eine kalibrierte Ecke anfahren und den Nullpunkt darüber wiederherstellen:
+
+```bash
+wallplotter-calibrate goto bottom-left
+wallplotter-calibrate zero --corner bottom-left
+```
+
+In der Web-UI erscheinen die Farbebenen mit Farbfeld unter der Vorschau, jede
+einzeln startbar.
+
 ### Testmuster
 
 ```bash
@@ -141,9 +163,17 @@ Nachgerechnet mit der eigenen Kinematik (`docs/kinematik.md`): Die Auflösung
 die **Riemendehnung** ist es, mit 0,12 bis 0,83 mm über die Fläche. Daraus
 folgt:
 
-* **Riemen mit Stahlkern** statt Glasfaser drückt das um Faktor 5. Der
-  billigste und wirksamste Hebel, und einer, der vor dem Kauf entschieden
-  werden will.
+* **Riemen mit Stahlkern** statt Glasfaser drückt das um Faktor 5 (0,83 → 0,17 mm).
+  Der billigste und wirksamste Hebel, und einer, der vor dem Kauf entschieden
+  werden will. Steifer geht immer — HTD 5M oder Stahlseil kämen auf 0,06 bzw.
+  0,02 mm — lohnt aber nicht: der Rest liegt längst unter der Strichbreite
+  eines Filzstifts, und Seil auf Trommel handelt sich veränderlichen
+  Wickelradius und Schlupf ein.
+* Nebenwirkung, die genauso zählt: Der Riemen bildet mit der Gondel einen
+  **Längsschwinger**. Glasfaser landet bei rund 22 Hz — und 1500 mm/min bei
+  1 mm Segmentlänge regen mit 25 Hz genau dort an. Stahlkern verschiebt das
+  auf 50 Hz. Zusätzlich hilft `segment_length: 2` in der Firmware: kostet nur
+  1 µm Bahntreue und halbiert die Anregung.
 * `wallplotter.correction` rechnet den Rest gegen: entweder physikalisch aus
   den Zugkräften (`StretchCorrection`, ein Materialwert, aus Messpunkten
   bestimmbar) oder empirisch aus einem nachgemessenen Raster

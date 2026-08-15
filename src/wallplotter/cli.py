@@ -13,13 +13,18 @@ from dataclasses import replace
 from pathlib import Path
 
 from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PenConfig, PlotConfig
-from .gcode import lines_to_gcode, prepare_geometry, stats_for
+from .gcode import layers_to_gcode, lines_to_gcode, prepare_geometry, stats_for
 from .imaging import TECHNIQUES, ImagingError, image_to_lines
 from .imaging import describe as describe_techniques
 from .patterns import PATTERNS, build, describe
-from .pipeline import VpypeNotAvailable, lines_to_svg, svg_to_lines
+from .pipeline import VpypeNotAvailable, lines_to_svg, svg_to_layers, svg_to_lines
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+
+
+def _slug(text: str) -> str:
+    """Layerbezeichnung als Dateinamensteil (``#e02020`` → ``e02020``)."""
+    return "".join(ch for ch in text if ch.isalnum()) or "ebene"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -81,6 +86,18 @@ def build_parser() -> argparse.ArgumentParser:
     motion.add_argument("--pen-down", type=int, default=30, help="S-Wert Stift unten")
     motion.add_argument("--pen-up", type=int, default=0, help="S-Wert Stift oben")
     motion.add_argument("--pen-dwell", type=float, default=0.25, help="Sekunden")
+
+    colors = parser.add_argument_group("Mehrfarbig")
+    colors.add_argument(
+        "--layers",
+        action="store_true",
+        help="SVG nach Strichfarben trennen und je Farbe eine GCode-Datei schreiben",
+    )
+    colors.add_argument(
+        "--one-file",
+        action="store_true",
+        help="mit --layers: eine Datei mit M0-Pausen zum Stiftwechsel statt mehrerer",
+    )
 
     geo = parser.add_argument_group("Optimierung")
     geo.add_argument("--quantization", type=float, default=0.2, help="mm")
@@ -182,6 +199,36 @@ def main(argv: list[str] | None = None) -> int:
 
     feeds: list[float] | None = None
     source_name = args.input.name if args.input else ""
+
+    if args.layers:
+        if args.pattern or (args.input and args.input.suffix.lower() in IMAGE_SUFFIXES):
+            print("--layers gilt nur für SVG-Vorlagen.", file=sys.stderr)
+            return 2
+        try:
+            layer_list = svg_to_layers(args.input, quantization_mm=args.quantization,
+                                       **optimize_kwargs)
+        except VpypeNotAvailable as exc:
+            print(str(exc), file=sys.stderr)
+            return 3
+        if not layer_list:
+            print("Keine Linien gefunden.", file=sys.stderr)
+            return 4
+
+        base = args.out or args.input.with_suffix(".gcode")
+        result = layers_to_gcode(layer_list, plot_config, separate=not args.one_file,
+                                 fit=not args.no_fit)
+        for layer in layer_list:
+            print(f"  {layer.color}  {len(layer.lines):>5} Linien")
+
+        if args.one_file:
+            base.write_text(result, encoding="utf-8")
+            print(f"{len(layer_list)} Ebenen mit Stiftwechsel-Pausen: {base}")
+        else:
+            for position, (label, program) in enumerate(result.items(), start=1):
+                target = base.with_name(f"{base.stem}-{position}-{_slug(label)}{base.suffix}")
+                target.write_text(program, encoding="utf-8")
+                print(f"Ebene {label} → {target}")
+        return 0
 
     if args.pattern:
         # Testmuster stehen schon in Flächenkoordinaten und werden nicht eingepasst

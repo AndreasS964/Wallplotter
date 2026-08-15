@@ -13,16 +13,35 @@ import os
 import shlex
 import tempfile
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from .geometry import Lines
 
 __all__ = [
     "VpypeNotAvailable",
+    "Layer",
     "svg_to_lines",
+    "svg_to_layers",
     "optimize_commands",
     "lines_to_svg",
 ]
+
+@dataclass
+class Layer:
+    """Eine Ebene der Zeichnung — in der Praxis: eine Stiftfarbe."""
+
+    index: int
+    color: str
+    """Hex-Farbe aus dem SVG, für Vorschau und Beschriftung."""
+
+    lines: Lines
+    name: str = ""
+
+    @property
+    def label(self) -> str:
+        return self.name or self.color
+
 
 # 1 CSS-Pixel = 1/96 Zoll — vpypes interne Längeneinheit.
 _PX_TO_MM = 25.4 / 96.0
@@ -73,13 +92,42 @@ def optimize_commands(
     return cmds
 
 
+def _collection_to_lines(collection) -> Lines:
+    """vpype-LineCollection (CSS-Pixel, komplexe Zahlen) → Linien in mm."""
+    return [[(p.real * _PX_TO_MM, p.imag * _PX_TO_MM) for p in line] for line in collection]
+
+
 def _document_to_lines(document) -> Lines:
-    """vpype-Document (CSS-Pixel, komplexe Zahlen) → Linien in mm."""
-    lines: Lines = []
-    for layer in document.layers.values():
-        for line in layer:
-            lines.append([(p.real * _PX_TO_MM, p.imag * _PX_TO_MM) for p in line])
-    return lines
+    return [line for collection in document.layers.values() for line in _collection_to_lines(collection)]
+
+
+def _document_to_layers(document) -> list[Layer]:
+    """Ebenen einzeln herausziehen, samt Farbe aus dem SVG."""
+    layers: list[Layer] = []
+    for index, collection in sorted(document.layers.items()):
+        lines = _collection_to_lines(collection)
+        if not lines:
+            continue
+        color = collection.metadata.get("vp_color")
+        stroke = collection.metadata.get("svg_stroke")
+        layers.append(
+            Layer(
+                index=index,
+                color=_as_hex(color) or (stroke if isinstance(stroke, str) else "#000000"),
+                lines=lines,
+                name=str(collection.metadata.get("vp_name", "")),
+            )
+        )
+    return layers
+
+
+def _as_hex(color) -> str | None:
+    if color is None:
+        return None
+    try:
+        return f"#{color.red:02x}{color.green:02x}{color.blue:02x}"
+    except AttributeError:
+        return str(color)
 
 
 def _run(commands: Sequence[str]) -> Lines:
@@ -130,6 +178,40 @@ def svg_to_lines(
             commands += optimize_commands(**optimize_kwargs)
         commands += list(extra_commands)
         return _run(commands)
+    finally:
+        if temporary:
+            path.unlink(missing_ok=True)
+
+
+def svg_to_layers(
+    svg: bytes | str | os.PathLike,
+    *,
+    quantization_mm: float = 0.2,
+    split_by: str = "stroke",
+    optimize: bool = True,
+    **optimize_kwargs,
+) -> list[Layer]:
+    """SVG ebenenweise einlesen — eine Ebene je Strichfarbe.
+
+    Damit lässt sich mehrfarbig plotten: erst alle schwarzen Linien, Stift
+    wechseln, dann alle roten. Die Trennung übernimmt vpype über
+    ``read --attr stroke``; ``split_by=""`` liefert die SVG-eigenen Ebenen.
+
+    Die Optimierung läuft je Ebene — sonst würde ``linesort`` Wege zwischen
+    Farben optimieren, die nie hintereinander gezeichnet werden.
+    """
+    path, temporary = _as_temp_file(svg, ".svg")
+    try:
+        attr = f" --attr {split_by}" if split_by else ""
+        commands = [f"read{attr} --quantization {quantization_mm}mm {shlex.quote(str(path))}"]
+        if optimize:
+            commands += optimize_commands(**optimize_kwargs)
+        vpype_cli = _require_vpype()
+        try:
+            document = vpype_cli.execute(" ".join(commands))
+        except Exception as exc:
+            raise VpypeNotAvailable(f"vpype-Pipeline fehlgeschlagen: {exc}") from exc
+        return _document_to_layers(document)
     finally:
         if temporary:
             path.unlink(missing_ok=True)

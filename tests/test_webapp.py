@@ -176,3 +176,34 @@ def test_photo_geometry_is_not_fitted_again(app, tmp_path):
     app.upload_data, app.upload_name = path.read_bytes(), "foto.png"
     app.render_upload()
     assert app.fit_source is False
+
+
+def test_colour_layers_are_listed_and_plottable(app, tmp_path):
+    pytest.importorskip("vpype_cli")
+    svg = tmp_path / "bunt.svg"
+    svg.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" '
+        'viewBox="0 0 100 100">'
+        '<rect x="10" y="10" width="80" height="80" fill="none" stroke="#000000"/>'
+        '<circle cx="50" cy="50" r="30" fill="none" stroke="#e02020"/></svg>',
+        encoding="utf-8",
+    )
+    app.upload_data, app.upload_name = svg.read_bytes(), "bunt.svg"
+    app.render_upload()
+
+    assert len(app.layers) == 2
+    assert {layer.color for layer in app.layers} == {"#000000", "#e02020"}
+    assert "2 Farben" in app.source_name
+    app.send_layer(0)          # ohne Board: darf nur nicht abstürzen
+
+
+def test_photo_upload_clears_previous_layers(app, tmp_path):
+    pytest.importorskip("PIL.Image")
+    from PIL import Image
+
+    app.layers = ["alt"]
+    path = tmp_path / "foto.png"
+    Image.new("L", (40, 50), 120).save(path)
+    app.upload_data, app.upload_name = path.read_bytes(), "foto.png"
+    app.render_upload()
+    assert app.layers == []

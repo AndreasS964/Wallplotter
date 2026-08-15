@@ -28,7 +28,7 @@ def board(monkeypatch):
 
 def test_zero_sends_g92(board, capsys):
     assert calibrate_cli.main(["zero"]) == 0
-    assert board.commands == ["G92 X0 Y0"]
+    assert board.commands == ["G92 X0.000 Y0.000"]
     assert "Nullpunkt" in capsys.readouterr().out
 
 
@@ -91,3 +91,15 @@ def test_clear_empties_the_calibration(board, tmp_path):
     calibrate_cli.main(["--file", str(path), "record", "top-left", "--at", "1", "2"])
     assert calibrate_cli.main(["--file", str(path), "clear"]) == 0
     assert AreaCalibration.load(path).points == {}
+
+
+def test_zero_can_be_restored_from_a_calibrated_corner(board, tmp_path):
+    path = tmp_path / "cal.json"
+    calibrate_cli.main(["--file", str(path), "record", "bottom-left", "--at", "120", "210"])
+    assert calibrate_cli.main(["--file", str(path), "zero", "--corner", "bottom-left"]) == 0
+    assert board.commands == ["G92 X120.000 Y210.000"]
+
+
+def test_restoring_from_an_uncalibrated_corner_fails(board, tmp_path):
+    path = tmp_path / "cal.json"
+    assert calibrate_cli.main(["--file", str(path), "zero", "--corner", "top-right"]) == 4
