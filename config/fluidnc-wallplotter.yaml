@@ -1,0 +1,198 @@
+# FluidNC-Konfiguration für den Wandplotter auf dem BIGTREETECH Rodent V1.0
+#
+# Pinbelegung (Stepper, SPI, I2S, SD, Endstops) stammt aus BTTs eigener
+# rodent.yaml: https://github.com/bigtreetech/Rodent/blob/master/rodent.yaml
+# Alles, was dort NICHT drinsteht, ist unten mit PRÜFEN markiert.
+#
+# Vor dem ersten Einschalten durchgehen:
+#   1. Anker-Koordinaten aus der echten Aufhängung eintragen (siehe unten)
+#   2. Servo-PWM-Pin gegen das Board prüfen — der einzige echte Unbekannte
+#   3. run_amps auf 1.2 lassen (17HS4412P1-3), nicht höher
+#
+# Prüfen lässt sich die Geometrie vorab mit:
+#   wallplotter-kinematics --width 2000 --height 2500 --overhang 150 --above 150
+
+board: BTT Rodent V1.0
+name: Wandplotter Keller
+meta: Kletterwand-Projekt
+
+kinematics:
+  WallPlotter:
+    # Motorachsen: links hängt an X, rechts an Y
+    left_axis: 0
+    right_axis: 1
+
+    # Ankerpunkte in Maschinenkoordinaten, gemessen vom Maschinennullpunkt.
+    # Der Nullpunkt entsteht beim Referenzieren per Anschlag + G92 (siehe unten),
+    # liegt also dort, wo die Gondel am oberen Anschlag steht.
+    #
+    # PRÜFEN: Diese Werte gelten für die Startgeometrie aus docs/kinematik.md
+    # (Anker 150 mm seitlich neben und 150 mm über der 2000x2500-Fläche, Gondel
+    # startet mittig unter den Ankern). Nach der Wandmontage nachmessen und
+    # ersetzen — die Auswertung dort zeigt: mehr Höhe über der Fläche hilft
+    # deutlich mehr als mehr seitlicher Überstand.
+    left_anchor_x: -1150.000
+    left_anchor_y: 0.000
+    right_anchor_x: 1150.000
+    right_anchor_y: 0.000
+
+    # Länge, in die FluidNC gerade Strecken zerlegt. Kleiner = runder, aber
+    # mehr Rechenlast. 1 mm ist bei 2,5 m Wand ein guter Kompromiss.
+    segment_length: 1.000
+
+stepping:
+  engine: I2S_STREAM
+  idle_ms: 255 # Motoren gehalten lassen — die Gondel hängt am Riemen
+  pulse_us: 4
+  dir_delay_us: 1
+  disable_delay_us: 0
+
+axes:
+  shared_stepper_disable_pin: NO_PIN
+
+  # Linker Riemen
+  x:
+    # 20Z-Pulley an GT2 = 40 mm Riemen pro Umdrehung.
+    # 200 Vollschritte * 16 Mikroschritte / 40 mm = 80 Schritte/mm
+    steps_per_mm: 80.000
+    max_rate_mm_per_min: 4000.000
+    acceleration_mm_per_sec2: 200.000
+    max_travel_mm: 4000.000
+    soft_limits: false
+    homing:
+      # Kein Endschalter: Gondel an den oberen Anschlag fahren, dann
+      # $H weglassen und stattdessen G92 senden (wallplotter-calibrate zero).
+      cycle: 0
+    motor0:
+      limit_neg_pin: NO_PIN
+      limit_pos_pin: NO_PIN
+      limit_all_pin: NO_PIN
+      hard_limits: false
+      pulloff_mm: 1.000
+      # BTT konfiguriert die TMC2160 des Rodent als tmc_5160 — die Register
+      # sind für den Schrittbetrieb identisch, und so ist es von BTT getestet.
+      tmc_5160:
+        step_pin: I2SO.2
+        direction_pin: I2SO.1
+        disable_pin: I2SO.0
+        cs_pin: gpio.5
+        spi_index: 1
+        r_sense_ohms: 0.022
+        run_amps: 1.200 # Nennstrom der 17HS4412P1-3, nicht erhöhen
+        hold_amps: 1.200 # voller Haltestrom: die Gondel darf nicht absacken
+        microsteps: 16
+        toff_disable: 0
+        toff_stealthchop: 5
+        use_enable: false
+        run_mode: StealthChop # leise; für StallGuard-Homing auf CoolStep wechseln
+        homing_mode: CoolStep
+        stallguard: 16
+        stallguard_debug: false
+        toff_coolstep: 3
+        tpfd: 4
+
+  # Rechter Riemen
+  y:
+    steps_per_mm: 80.000
+    max_rate_mm_per_min: 4000.000
+    acceleration_mm_per_sec2: 200.000
+    max_travel_mm: 4000.000
+    soft_limits: false
+    homing:
+      cycle: 0
+    motor0:
+      limit_neg_pin: NO_PIN
+      limit_pos_pin: NO_PIN
+      limit_all_pin: NO_PIN
+      hard_limits: false
+      pulloff_mm: 1.000
+      tmc_5160:
+        step_pin: I2SO.5
+        direction_pin: I2SO.4
+        disable_pin: I2SO.7
+        cs_pin: NO_PIN # Daisy-Chain: CS sitzt am ersten Treiber
+        spi_index: 2
+        r_sense_ohms: 0.022
+        run_amps: 1.200
+        hold_amps: 1.200
+        microsteps: 16
+        toff_disable: 0
+        toff_stealthchop: 5
+        use_enable: false
+        run_mode: StealthChop
+        homing_mode: CoolStep
+        stallguard: 16
+        stallguard_debug: false
+        toff_coolstep: 3
+        tpfd: 4
+
+  # Z bleibt unbenutzt: der Stift hebt über den Servo, nicht über eine Achse.
+  # Die beiden freien Treiber (I2SO.10/9/8 und I2SO.13/12/15, spi_index 3 und 4)
+  # sind damit Reserve.
+
+# Pen-Lift über Servo am PWM-Ausgang, angesteuert per M3 S<wert> / M5.
+# Bewusst NICHT M280 — das ist Marlin/Makelangelo-Konvention und existiert
+# in FluidNC nicht.
+#
+# PRÜFEN — der einzige geratene Pin in dieser Datei: BTTs rodent.yaml nutzt
+# einen Huanyang-VFD über RS485 und belegt gar keinen PWM-Ausgang, deshalb
+# steht dort kein GPIO für den PWM-Port. Zwei Dinge am Board gegenprüfen:
+#   a) welcher GPIO am PWM-Header hängt (Schaltplan/Silkscreen), und
+#   b) ob der Ausgang für einen MG90S taugt: das Datenblatt nennt 3-10 V für
+#      den PWM-Port, ein Servo will aber ein sauberes 5-V-Signal bei 50 Hz.
+#      Wenn das nicht passt, den Servo an einen freien GPIO hängen (Kandidaten
+#      laut rodent.yaml unbelegt: gpio.2, gpio.4, gpio.12, gpio.13, gpio.25)
+#      und die Nummer hier eintragen.
+pwm:
+  pwm_hz: 50 # Servo-Takt
+  output_pin: gpio.25 # PRÜFEN, siehe oben
+  enable_pin: NO_PIN
+  direction_pin: NO_PIN
+  disable_with_s0: false
+  s0_with_disable: false
+  # Der S-Wert wird zur Impulsbreite: speed_map bildet 0..100 auf den
+  # nutzbaren Servoweg ab. Die Endwerte am montierten Stift feinjustieren,
+  # dann in PenConfig(down_value=..., up_value=...) übernehmen.
+  speed_map: 0=0.000% 100=100.000%
+  tool_num: 0
+
+# Kein Laser-Modus: M4 skaliert die Leistung mit der Geschwindigkeit, was für
+# einen Servo Unsinn wäre. M3 setzt konstant — genau das, was wir wollen.
+Laser:
+  laser_mode: false
+
+start:
+  must_home: false # Referenziert wird per Anschlag und G92, nicht per $H
+  deactivate_parking: true
+  check_limits: false
+
+# Ab hier unverändert aus BTTs rodent.yaml übernommen
+i2so:
+  bck_pin: gpio.22
+  data_pin: gpio.21
+  ws_pin: gpio.17
+
+spi:
+  miso_pin: gpio.19
+  mosi_pin: gpio.23
+  sck_pin: gpio.18
+
+sdcard:
+  cs_pin: gpio.0
+  card_detect_pin: NO_PIN
+  frequency_hz: 8000000
+
+# Statusleuchten des Boards
+status_outputs:
+  report_interval_ms: 500
+  idle_pin: I2SO.11:low
+  run_pin: I2SO.14:low
+  alarm_pin: I2SO.3:low
+
+# WLAN dauerhaft im Station-Modus, damit Upload und Web-UI ohne Kabel gehen.
+# SSID und Passwort nicht hier eintragen, sondern nach dem Flashen über das
+# FluidNC-Terminal setzen — sonst landen sie im Git-Repo:
+#   $Sta/SSID=...
+#   $Sta/Password=...
+#   $WiFi/Mode=STA
+#   $Hostname=wandplotter

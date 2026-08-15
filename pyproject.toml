@@ -23,7 +23,7 @@ dependencies = [
 geometry = ["vpype>=1.14"]
 photo = ["vpype[all]>=1.14", "hatched>=0.3"]
 web = ["nicegui>=2.0"]
-dev = ["pytest>=8.0", "ruff>=0.6"]
+dev = ["pytest>=8.0", "ruff>=0.6", "pyyaml>=6.0"]
 
 [project.scripts]
 plot = "wallplotter.cli:main"
