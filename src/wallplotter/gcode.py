@@ -32,11 +32,14 @@ def prepare_geometry(
     fit: bool = True,
     invert_y: bool | None = None,
     apply_origin: bool = True,
+    correction=None,
 ) -> Lines:
     """Rohlinien in Plot-Geometrie überführen: einpassen, spiegeln, versetzen.
 
     Damit rechnen GCode-Export, Statistik und Vorschau auf derselben Geometrie
     — sonst weicht z. B. die geschätzte Plotdauer von der tatsächlichen ab.
+    ``correction`` verzerrt zum Schluss gegen bekannte Maschinenfehler vor.
+
     Für die Vorschau ``invert_y=False`` und ``apply_origin=False`` setzen: SVG
     hat wie die Zeichnung den Ursprung oben links, und der Versatz der Fläche
     in Maschinenkoordinaten interessiert dort nicht.
@@ -51,6 +54,9 @@ def prepare_geometry(
         geometry = flip_y(geometry, cfg.height_mm)
     if apply_origin and (cfg.origin_x_mm or cfg.origin_y_mm):
         geometry = transform(geometry, 1.0, cfg.origin_x_mm, cfg.origin_y_mm)
+    if correction is not None:
+        # zuletzt: die Vorverzerrung rechnet in Maschinenkoordinaten
+        geometry = correction.apply_lines(geometry)
     return geometry
 
 
@@ -118,6 +124,7 @@ def lines_to_gcode(
     fit: bool = True,
     header_comment: str | None = None,
     feeds: Sequence[float] | None = None,
+    correction=None,
 ) -> str:
     """Linien (in mm) in ein vollständiges GCode-Programm übersetzen.
 
@@ -127,11 +134,14 @@ def lines_to_gcode(
 
     ``feeds`` setzt den Vorschub je Linie statt für alle gleich — gedacht für
     den Vorschub-Test aus :mod:`wallplotter.patterns`.
+
+    ``correction`` verzerrt die Geometrie zum Schluss gegen die bekannten
+    Maschinenfehler vor (siehe :mod:`wallplotter.correction`).
     """
     cfg = config or PlotConfig()
     if feeds is not None and len(feeds) != len([line for line in lines if len(line) >= 2]):
         raise ValueError("feeds muss genauso viele Einträge haben wie es Linien gibt")
-    geometry = prepare_geometry(lines, cfg, fit=fit)
+    geometry = prepare_geometry(lines, cfg, fit=fit, correction=correction)
     stats = PlotStats(geometry, cfg)
     out: list[str] = []
 
