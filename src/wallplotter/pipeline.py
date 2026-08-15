@@ -176,16 +176,23 @@ def lines_to_svg(
     stroke: str = "#1a4fd6",
     stroke_width_mm: float = 1.0,
     travel_stroke: str | None = None,
+    style: str = "",
 ) -> str:
     """Linien als SVG rendern — für die Vorschau in der Web-UI (Stufe 4).
 
     Mit ``travel_stroke`` werden zusätzlich die Leerwege (Pen-Up) gestrichelt
     eingezeichnet, damit man vor dem Plot sieht, wie viel Zeit im Leerlauf
     verbracht wird. Braucht kein vpype.
+
+    ``style`` landet als CSS am ``<svg>``. Ohne Höhenbegrenzung wächst eine
+    2,5 m hohe Wand im Browser über den ganzen Bildschirm hinaus — die Web-UI
+    setzt dort ``max-height``.
     """
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width_mm} {height_mm}" '
-        f'width="100%" preserveAspectRatio="xMidYMid meet">',
+        f'width="100%" preserveAspectRatio="xMidYMid meet"'
+        + (f' style="{style}"' if style else "")
+        + ">",
         f'<rect x="0" y="0" width="{width_mm}" height="{height_mm}" '
         f'fill="none" stroke="#999" stroke-width="{stroke_width_mm}" />',
     ]
