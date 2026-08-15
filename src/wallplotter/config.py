@@ -1,0 +1,104 @@
+"""Konfiguration für Wandfläche, Stift und GCode-Ausgabe.
+
+Alle Maße in Millimetern, alle Geschwindigkeiten in mm/min (GRBL-Konvention).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+# Wandfläche im Kletterwand-Keller (siehe docs/Projektidee.md)
+WALL_WIDTH_MM = 2000.0
+WALL_HEIGHT_MM = 2500.0
+
+
+@dataclass(frozen=True)
+class PenConfig:
+    """Pen-Lift über Servo am PWM-/Spindel-Pin.
+
+    FluidNC/GRBL-Dialekt: ``M3 S<wert>`` setzt die PWM-Stellung, ``M5`` schaltet
+    ab. Bewusst *nicht* ``M280`` — das ist Marlin/Makelangelo-spezifisch.
+    """
+
+    down_value: int = 30
+    """S-Wert für „Stift auf der Wand"."""
+
+    up_value: int = 0
+    """S-Wert für „Stift abgehoben"."""
+
+    dwell_s: float = 0.25
+    """Wartezeit nach jedem Hub, damit der Servo die Position erreicht."""
+
+    use_m5_for_up: bool = False
+    """``True`` sendet ``M5`` statt ``M3 S<up_value>`` zum Abheben.
+
+    Nur sinnvoll, wenn der Servo bei abgeschaltetem PWM in die Up-Position
+    federt — bei einem MG90S ist das normalerweise nicht der Fall.
+    """
+
+
+@dataclass(frozen=True)
+class PlotConfig:
+    """Alles, was einen konkreten Plot beschreibt."""
+
+    width_mm: float = WALL_WIDTH_MM
+    height_mm: float = WALL_HEIGHT_MM
+    margin_mm: float = 50.0
+    """Rand, der auf allen vier Seiten frei bleibt."""
+
+    draw_feed: float = 1500.0
+    """Vorschub bei Stift-auf-Wand (G1)."""
+
+    travel_feed: float = 3000.0
+    """Vorschub für Leerwege (G0 wird von FluidNC ohnehin mit Rapid gefahren;
+    der Wert dient als Fallback, falls ``travel_as_g1`` gesetzt ist)."""
+
+    travel_as_g1: bool = False
+    """Leerwege als G1 mit ``travel_feed`` statt G0 ausgeben.
+
+    Sinnvoll, wenn die Riemen bei vollem Rapid zum Springen neigen.
+    """
+
+    invert_y: bool = True
+    """SVG hat den Ursprung oben links, die Maschine unten links.
+
+    Mit ``True`` wird beim GCode-Export gespiegelt, damit das Bild nicht auf
+    dem Kopf steht.
+    """
+
+    pen: PenConfig = field(default_factory=PenConfig)
+
+    @property
+    def drawable_width_mm(self) -> float:
+        return self.width_mm - 2 * self.margin_mm
+
+    @property
+    def drawable_height_mm(self) -> float:
+        return self.height_mm - 2 * self.margin_mm
+
+    def __post_init__(self) -> None:
+        if self.drawable_width_mm <= 0 or self.drawable_height_mm <= 0:
+            raise ValueError(
+                f"margin_mm={self.margin_mm} ist zu groß für die Fläche "
+                f"{self.width_mm}×{self.height_mm} mm"
+            )
+
+
+@dataclass(frozen=True)
+class FluidNCConfig:
+    """Zugang zum FluidNC-Board im Heimnetz."""
+
+    host: str = "fluidnc.local"
+    """Hostname oder IP des ESP32 (WLAN-Station-Modus, siehe Projektidee)."""
+
+    remote_dir: str = "/"
+    """Zielverzeichnis auf der µSD-Karte."""
+
+    timeout_s: float = 30.0
+
+    @property
+    def base_url(self) -> str:
+        host = self.host
+        if not host.startswith(("http://", "https://")):
+            host = f"http://{host}"
+        return host.rstrip("/")

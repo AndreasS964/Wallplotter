@@ -1,0 +1,190 @@
+"""CLI-Wrapper (Stufe 2 der Roadmap).
+
+    plot input.svg --out plot.gcode --upload --run
+
+Bleibt auch nach der Web-UI als Debugging- und Scripting-Werkzeug erhalten.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PenConfig, PlotConfig
+from .gcode import lines_to_gcode, prepare_geometry, stats_for
+from .pipeline import VpypeNotAvailable, image_to_lines, lines_to_svg, svg_to_lines
+
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="plot",
+        description="SVG oder Foto in FluidNC-GCode für den Wandplotter übersetzen.",
+    )
+    parser.add_argument("input", type=Path, help="SVG- oder Bilddatei")
+    parser.add_argument(
+        "-o", "--out", type=Path, help="Zieldatei (Standard: <input>.gcode)"
+    )
+    parser.add_argument("--preview", type=Path, help="Vorschau-SVG zusätzlich schreiben")
+
+    area = parser.add_argument_group("Fläche")
+    area.add_argument("--width", type=float, default=WALL_WIDTH_MM, help="mm")
+    area.add_argument("--height", type=float, default=WALL_HEIGHT_MM, help="mm")
+    area.add_argument("--margin", type=float, default=50.0, help="mm")
+    area.add_argument(
+        "--no-fit",
+        action="store_true",
+        help="Geometrie ist bereits in Maschinenkoordinaten, nicht einpassen",
+    )
+    area.add_argument(
+        "--no-invert-y",
+        action="store_true",
+        help="Y-Achse nicht spiegeln (Standard: SVG oben links → Maschine unten links)",
+    )
+
+    motion = parser.add_argument_group("Bewegung")
+    motion.add_argument("--draw-feed", type=float, default=1500.0, help="mm/min")
+    motion.add_argument("--travel-feed", type=float, default=3000.0, help="mm/min")
+    motion.add_argument(
+        "--travel-as-g1",
+        action="store_true",
+        help="Leerwege als G1 statt G0 (schont die Riemen)",
+    )
+    motion.add_argument("--pen-down", type=int, default=30, help="S-Wert Stift unten")
+    motion.add_argument("--pen-up", type=int, default=0, help="S-Wert Stift oben")
+    motion.add_argument("--pen-dwell", type=float, default=0.25, help="Sekunden")
+
+    geo = parser.add_argument_group("Optimierung")
+    geo.add_argument("--quantization", type=float, default=0.2, help="mm")
+    geo.add_argument("--simplify", type=float, default=0.1, help="mm, 0 = aus")
+    geo.add_argument("--merge", type=float, default=0.5, help="mm, 0 = aus")
+    geo.add_argument("--no-sort", action="store_true", help="linesort überspringen")
+    geo.add_argument(
+        "--no-reloop",
+        action="store_true",
+        help="Startpunkt geschlossener Kurven nicht würfeln (reproduzierbarer GCode)",
+    )
+    geo.add_argument(
+        "--occult", action="store_true", help="verdeckte Linien entfernen (Plugin occult)"
+    )
+
+    photo = parser.add_argument_group("Foto-Zweig (Plugin hatched)")
+    photo.add_argument("--pitch", type=float, default=3.0, help="Schraffurabstand in mm")
+    photo.add_argument(
+        "--levels", type=int, nargs=3, default=(64, 128, 192), metavar=("L1", "L2", "L3")
+    )
+    photo.add_argument("--blur", type=int, default=0)
+
+    net = parser.add_argument_group("FluidNC")
+    net.add_argument("--host", default="fluidnc.local", help="Hostname oder IP")
+    net.add_argument("--upload", action="store_true", help="auf die SD-Karte laden")
+    net.add_argument(
+        "--run", action="store_true", help="nach dem Upload direkt starten (impliziert --upload)"
+    )
+    net.add_argument("--remote-name", help="Dateiname auf der SD-Karte")
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    if not args.input.exists():
+        print(f"Datei nicht gefunden: {args.input}", file=sys.stderr)
+        return 2
+
+    plot_config = PlotConfig(
+        width_mm=args.width,
+        height_mm=args.height,
+        margin_mm=args.margin,
+        draw_feed=args.draw_feed,
+        travel_feed=args.travel_feed,
+        travel_as_g1=args.travel_as_g1,
+        invert_y=not args.no_invert_y,
+        pen=PenConfig(
+            down_value=args.pen_down, up_value=args.pen_up, dwell_s=args.pen_dwell
+        ),
+    )
+
+    optimize_kwargs = {
+        "simplify_tolerance_mm": args.simplify,
+        "merge_tolerance_mm": args.merge,
+        "sort": not args.no_sort,
+        "reloop": not args.no_reloop,
+        "remove_hidden": args.occult,
+    }
+
+    try:
+        if args.input.suffix.lower() in IMAGE_SUFFIXES:
+            lines = image_to_lines(
+                args.input,
+                pitch_mm=args.pitch,
+                levels=tuple(args.levels),
+                blur=args.blur,
+                image_suffix=args.input.suffix.lower(),
+                **optimize_kwargs,
+            )
+        else:
+            lines = svg_to_lines(
+                args.input, quantization_mm=args.quantization, **optimize_kwargs
+            )
+    except VpypeNotAvailable as exc:
+        print(str(exc), file=sys.stderr)
+        return 3
+
+    if not lines:
+        print("Keine Linien gefunden — falsche Datei oder leeres SVG?", file=sys.stderr)
+        return 4
+
+    gcode = lines_to_gcode(
+        lines,
+        plot_config,
+        fit=not args.no_fit,
+        header_comment=f"Quelle: {args.input.name}",
+    )
+
+    # Statistik auf der Maschinen-Geometrie: die Leerwege zum Nullpunkt hängen
+    # an der Spiegelung, sonst weicht die Schätzung vom GCode-Header ab
+    machine_lines = prepare_geometry(lines, plot_config, fit=not args.no_fit)
+
+    out_path = args.out or args.input.with_suffix(".gcode")
+    out_path.write_text(gcode, encoding="utf-8")
+    print(f"{stats_for(machine_lines, plot_config)}")
+    print(f"GCode geschrieben: {out_path}")
+
+    if args.preview:
+        # ungespiegelt, weil SVG wie die Zeichnung den Ursprung oben links hat
+        preview_lines = prepare_geometry(
+            lines, plot_config, fit=not args.no_fit, invert_y=False
+        )
+        args.preview.write_text(
+            lines_to_svg(
+                preview_lines, args.width, args.height, travel_stroke="#d64545"
+            ),
+            encoding="utf-8",
+        )
+        print(f"Vorschau geschrieben: {args.preview}")
+
+    if args.upload or args.run:
+        from .upload import FluidNCError, upload_and_run  # noqa: PLC0415
+
+        remote_name = args.remote_name or out_path.name
+        try:
+            remote_path = upload_and_run(
+                gcode,
+                remote_name,
+                FluidNCConfig(host=args.host),
+                run=args.run,
+            )
+        except FluidNCError as exc:
+            print(str(exc), file=sys.stderr)
+            return 5
+        print(f"Hochgeladen nach {remote_path}" + (" und gestartet" if args.run else ""))
+
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
