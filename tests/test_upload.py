@@ -17,9 +17,11 @@ class FakeSession:
         self.text = text
         self.status_code = status_code
         self.calls = []
+        self.timeouts = []
 
     def get(self, url, params=None, timeout=None):
         self.calls.append(("get", url, params))
+        self.timeouts.append(timeout)
         return FakeResponse(self.text, self.status_code)
 
     # kompatibel zu requests: download() ruft get() ohne params auf
@@ -160,10 +162,50 @@ def test_jog_without_feed_is_rejected():
         api.jog(dx=10, feed=0)
 
 
-def test_jog_cancel_sends_the_realtime_byte():
+@pytest.mark.parametrize(
+    ("action", "byte"),
+    [("pause", 0x21), ("resume", 0x7E), ("stop", 0x18), ("jog_cancel", 0x85)],
+)
+def test_realtime_bytes_go_out_as_percent_escapes(action, byte):
+    """Als Escape in der URL, nicht als Zeichen im params-Dict."""
+    api, session = client()
+    getattr(api, action)()
+    method, url, params = session.calls[0]
+    assert params is None
+    assert url.endswith(f"/command?plain=%{byte:02X}")
+
+
+def test_realtime_bytes_survive_the_requests_encoder():
+    """Der eigentliche Fehler lag nicht im Client, sondern eine Schicht tiefer.
+
+    Über ``params={"plain": "\x85"}`` macht requests aus dem Byte 0x85 die
+    UTF-8-Folge 0xC2 0x85 — das Board sieht dann nie das Byte, auf das es
+    wartet, und der Jog-Abbruch wirkt nicht. Ein Test gegen das params-Dict
+    hätte das nie gemerkt, deshalb geht dieser durch requests hindurch.
+    """
+    requests = pytest.importorskip("requests")
+
     api, session = client()
     api.jog_cancel()
-    assert session.calls[0][2] == {"plain": "\x85"}
+    prepared = requests.Request("GET", session.calls[0][1]).prepare()
+    assert prepared.url.endswith("plain=%85")
+
+    naiv = requests.Request("GET", "http://x/command", params={"plain": "\x85"}).prepare()
+    assert naiv.url.endswith("plain=%C2%85")   # so sah es vorher aus
+
+
+def test_realtime_uses_a_short_timeout():
+    """Ein Not-Halt darf nicht 30 Sekunden auf ein stummes Board warten."""
+    session = FakeSession()
+    api = FluidNCClient(FluidNCConfig(host="x", timeout_s=30.0), session)
+    api.stop()
+    assert session.timeouts[0] <= 5.0
+
+
+def test_realtime_rejects_impossible_bytes():
+    api, _ = client()
+    with pytest.raises(FluidNCError, match="zwischen 0 und 255"):
+        api.send_realtime(256)
 
 
 def test_set_zero_uses_g92():

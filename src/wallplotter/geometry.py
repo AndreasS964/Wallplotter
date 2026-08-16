@@ -41,18 +41,25 @@ def fit_to_area(
     height_mm: float,
     margin_mm: float = 0.0,
     center: bool = True,
+    source_bounds: tuple[float, float, float, float] | None = None,
 ) -> Lines:
     """Zeichnung proportional in die Fläche einpassen.
 
     Seitenverhältnis bleibt erhalten; ohne ``center`` wird linksbündig/oben
     ausgerichtet. Eine leere Zeichnung wird unverändert zurückgegeben.
+
+    ``source_bounds`` setzt die Ausgangs-Bounding-Box von Hand, statt sie aus
+    ``lines`` zu nehmen. Genau das braucht mehrfarbiges Plotten: jede Farbebene
+    muss mit *derselben* Abbildung eingepasst werden wie alle anderen, sonst
+    zöge jede ihre eigene Skalierung und die Ebenen lägen nicht mehr
+    übereinander.
     """
     inner_w = width_mm - 2 * margin_mm
     inner_h = height_mm - 2 * margin_mm
     if inner_w <= 0 or inner_h <= 0:
         raise ValueError("Rand ist größer als die Fläche")
 
-    xmin, ymin, xmax, ymax = bounds(lines)
+    xmin, ymin, xmax, ymax = source_bounds if source_bounds is not None else bounds(lines)
     src_w, src_h = xmax - xmin, ymax - ymin
     if src_w <= 0 and src_h <= 0:
         return [list(line) for line in lines]
@@ -116,24 +123,113 @@ def sort_lines(lines: Sequence[Line], start: Point = (0.0, 0.0)) -> Lines:
     vpype kann das mit ``linesort`` besser, aber die Bildverfahren erzeugen
     ihre Geometrie ohne vpype — und ungeordnet kostet eine zerschnittene
     Spirale mehr Leerweg als Zeichenweg.
+
+    Gesucht wird über ein Raster statt über alle Linien: ``stipple`` liefert
+    für ein Foto leicht zehntausend kurze Striche, und die paarweise Suche
+    wächst quadratisch — das sind dann Minuten statt Sekunden, bei jedem
+    Reglerdreh in der Web-UI aufs Neue. Das Ergebnis ist dasselbe, nur der Weg
+    dorthin kürzer.
     """
     remaining = [list(line) for line in lines if len(line) >= 2]
+    if not remaining:
+        return []
+
+    # Beide Enden jeder Linie ins Raster hängen — angefahren werden darf jedes,
+    # die Linie wird dann gegebenenfalls umgedreht gezeichnet.
+    ends = [(line[0], line[-1]) for line in remaining]
+    xs = [point[0] for pair in ends for point in pair]
+    ys = [point[1] for pair in ends for point in pair]
+    span = max(max(xs) - min(xs), max(ys) - min(ys))
+    cell = max(span / max(1, math.isqrt(len(remaining))), 1e-9)
+
+    grid: dict[tuple[int, int], list[int]] = {}
+    for index, (head, tail) in enumerate(ends):
+        for point in (head, tail):
+            grid.setdefault((int(point[0] // cell), int(point[1] // cell)), []).append(index)
+    gxs = [gx for gx, _ in grid]
+    gys = [gy for _, gy in grid]
+    grid_box = (min(gxs), max(gxs), min(gys), max(gys))
+
+    open_lines = set(range(len(remaining)))
     ordered: Lines = []
     position = start
-    while remaining:
-        best_index, best_distance, best_flip = 0, math.inf, False
-        for index, line in enumerate(remaining):
-            for flip in (False, True):
-                head = line[-1] if flip else line[0]
-                distance = math.hypot(head[0] - position[0], head[1] - position[1])
-                if distance < best_distance:
-                    best_index, best_distance, best_flip = index, distance, flip
-        line = remaining.pop(best_index)
+    while open_lines:
+        best_index, best_flip = _nearest_end(grid, grid_box, ends, open_lines, position, cell)
+        open_lines.discard(best_index)
+        line = remaining[best_index]
         if best_flip:
             line.reverse()
         ordered.append(line)
         position = line[-1]
     return ordered
+
+
+def _nearest_end(
+    grid: dict[tuple[int, int], list[int]],
+    grid_box: tuple[int, int, int, int],
+    ends: Sequence[tuple[Point, Point]],
+    open_lines: set[int],
+    position: Point,
+    cell: float,
+) -> tuple[int, bool]:
+    """Nächstes freies Linienende suchen: ``(Index, umdrehen?)``.
+
+    Ring für Ring nach außen. Aufgehört wird erst, wenn selbst der
+    nächstmögliche Punkt des nächsten Rings weiter weg läge als der beste
+    bisher gefundene — sonst käme statt der kürzesten nur eine kurze Anfahrt
+    heraus.
+    """
+    cx, cy = int(position[0] // cell), int(position[1] // cell)
+    min_gx, max_gx, min_gy, max_gy = grid_box
+    # Der Startpunkt kann weit außerhalb der Zeichnung liegen (Maschinennullpunkt
+    # in einer Ecke). Leere Ringe davor werden übersprungen statt abgesucht.
+    first = max(0, min_gx - cx, cx - max_gx, min_gy - cy, cy - max_gy)
+    last = max(abs(cx - min_gx), abs(cx - max_gx), abs(cy - min_gy), abs(cy - max_gy))
+
+    # Verglichen wird das Tripel, nicht nur der Abstand. Zwei Linien, die
+    # einen Endpunkt teilen, liegen exakt gleich weit weg — und welche davon
+    # zuerst gezogen wird, entscheidet über den *nächsten* Leerweg. Die
+    # Rasterreihenfolge ist dabei eine andere als die Listenreihenfolge; ohne
+    # festen Gleichstand käme mal der eine, mal der andere Weg heraus, und
+    # gelegentlich der längere.
+    best = (math.inf, len(ends), False)
+    best_index = -1
+    for ring in range(first, last + 1):
+        for gx, gy in _ring_cells(cx, cy, ring, grid_box):
+            for index in grid.get((gx, gy), ()):
+                if index not in open_lines:
+                    continue
+                for flip in (False, True):
+                    head = ends[index][1] if flip else ends[index][0]
+                    squared = (head[0] - position[0]) ** 2 + (head[1] - position[1]) ** 2
+                    if (squared, index, flip) < best:
+                        best, best_index = (squared, index, flip), index
+        if best_index >= 0 and (ring * cell) ** 2 >= best[0]:
+            break
+    return best_index, best[2]
+
+
+def _ring_cells(cx: int, cy: int, ring: int, box: tuple[int, int, int, int]):
+    """Belegbare Zellen mit genau ``ring`` Abstand (Schachbrett) um ``(cx, cy)``.
+
+    Auf ``box`` beschnitten: außerhalb liegt garantiert nichts, und ein Ring
+    um einen weit entfernten Startpunkt hätte sonst Millionen leerer Zellen.
+    """
+    min_gx, max_gx, min_gy, max_gy = box
+    if ring == 0:
+        if min_gx <= cx <= max_gx and min_gy <= cy <= max_gy:
+            yield (cx, cy)
+        return
+    columns = range(max(cx - ring, min_gx), min(cx + ring, max_gx) + 1)
+    for gy in (cy - ring, cy + ring):
+        if min_gy <= gy <= max_gy:
+            for gx in columns:
+                yield (gx, gy)
+    rows = range(max(cy - ring + 1, min_gy), min(cy + ring - 1, max_gy) + 1)
+    for gx in (cx - ring, cx + ring):
+        if min_gx <= gx <= max_gx:
+            for gy in rows:
+                yield (gx, gy)
 
 
 def draw_length(lines: Iterable[Line]) -> float:

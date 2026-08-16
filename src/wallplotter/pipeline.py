@@ -42,6 +42,11 @@ class Layer:
     def label(self) -> str:
         return self.name or self.color
 
+    @property
+    def slug(self) -> str:
+        """Beschriftung als Dateinamensteil (``#e02020`` → ``e02020``)."""
+        return "".join(ch for ch in self.label if ch.isalnum()) or "ebene"
+
 
 # 1 CSS-Pixel = 1/96 Zoll — vpypes interne Längeneinheit.
 _PX_TO_MM = 25.4 / 96.0

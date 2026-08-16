@@ -5,13 +5,35 @@ hält (falsche Feldnamen, vertauschte Argumente, kaputte Callbacks fallen hier
 auf, bevor sie vor der Wand auffallen).
 """
 
+import asyncio
+import time
+from types import SimpleNamespace
+
 import pytest
 
 pytest.importorskip("nicegui", reason="NiceGUI ist optional (Extra: web)")
 
 from wallplotter.calibration import AreaCalibration  # noqa: E402
 from wallplotter.location import Location, LocationBook  # noqa: E402
+from wallplotter.upload import FluidNCError  # noqa: E402
 from wallplotter.webapp import WallplotterUI, create_app  # noqa: E402
+
+
+def run_handler(app, coro):
+    """Eine Coroutine so ausführen, wie NiceGUI es tut: im Slot ihres Elements.
+
+    NiceGUI hält den Slot über den gesamten ``await`` hinweg offen
+    (``events._await_and_handle_in_context``) — ohne ihn findet ``ui.notify``
+    keinen Client. Der Slot-Stapel hängt am asyncio-Task, deshalb muss er
+    *innerhalb* der neuen Task betreten werden.
+    """
+
+    async def wrapper():
+        with app.layer_box:
+            return await coro
+
+    return asyncio.run(wrapper())
+
 
 CORNERS = {
     "bottom-left": (100.0, 200.0),
@@ -138,7 +160,7 @@ def test_ui_survives_having_no_location_at_all(tmp_path):
     instance.build_ui()
     instance.refresh_calibration()
     assert instance.location is None
-    instance.record_corner("bottom-left")   # darf nicht abstürzen
+    run_handler(instance, instance.record_corner("bottom-left"))  # darf nicht abstürzen
     assert instance.plot_config().width_mm == 2000.0
 
 
@@ -155,12 +177,12 @@ def test_photo_technique_can_be_switched(app, tmp_path):
     app.upload_name = "foto.png"
 
     app.technique.set_value("spiral")
-    app.render_upload()
+    run_handler(app, app.render_upload())
     assert len(app.lines) >= 1
     spiral_points = sum(len(line) for line in app.lines)
 
     app.technique.set_value("tsp")
-    app.render_upload()
+    run_handler(app, app.render_upload())
     assert len(app.lines) == 1                      # eine durchgehende Linie
     assert sum(len(line) for line in app.lines) != spiral_points
     assert "tsp" in app.source_name
@@ -174,7 +196,7 @@ def test_photo_geometry_is_not_fitted_again(app, tmp_path):
     path = tmp_path / "foto.png"
     Image.new("L", (60, 75), 100).save(path)
     app.upload_data, app.upload_name = path.read_bytes(), "foto.png"
-    app.render_upload()
+    run_handler(app, app.render_upload())
     assert app.fit_source is False
 
 
@@ -189,12 +211,12 @@ def test_colour_layers_are_listed_and_plottable(app, tmp_path):
         encoding="utf-8",
     )
     app.upload_data, app.upload_name = svg.read_bytes(), "bunt.svg"
-    app.render_upload()
+    run_handler(app, app.render_upload())
 
     assert len(app.layers) == 2
     assert {layer.color for layer in app.layers} == {"#000000", "#e02020"}
     assert "2 Farben" in app.source_name
-    app.send_layer(0)          # ohne Board: darf nur nicht abstürzen
+    run_handler(app, app.send_layer(0))   # ohne Board: darf nur nicht abstürzen
 
 
 def test_photo_upload_clears_previous_layers(app, tmp_path):
@@ -205,5 +227,143 @@ def test_photo_upload_clears_previous_layers(app, tmp_path):
     path = tmp_path / "foto.png"
     Image.new("L", (40, 50), 120).save(path)
     app.upload_data, app.upload_name = path.read_bytes(), "foto.png"
-    app.render_upload()
+    run_handler(app, app.render_upload())
     assert app.layers == []
+
+
+def test_empty_number_fields_do_not_crash_the_ui(app, tmp_path):
+    """Ein geleertes Zahlenfeld liefert None — das darf keine Rechnung erreichen."""
+    pytest.importorskip("PIL.Image")
+    from PIL import Image
+
+    path = tmp_path / "foto.png"
+    Image.new("L", (40, 50), 120).save(path)
+    app.upload_data, app.upload_name = path.read_bytes(), "foto.png"
+
+    app.pitch.set_value(None)
+    run_handler(app, app.render_upload())   # früher: TypeError aus imaging.spiral
+    assert app.lines
+
+    app.jog_step.set_value(None)
+    run_handler(app, app.jog(1, 0))   # ohne Board: darf nur nicht abstürzen
+
+
+def test_absurd_margin_does_not_crash_the_ui(app):
+    """PlotConfig wirft bei zu großem Rand — die Oberfläche darf das nicht."""
+    app.margin.set_value(9999)
+    config = app.plot_config()
+    assert config.drawable_width_mm > 0
+    assert config.drawable_height_mm > 0
+
+
+def test_status_polling_does_not_block_the_event_loop(app):
+    """Die Timer-Abfrage läuft in einem Thread — sonst friert die UI alle zwei
+    Sekunden für die Timeout-Dauer ein, sobald das Board nicht antwortet.
+
+    Gezählt wird, nicht gestoppt: gemessene Wanduhrzeit macht den Test auf
+    einem ausgelasteten Rechner grundlos rot. Entscheidend ist allein, ob die
+    Event-Loop *während* der Abfrage noch andere Aufgaben drankommen lässt.
+    """
+    def slow_status():
+        time.sleep(0.5)
+        raise FluidNCError("nicht erreichbar")
+
+    app.client = lambda timeout=10.0: SimpleNamespace(status=slow_status)
+
+    async def scenario():
+        ticks = 0
+        running = True
+
+        async def counter():
+            nonlocal ticks
+            while running:
+                await asyncio.sleep(0.005)
+                ticks += 1
+
+        task = asyncio.ensure_future(counter())
+        await app.poll_status()
+        during = ticks          # Stand in dem Moment, als die Abfrage fertig war
+        running = False
+        task.cancel()
+        return during
+
+    # Läuft die Abfrage im Thread, kommt der Zähler währenddessen etliche Male
+    # dran; blockiert sie die Loop, steht er bei null. Die Schwelle ist bewusst
+    # weit unter dem Erwartungswert (~100), damit Last auf dem Rechner den Test
+    # nicht grundlos rot macht.
+    assert asyncio.run(scenario()) >= 5
+    assert app.status_label.text == "FluidNC nicht erreichbar"
+
+
+def test_a_pen_can_be_assigned_per_colour_layer(app):
+    """Rot mit dem Marker, Schwarz mit dem Fineliner — die Zuordnung trifft der
+    Mensch vor dem Stiftkasten, nicht die Software."""
+    from wallplotter.pipeline import Layer
+
+    app.layers = [
+        Layer(1, "#000000", [[(0.0, 0.0), (100.0, 0.0)]]),
+        Layer(2, "#e02020", [[(0.0, 10.0), (100.0, 10.0)]]),
+    ]
+    app.lines = [line for layer in app.layers for line in layer.lines]
+    app.fit_source = True
+    app.refresh_layers()
+
+    app.assign_head("#e02020", "marker")
+    assert app.layer_tools()["#e02020"].name == "Marker"
+
+    run_handler(app, app.send_layer(1))   # ohne Board: darf nur nicht abstürzen
+
+
+def test_layers_without_an_assignment_use_the_selected_head(app):
+    from wallplotter.pipeline import Layer
+
+    app.layers = [Layer(1, "#000000", [[(0.0, 0.0), (100.0, 0.0)]])]
+    app.refresh_layers()
+    assert app.layer_tools() == {}
+
+
+def test_the_laser_needs_arming_in_the_ui_too(app):
+    """Das Gegenstück zu --laser-verstanden.
+
+    Ohne Riegel stünde der Laser als gewöhnlicher Menüeintrag neben den
+    Stiften, und ein Klick erzeugte ein vollständiges Laserprogramm, das der
+    nächste Knopf hochlädt und startet.
+    """
+    app.load_pattern("frame")
+    assert app.gcode is not None
+
+    app.head_select.set_value("laser")
+    app.regenerate()
+    assert app.gcode is None
+    assert "scharfgeschaltet" in app.info.text
+
+    app.laser_armed.set_value(True)
+    app.regenerate()
+    assert app.gcode is not None
+    assert "M4 S0" in app.gcode
+
+
+def test_negative_numbers_do_not_tear_the_ui_apart(app):
+    """Ein Zahlenfeld nimmt auch minus tausend an."""
+    app.load_pattern("frame")
+    for feld, wert in ((app.width, -500), (app.height, -1), (app.draw_feed, -1000),
+                       (app.pen_dwell, -0.5), (app.margin, -20)):
+        feld.set_value(wert)
+        config = app.plot_config()          # darf nicht werfen
+        assert config.width_mm > 0 and config.height_mm > 0
+        assert config.draw_feed > 0
+        app.regenerate()                    # und auch das nicht
+        feld.set_value(None)
+
+
+def test_a_broken_locations_file_does_not_stop_the_ui(tmp_path):
+    """Eine kaputte standorte.json ließ die Oberfläche im Konstruktor auffliegen —
+    ausgerechnet die Datei, die man vor der Wand am ehesten von Hand anfasst."""
+    from nicegui import ui
+
+    path = tmp_path / "standorte.json"
+    path.write_text("{kein json", encoding="utf-8")
+    instance = WallplotterUI(ui, locations_path=str(path))
+    instance.build_ui()
+    assert instance.location is None
+    assert instance.plot_config().width_mm == 2000.0

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wallplotter"
-version = "0.1.0"
+version = "0.2.0"
 description = "Bild-zu-GCode-Toolchain für einen selbstgebauten V-Plotter an der Kellerwand (FluidNC/GRBL)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,15 +21,23 @@ dependencies = [
 
 [project.optional-dependencies]
 geometry = ["vpype>=1.14"]
-photo = ["pillow>=10.0", "hatched>=0.2"]
+# Nur Pillow: stipple, tsp und spiral rechnen selbst. `hatched` steht bewusst
+# daneben statt hier drin — es zieht vpype[all], OpenCV, scikit-image und
+# matplotlib nach, und dafür soll sich entscheiden, wer wirklich schraffieren
+# will.
+photo = ["pillow>=10.0"]
+hatch = ["pillow>=10.0", "hatched>=0.2"]
 web = ["nicegui>=2.0"]
 dev = ["pytest>=8.0", "ruff>=0.6", "pyyaml>=6.0"]
 
 [project.scripts]
 plot = "wallplotter.cli:main"
 wallplotter-calibrate = "wallplotter.calibrate_cli:main"
+wallplotter-correct = "wallplotter.correct_cli:main"
+wallplotter-doctor = "wallplotter.doctor:main"
 wallplotter-kinematics = "wallplotter.kinematics:main"
 wallplotter-location = "wallplotter.location_cli:main"
+wallplotter-resume = "wallplotter.resume_cli:main"
 
 [project.urls]
 Repository = "https://github.com/AndreasS964/Wallplotter"

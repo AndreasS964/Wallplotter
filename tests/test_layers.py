@@ -3,7 +3,8 @@
 import pytest
 
 from wallplotter.config import PlotConfig
-from wallplotter.gcode import layers_to_gcode
+from wallplotter.gcode import layers_to_gcode, prepare_geometry
+from wallplotter.geometry import bounds
 from wallplotter.pipeline import Layer
 
 CONFIG = PlotConfig(width_mm=1000, height_mm=1000, margin_mm=0, invert_y=False)
@@ -98,3 +99,78 @@ def test_no_fit_keeps_the_original_coordinates():
 def test_layer_label_falls_back_to_the_colour():
     named = Layer(1, "#000000", BLACK.lines, name="Kontur")
     assert set(layers_to_gcode([named], CONFIG)) == {"Kontur"}
+
+
+# Wie CONFIG, aber mit Spiegelung und Flächenversatz — also so, wie es nach
+# einer Kalibrierung wirklich aussieht.
+CALIBRATED = PlotConfig(
+    width_mm=1000, height_mm=1000, margin_mm=50, origin_x_mm=300.0, origin_y_mm=200.0
+)
+
+
+def test_layers_land_where_a_single_colour_drawing_lands():
+    """Der eigentliche Passer-Test: dieselbe Zeichnung, einmal ein-, einmal
+    mehrfarbig — beide Male muss sie an derselben Stelle der Wand liegen.
+
+    Mit Flächenversatz ging das früher schief: der Versatz wurde in X doppelt
+    gerechnet und in Y wieder weggekürzt, die Zeichnung landete gut 30 cm
+    daneben.
+    """
+    combined = [line for layer in (BLACK, RED) for line in layer.lines]
+    expected = bounds(prepare_geometry(combined, CALIBRATED, fit=True))
+
+    programs = layers_to_gcode([BLACK, RED], CALIBRATED, fit=True)
+    points = [point for program in programs.values() for point in coordinates(program)]
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    assert (min(xs), min(ys), max(xs), max(ys)) == pytest.approx(expected, abs=1e-6)
+
+
+def test_layers_keep_the_area_offset_exactly_once():
+    programs = layers_to_gcode([BLACK], CALIBRATED, fit=True)
+    xs = [x for x, _ in coordinates(programs["#000000"])]
+    # 1000 mm Fläche, 50 mm Rand, 300 mm Versatz → 350 … 1250
+    assert min(xs) == pytest.approx(350.0, abs=1e-6)
+    assert max(xs) == pytest.approx(1250.0, abs=1e-6)
+
+
+def test_flat_drawing_is_still_scaled_to_the_area():
+    """Eine Zeichnung ohne Höhe hat eine entartete Bounding-Box — sie wurde
+    dadurch früher gar nicht mehr skaliert und kam winzig aus der Maschine."""
+    wide = Layer(1, "#000000", [[(0.0, 0.0), (100.0, 0.0)]])
+    half = Layer(2, "#e02020", [[(0.0, 0.0), (50.0, 0.0)]])
+    programs = layers_to_gcode([wide, half], CONFIG, fit=True)
+    black = [x for x, _ in coordinates(programs["#000000"])]
+    red = [x for x, _ in coordinates(programs["#e02020"])]
+    assert max(black) - min(black) == pytest.approx(1000.0, abs=1e-6)
+    assert max(red) - min(red) == pytest.approx(500.0, abs=1e-6)
+
+
+def test_no_park_run_across_the_wall_before_a_pen_change():
+    """Vor jeder M0-Pause stand die abschließende Parkfahrt.
+
+    Aus dem Programm für sich gesehen harmlos, an der Wand nicht: die Gondel
+    fuhr vor jedem Stiftwechsel quer über die Fläche zum Nullpunkt und danach
+    wieder zurück. Bei einer kalibrierten Fläche liegt der Nullpunkt obendrein
+    außerhalb der Zeichenfläche.
+    """
+    # Fläche mit Versatz: dort liegt der Nullpunkt garantiert außerhalb der
+    # Zeichnung, eine Fahrt dorthin ist also nie Teil des Bildes
+    combined = layers_to_gcode([BLACK, RED], CALIBRATED, separate=False)
+    lines = combined.splitlines()
+    pause = next(index for index, line in enumerate(lines) if line.startswith("M0 "))
+    assert not any(line.startswith("G0 X0 Y0") for line in lines[:pause])
+    # genau eine Parkfahrt, und die steht am Schluss
+    assert combined.count("G0 X0 Y0") == 1
+    # das Werkzeug ist trotzdem aus, bevor jemand hinfasst
+    assert any(line.startswith("M5") for line in lines[pause - 4 : pause])
+
+
+def test_each_layer_gets_the_tool_preamble_after_a_change():
+    """Nach dem Wechsel muss der neue Kopf hochgefahren werden — beim Laser
+    wären das Luft an, Vorlauf und Lasermodus."""
+    combined = layers_to_gcode([BLACK, RED], CONFIG, separate=False)
+    lines = combined.splitlines()
+    pause = next(index for index, line in enumerate(lines) if line.startswith("M0 "))
+    after = lines[pause + 1 : pause + 8]
+    assert any(line.startswith("M3 S0") for line in after)   # Stift oben, definierter Zustand

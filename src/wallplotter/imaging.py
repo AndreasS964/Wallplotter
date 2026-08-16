@@ -25,7 +25,18 @@ from dataclasses import dataclass
 
 from .geometry import Line, Lines, Point, simplify, sort_lines
 
-__all__ = ["TECHNIQUES", "GrayImage", "load_gray", "image_to_lines", "describe"]
+__all__ = [
+    "IMAGE_SUFFIXES",
+    "TECHNIQUES",
+    "GrayImage",
+    "load_gray",
+    "image_to_lines",
+    "describe",
+]
+
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+"""Was als Bildvorlage statt als SVG behandelt wird — eine Liste für alle
+Oberflächen, sonst nimmt die eine ``.webp`` an und die andere nicht."""
 
 
 class ImagingError(RuntimeError):
@@ -294,7 +305,7 @@ def hatch(
     try:
         import hatched as hatched_module  # noqa: PLC0415
     except ImportError as exc:
-        raise ImagingError("Paket `hatched` fehlt — `pip install -e .[photo]`") from exc
+        raise ImagingError("Paket `hatched` fehlt — `pip install -e .[hatch]`") from exc
 
     import tempfile
     from pathlib import Path

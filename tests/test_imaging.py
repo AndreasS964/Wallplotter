@@ -157,3 +157,32 @@ def test_sorting_keeps_the_travel_short(photo):
 def test_every_technique_is_described():
     assert set(TECHNIQUES) == {"hatch", "stipple", "tsp", "spiral"}
     assert all(len(text) > 20 for text in TECHNIQUES.values())
+
+
+def test_hatch_fills_the_area(photo):
+    """Das vierte Verfahren war bisher nirgends geprüft — es hängt als
+    einziges an einem Fremdpaket, bricht also am ehesten weg."""
+    pytest.importorskip("hatched", reason="Paket `hatched` ist optional (Extra: hatch)")
+    lines = image_to_lines(photo, *AREA, "hatch", margin_mm=100.0, pitch_mm=8.0)
+    assert lines
+    xmin, ymin, xmax, ymax = bounds(lines)
+    assert xmin >= 100.0 - 1e-6
+    assert ymin >= 100.0 - 1e-6
+    assert xmax <= AREA[0] - 100.0 + 1e-6
+    assert ymax <= AREA[1] - 100.0 + 1e-6
+
+
+def test_missing_hatched_package_points_at_the_right_extra(photo, monkeypatch):
+    """Wer schraffieren will, soll den Namen des Extras lesen, nicht raten."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def without_hatched(name, *args, **kwargs):
+        if name == "hatched":
+            raise ImportError("no hatched here")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_hatched)
+    with pytest.raises(ImagingError, match=r"\.\[hatch\]"):
+        image_to_lines(photo, *AREA, "hatch")

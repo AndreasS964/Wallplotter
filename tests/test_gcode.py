@@ -53,7 +53,7 @@ def test_pen_lift_between_lines():
 
 
 def test_pen_up_can_use_m5():
-    config = PlotConfig(pen=PenConfig(use_m5_for_up=True, dwell_s=0))
+    config = PlotConfig(toolhead=PenConfig(use_m5_for_up=True, dwell_s=0))
     gcode = lines_to_gcode(SQUARE, config)
     assert "M3 S0" not in gcode
     assert gcode.count("M5") >= 2
@@ -83,3 +83,46 @@ def test_stats():
 def test_margin_larger_than_area_is_rejected():
     with pytest.raises(ValueError):
         PlotConfig(width_mm=100, height_mm=100, margin_mm=60)
+
+
+def test_stats_count_the_servo_dwell():
+    """Bei einem Punktraster sind die Stifthübe der Löwenanteil der Laufzeit."""
+    dots = [[(float(i), 0.0), (float(i) + 1.0, 0.0)] for i in range(0, 200, 2)]
+    config = PlotConfig(toolhead=PenConfig(dwell_s=0.25))
+    stats = stats_for(dots, config)
+    assert stats.pen_s == pytest.approx(2 * 100 * 0.25)
+    assert stats.duration_s == pytest.approx(stats.motion_s + stats.pen_s)
+    assert "Werkzeughübe" in str(stats)
+
+
+def test_stats_without_dwell_are_pure_motion():
+    config = PlotConfig(toolhead=PenConfig(dwell_s=0.0))
+    stats = stats_for(SQUARE, config)
+    assert stats.pen_s == 0.0
+    assert stats.duration_s == pytest.approx(stats.motion_s)
+    assert "Werkzeughübe" not in str(stats)
+
+
+def test_the_area_offset_keeps_the_motion_limits():
+    """to_plot_config übertrug limits nicht — mit --location rechnete die
+    Schätzung also stets mit den Vorgabewerten statt mit der echten Maschine."""
+    from wallplotter.calibration import AreaCalibration
+    from wallplotter.timing import MotionLimits
+
+    calibration = AreaCalibration(points={
+        "bottom-left": (0.0, 0.0), "bottom-right": (1000.0, 0.0),
+        "top-right": (1000.0, 1000.0), "top-left": (0.0, 1000.0),
+    })
+    vorlage = PlotConfig(limits=MotionLimits(acceleration_mm_s2=1234.0))
+    assert calibration.to_plot_config(vorlage).limits.acceleration_mm_s2 == 1234.0
+
+
+def test_travel_is_counted_for_every_pass():
+    """_program gibt die Anfahrten je Durchgang neu aus — die Statistik muss
+    dieselbe Rechnung machen."""
+    from wallplotter.toolhead import LaserToolhead
+
+    lines = [[(0.0, 0.0), (10.0, 0.0)], [(50.0, 50.0), (60.0, 50.0)]]
+    einmal = stats_for(lines, PlotConfig(toolhead=LaserToolhead()))
+    dreimal = stats_for(lines, PlotConfig(toolhead=LaserToolhead(passes=3)))
+    assert dreimal.travel_mm == pytest.approx(3 * einmal.travel_mm)
