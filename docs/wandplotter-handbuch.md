@@ -3,7 +3,7 @@
 Alles zum Projekt an einer Stelle: was gebaut wird, warum es so gebaut wird,
 was gemessen und gerechnet wurde, und wie man es bedient.
 
-*Stand: August 2026 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 241 Tests, CI grün*
+*Stand: August 2026 · Version 0.2.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 355 Tests, CI grün*
 
 ---
 
@@ -25,7 +25,7 @@ Aufhängung im Code.
 
 | Bereich | Zustand |
 | --- | --- |
-| Software (Geometrie, GCode, Kalibrierung, Bildverfahren, UI) | fertig und unter Test |
+| Software (Geometrie, GCode, Kalibrierung, Bildverfahren, UI, Werkzeugköpfe) | fertig und unter Test |
 | Kinematik durchgerechnet | fertig, siehe Abschnitt 4 |
 | FluidNC-Konfiguration | entworfen, ein Pin offen (Servo-PWM) |
 | Board | bestellt, noch nicht da |
@@ -333,17 +333,43 @@ die Karte. (Das hatten wir zuerst falsch.)
 
 ## 7. Arbeitsabläufe
 
+### Was heute schon läuft — und was nicht
+
+Die Software ist vollständig und getestet; verifiziert ist sie aber nur, soweit
+sie ohne Maschine verifizierbar ist. Diese Trennung ehrlich zu halten, ist
+wichtiger als eine Versionsnummer:
+
+| | Zustand |
+| --- | --- |
+| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 355 Tests |
+| Laufzeitschätzung, Fortsetzen, Vorverzerrung, Kalibrierlogik | **läuft**, gegen erzeugte Programme geprüft |
+| Web-UI, alle sechs CLIs | **läuft**, ohne Board bedienbar |
+| Upload, Jog, Status, `$SD/Run` | nach ESP3D-Doku gebaut, **nie an einem Board** |
+| Servo-Werte, PWM-Pin, `M0`-Pause | **Platzhalter**, hängen an der Hardware |
+| Laserpfad | nach Doku und Quelltext gebaut, **nie erprobt** |
+
+Wer heute `pip install -e .` macht, kann sofort: Bilder und SVGs in GCode
+übersetzen, Vorschau ansehen, Laufzeit schätzen, Testmuster erzeugen, Standorte
+und Flächen rechnen, Korrekturen anpassen. Was ein Board braucht, ist genau
+das, was ohne Board auch keinen Sinn hätte.
+
+Selbst nachsehen: `wallplotter-doctor`.
+
 ### Erstinbetriebnahme
 
 1. Board flashen, `config.yaml` hochladen, WLAN einrichten
-2. Motoren ohne Mechanik auf dem Tisch testen, Treiberstrom prüfen
-3. Servo/Pen-Lift durchtesten, S-Werte für oben/unten ermitteln
-4. Mechanik drucken (PETG), Wellenhöhen-Variante gegen die Motoren prüfen
-5. Wandmontage, Riemen ablängen
-6. Standort anlegen (drei Maße), Nullpunkt setzen
-7. Ecken anfahren und aufnehmen
-8. `--pattern frame` plotten — der erste ehrliche Test
-9. `--pattern grid` plotten und nachmessen → Korrektur bestimmen
+2. `wallplotter-doctor --host <ip>` — sagt, was noch fehlt
+3. Motoren ohne Mechanik auf dem Tisch testen, Treiberstrom prüfen
+4. Servo/Pen-Lift durchtesten, S-Werte für oben/unten ermitteln,
+   in `toolhead.PENS` eintragen (die Katalogwerte sind Schätzungen)
+5. Mechanik drucken (PETG), Wellenhöhen-Variante gegen die Motoren prüfen
+6. Wandmontage, Riemen ablängen
+7. Standort anlegen (drei Maße), Nullpunkt setzen
+8. Ecken anfahren und aufnehmen
+9. `--pattern frame` plotten — der erste ehrliche Test
+10. `--pattern pen-test` — Servo-Wartezeit festklopfen
+11. `--pattern feed-ramp` — brauchbare Höchstgeschwindigkeit finden
+12. `--pattern grid` plotten und nachmessen → `wallplotter-correct`
 
 ### Neuer Standort
 
@@ -529,15 +555,25 @@ dunklen Stellen bedient. Die Statistik zeigt das vor jedem Plot an.
 
 - ESP3D-Endpunkte (`/sdfiles`, `/sd/`, `/command`) — nach Dokumentation gebaut,
   gegen Simulator getestet
-- Servo-S-Werte für Pen-Up/Down sind Platzhalter
+- Realtime-Bytes (`!`, `~`, `0x18`, `0x85`) gehen jetzt als Prozent-Escape
+  hinaus statt durch die URL-Aufbereitung von `requests`. Dass das Board sie so
+  annimmt, ist begründet, aber nicht nachgemessen — der Not-Halt gehört als
+  Erstes ausprobiert.
+- Servo-S-Werte für Pen-Up/Down sind Platzhalter, ebenso alle Werte im
+  Stiftkatalog
 - PWM-Pin für den Servo in der `config.yaml` (siehe Abschnitt 5)
 - Ob FluidNC `M0` als Pause versteht (für `--layers --one-file`)
+- Der komplette Laserpfad
 
 **Danach zu bestimmen:**
 
-- Riemensteifigkeit aus einem gemessenen Raster → Dehnungskorrektur scharf stellen
+- Riemensteifigkeit aus einem gemessenen Raster → Dehnungskorrektur scharf
+  stellen (`wallplotter-correct anpassen --model dehnung`)
 - StallGuard-Empfindlichkeit fürs sensorlose Homing
 - Brauchbare Höchstgeschwindigkeit über `--pattern feed-ramp`
+- Ob die Laufzeitschätzung stimmt: `--pattern grid` plotten, Uhr mitlaufen
+  lassen, mit der Angabe im GCode-Kopf vergleichen. Weicht sie ab, sind
+  `--acceleration` und `--max-rate` die Stellschrauben.
 
 **Ideen, noch nicht gebaut:**
 
