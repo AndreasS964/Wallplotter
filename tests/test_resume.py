@@ -258,3 +258,12 @@ def test_resume_names_the_tool_that_has_to_be_in_the_holder():
     rest = resume_program(combined, line=inside)
     assert "Im Halter muss stecken" in rest
     assert "#e02020" in rest
+
+
+def test_a_program_without_any_tool_command_says_so():
+    """Ein fremdes Programm, das den Stift über die Z-Achse hebt, lässt sich
+    hier nicht rekonstruieren — das gehört gesagt, statt „schon fertig" zu
+    melden."""
+    z_achse = "\n".join(["G21", "G90", "G0 X10 Y10", "G1 Z-1", "G1 X50 Y10", "G1 Z1", "M2"])
+    with pytest.raises(ResumeError, match="keine einzige Zeichenbewegung"):
+        resume_program(z_achse, percent=50)

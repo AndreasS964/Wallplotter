@@ -264,6 +264,15 @@ def resume_program(
     before = states[start - 1] if start > 0 else ProgramState()
 
     rest = [text for text in lines[start:] if text.strip()]
+    if states[-1].draw_count == 0:
+        # Kein einziger Zug mit wirkendem Werkzeug: entweder ist das Programm
+        # leer, oder es hebt den Stift anders als über die Spindel (etwa über
+        # eine Z-Achse) — das kann hier niemand rekonstruieren.
+        raise ResumeError(
+            "In diesem Programm findet sich keine einzige Zeichenbewegung. Erwartet werden "
+            "Programme dieser Toolchain, die das Werkzeug über M3/M4/M5 und S-Werte führen; "
+            "ein Stiftheben über die Z-Achse lässt sich hier nicht nachvollziehen."
+        )
     if states[-1].draw_count <= before.draw_count:
         raise ResumeError(
             "Ab dieser Stelle wird nichts mehr gezeichnet — der Plot war schon durch."
