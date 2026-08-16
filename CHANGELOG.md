@@ -96,6 +96,32 @@ Mit `--from-board` kommt der Fortschritt aus dem Status der Maschine.
 Oberfläche aus erreichbar. Jetzt: `--correction`, `--adaptive-feed`, und die
 Resonanzprüfung läuft bei jedem Plot mit — in der CLI wie in der Web-UI.
 
+### Aus der Nachprüfung
+
+Fünf unabhängige Prüfer über den fertigen Umbau, jeder Fund einzeln
+gegengeprüft. Sieben hielten stand:
+
+- **Der Laser-Riegel hatte ein Loch.** `--laser-verstanden` prüfte nur den Kopf
+  aus `--toolhead`; über `--pen-for 'FARBE=laser'` entstand vollständiger
+  Laser-GCode ohne Rückfrage und ohne Warnung. Dieselbe Stelle ließ die
+  `--laser-*`-Schalter ins Leere laufen — bei `--laser-power 5 --laser-smax 255`
+  kam `S200` heraus statt `S13`.
+- **Der Web-UI fehlte das Gegenstück dazu** ganz.
+- **Ein fortgesetztes Laserprogramm zeichnete nicht.** Spindelmodus und
+  Luftunterstützung stehen nur einmal im Vorspann; das Restprogramm baute
+  beides nicht wieder auf und fuhr trocken ab. Mit `--exact` stand dort ein
+  fest verdrahtetes `M3` — konstante Leistung, wo dynamische gemeint war.
+- **`sort_lines` lieferte doch nicht dasselbe wie die alte Fassung.** Teilen
+  sich zwei Linien einen Endpunkt, liegen sie exakt gleich weit weg; die
+  Rasterreihenfolge entschied anders als die Listenreihenfolge und
+  gelegentlich schlechter. Der Test verglich an Zufallszahlen — die liegen
+  praktisch nie exakt gleich weit, eine Zeichnung dagegen ständig.
+- `--adaptive-feed` und die Resonanzprüfung rechneten mit dem Vorschub aus der
+  Konfiguration statt mit dem des Kopfes.
+- `to_plot_config` verlor die Bewegungsgrenzen; `pass_pause_s` landete
+  nirgends; `travel_mm` ignorierte die Durchgänge.
+- Ein vertippter Ausgabepfad endete im Traceback statt in einer Meldung.
+
 ### Verpackung
 
 - `photo` zieht nur noch Pillow nach. Schraffur steht als eigenes Extra

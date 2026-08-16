@@ -35,6 +35,7 @@ from .correction import (
 )
 from .gcode import geometry_to_gcode, prepare_geometry
 from .location import LocationBook, LocationError
+from .output import OutputError, write_text
 from .patterns import cross
 
 DEFAULT_MEASUREMENTS = Path("messpunkte.json")
@@ -144,11 +145,12 @@ def main(argv: list[str] | None = None) -> int:
             geometry = prepare_geometry(
                 measurement_pattern(points, args.size), config, fit=False, invert_y=False
             )
-            args.out.write_text(
+            write_text(
+                args.out,
                 geometry_to_gcode(
                     geometry, config, header=f"Messraster {args.steps}x{args.steps}"
                 ),
-                encoding="utf-8",
+                what="Messraster",
             )
             print(f"Messraster geschrieben: {args.out} ({len(points)} Kreuze)")
             print("Plotten, dann jedes Kreuz nachmessen und die Ist-Werte eintragen:")
@@ -168,8 +170,10 @@ def main(argv: list[str] | None = None) -> int:
                     for x, y in points
                 ],
             }
-            args.measurements.write_text(
-                json.dumps(template, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            write_text(
+                args.measurements,
+                json.dumps(template, indent=2, ensure_ascii=False) + "\n",
+                what="Messvorlage",
             )
             print(f"Vorlage geschrieben: {args.measurements} ({len(points)} Punkte)")
             print("Ist-Werte eintragen, dann: wallplotter-correct anpassen")
@@ -205,7 +209,11 @@ def main(argv: list[str] | None = None) -> int:
                     "Fehler ist keiner, den man wegrechnen kann — dann hilft nur die Mechanik.",
                     file=sys.stderr,
                 )
-            correction.save(args.out)
+            write_text(
+                args.out,
+                json.dumps(correction.to_dict(), indent=2, ensure_ascii=False) + "\n",
+                what="Korrektur",
+            )
             print(f"Korrektur geschrieben: {args.out}")
             print(f"Verwenden mit: plot bild.svg --correction {args.out}")
             return 0
@@ -224,6 +232,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Restfehler an den Messpunkten: {_residual(correction, points):.2f} mm")
             return 0
 
+    except OutputError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     except (CorrectionError, LocationError) as exc:
         print(str(exc), file=sys.stderr)
         return 3

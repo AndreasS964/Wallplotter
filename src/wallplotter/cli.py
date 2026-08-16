@@ -16,6 +16,7 @@ from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PlotConfig
 from .gcode import geometry_to_gcode, layers_to_gcode, prepare_geometry, stats_for
 from .imaging import IMAGE_SUFFIXES, TECHNIQUES, ImagingError, image_to_lines
 from .imaging import describe as describe_techniques
+from .output import OutputError, write_text
 from .patterns import PATTERNS, build, describe
 from .pipeline import VpypeNotAvailable, lines_to_svg, svg_to_layers, svg_to_lines
 from .timing import MotionLimits
@@ -272,8 +273,15 @@ def guard_lasers(heads, args) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    try:
+        return _run(build_parser().parse_args(argv))
+    except OutputError as exc:
+        # Ein vertippter Ordner ist kein Softwarefehler und soll nicht so aussehen
+        print(str(exc), file=sys.stderr)
+        return 2
 
+
+def _run(args) -> int:
     if args.list_patterns:
         print(describe())
         return 0
@@ -414,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
                   f"→ {head_for(layer, tools, plot_config.toolhead).name}")
 
         if args.one_file:
-            base.write_text(result, encoding="utf-8")
+            write_text(base, result, what="GCode")
             print(f"{len(layer_list)} Ebenen mit Stiftwechsel-Pausen: {base}")
         else:
             slugs = {layer.label: layer.slug for layer in layer_list}
@@ -422,7 +430,7 @@ def main(argv: list[str] | None = None) -> int:
                 target = base.with_name(
                     f"{base.stem}-{position}-{slugs.get(label, 'ebene')}{base.suffix}"
                 )
-                target.write_text(program, encoding="utf-8")
+                write_text(target, program, what=f"Ebene {label}")
                 print(f"Ebene {label} → {target}")
         # Sonst wartet man vor der Wand darauf, dass etwas hochgeladen wird
         ignored = [
@@ -532,7 +540,7 @@ def main(argv: list[str] | None = None) -> int:
     out_path = args.out or (
         Path(f"{args.pattern}.gcode") if args.pattern else args.input.with_suffix(".gcode")
     )
-    out_path.write_text(gcode, encoding="utf-8")
+    write_text(out_path, gcode, what="GCode")
     print(f"{stats_for(machine_lines, plot_config)}")
     print(f"GCode geschrieben: {out_path}")
 
@@ -559,14 +567,15 @@ def main(argv: list[str] | None = None) -> int:
             apply_origin=False,
             correction=correction,
         )
-        args.preview.write_text(
+        write_text(
+            args.preview,
             lines_to_svg(
                 preview_lines,
                 plot_config.width_mm,
                 plot_config.height_mm,
                 travel_stroke="#d64545",
             ),
-            encoding="utf-8",
+            what="Vorschau",
         )
         print(f"Vorschau geschrieben: {args.preview}")
 

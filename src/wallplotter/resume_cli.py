@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from .config import FluidNCConfig
+from .output import OutputError, write_text
 from .resume import ResumeError, resume_file, scan_program
 
 
@@ -81,7 +82,11 @@ def main(argv: list[str] | None = None) -> int:
         return 4
 
     out_path = args.out or args.gcode.with_name(f"{args.gcode.stem}-rest{args.gcode.suffix}")
-    out_path.write_text(rest, encoding="utf-8")
+    try:
+        write_text(out_path, rest, what="Restprogramm")
+    except OutputError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     done = scan_program(args.gcode.read_text(encoding="utf-8"))[-1].draw_count
     left = scan_program(rest)[-1].draw_count

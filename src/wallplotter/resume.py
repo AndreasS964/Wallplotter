@@ -84,6 +84,14 @@ class ProgramState:
     setup: list[str] = field(default_factory=list)
     """Die gesehenen Grundeinstellungen (G21/G90/G17), in Reihenfolge."""
 
+    coolant: str = ""
+    """Zuletzt gesehene Kühlmittel-/Luftschaltung — ``M7``, ``M8`` oder leer.
+
+    Beim Laser ist das die Luftunterstützung, und sie steht wie der
+    Spindelmodus nur einmal im Vorspann. Ein Restprogramm ohne sie schneidet
+    trocken und schaltet die Luft am Ende trotzdem ab.
+    """
+
     last_pause: str = ""
     """Text der zuletzt passierten ``M0``-Pause — welches Werkzeug stecken muss."""
 
@@ -138,6 +146,7 @@ def scan_program(program: str) -> list[ProgramState]:
             tool_value=current.tool_value,
             tool_on=current.tool_on,
             tool_mode=current.tool_mode,
+            coolant=current.coolant,
             drawing=current.drawing,
             move_count=current.move_count,
             draw_count=current.draw_count,
@@ -179,6 +188,10 @@ def scan_program(program: str) -> list[ProgramState]:
             # Nackte S-Zeile: setzt die Leistung, nicht den Spindelzustand.
             # So schaltet der Laserkopf zwischen Strich und Leerweg um.
             following.tool_value = words["S"]
+        elif code in {"M7", "M07", "M8", "M08"}:
+            following.coolant = "M7" if code in {"M7", "M07"} else "M8"
+        elif code in {"M9", "M09"}:
+            following.coolant = ""
         elif code in {"M0", "M00"}:
             following.last_pause = line.partition(";")[2].strip() or "Halt"
         elif code == "F" or (code.startswith("F") and len(code) > 1):
@@ -314,6 +327,9 @@ def resume_program(
     # Modalen Zustand wieder aufbauen: die Maschine weiß nach einem Abbruch nichts mehr
     out += before.setup or ["G21", "G90", "G17"]
     out.append("M5 ; Werkzeug aus, bevor irgendetwas verfahren wird")
+    if before.coolant:
+        # Luft zuerst: sie soll stehen, bevor das Werkzeug wieder scharf ist
+        out.append(f"{before.coolant} ; Luft wie im Original")
     if before.tool_mode:
         # Den Spindelmodus wieder setzen, Leistung auf null. Ohne das fährt ein
         # fortgesetztes Laserprogramm den ganzen Rest ab, ohne je zu zünden:

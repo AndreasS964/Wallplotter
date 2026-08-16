@@ -313,3 +313,30 @@ def test_a_file_with_foreign_encoding_still_opens(tmp_path):
     text = lines_to_gcode(LINES, CONFIG).replace("; erzeugt", "; erzeugt fuer Buero")
     path.write_bytes(text.encode("utf-8").replace(b"Buero", b"B\xfcro"))
     assert resume_file(path, percent=70).strip().endswith("M2 ; Programmende")
+
+
+def test_a_resumed_laser_program_keeps_its_air_assist():
+    """Luft und Spindelmodus stehen beide nur einmal im Vorspann.
+
+    Ohne Wiederherstellung schnitte das Restprogramm trocken — und schaltete
+    die Luft am Ende trotzdem mit M9 ab, was den Widerspruch sichtbar macht.
+    """
+    from wallplotter.toolhead import LaserToolhead
+
+    config = PlotConfig(
+        width_mm=1000, height_mm=1000, margin_mm=50, invert_y=False,
+        toolhead=LaserToolhead(power_pct=40, air_assist="M8"),
+    )
+    text = lines_to_gcode(LINES, config)
+    cut = text.splitlines().index("G1 X590 Y680 F600")
+    rest = resume_program(text, line=cut).splitlines()
+
+    luft = next(i for i, line in enumerate(rest) if line.startswith("M8"))
+    modus = next(i for i, line in enumerate(rest) if line.startswith("M4"))
+    erste_fahrt = next(i for i, line in enumerate(rest) if line.startswith(("G0 ", "G1 ")))
+    # Luft vor dem Werkzeug, beides vor der ersten Bewegung
+    assert luft < modus < erste_fahrt
+
+
+def test_a_pen_program_gets_no_air_assist_out_of_nowhere(program):
+    assert "M8" not in resume_program(program, percent=70)
