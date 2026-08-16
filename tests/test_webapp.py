@@ -258,26 +258,65 @@ def test_absurd_margin_does_not_crash_the_ui(app):
 
 def test_status_polling_does_not_block_the_event_loop(app):
     """Die Timer-Abfrage läuft in einem Thread — sonst friert die UI alle zwei
-    Sekunden für die Timeout-Dauer ein, sobald das Board nicht antwortet."""
-    import asyncio
+    Sekunden für die Timeout-Dauer ein, sobald das Board nicht antwortet.
 
+    Gezählt wird, nicht gestoppt: gemessene Wanduhrzeit macht den Test auf
+    einem ausgelasteten Rechner grundlos rot. Entscheidend ist allein, ob die
+    Event-Loop *während* der Abfrage noch andere Aufgaben drankommen lässt.
+    """
     def slow_status():
-        time.sleep(0.3)
+        time.sleep(0.5)
         raise FluidNCError("nicht erreichbar")
 
     app.client = lambda timeout=10.0: SimpleNamespace(status=slow_status)
 
     async def scenario():
         ticks = 0
+        running = True
 
         async def counter():
             nonlocal ticks
-            for _ in range(30):
-                await asyncio.sleep(0.01)
+            while running:
+                await asyncio.sleep(0.005)
                 ticks += 1
 
-        await asyncio.gather(app.poll_status(), counter())
-        return ticks
+        task = asyncio.ensure_future(counter())
+        await app.poll_status()
+        during = ticks          # Stand in dem Moment, als die Abfrage fertig war
+        running = False
+        task.cancel()
+        return during
 
-    assert asyncio.run(scenario()) == 30
+    # Läuft die Abfrage im Thread, kommt der Zähler währenddessen etliche Male
+    # dran; blockiert sie die Loop, steht er bei null. Die Schwelle ist bewusst
+    # weit unter dem Erwartungswert (~100), damit Last auf dem Rechner den Test
+    # nicht grundlos rot macht.
+    assert asyncio.run(scenario()) >= 5
     assert app.status_label.text == "FluidNC nicht erreichbar"
+
+
+def test_a_pen_can_be_assigned_per_colour_layer(app):
+    """Rot mit dem Marker, Schwarz mit dem Fineliner — die Zuordnung trifft der
+    Mensch vor dem Stiftkasten, nicht die Software."""
+    from wallplotter.pipeline import Layer
+
+    app.layers = [
+        Layer(1, "#000000", [[(0.0, 0.0), (100.0, 0.0)]]),
+        Layer(2, "#e02020", [[(0.0, 10.0), (100.0, 10.0)]]),
+    ]
+    app.lines = [line for layer in app.layers for line in layer.lines]
+    app.fit_source = True
+    app.refresh_layers()
+
+    app.assign_head("#e02020", "marker")
+    assert app.layer_tools()["#e02020"].name == "Marker"
+
+    run_handler(app, app.send_layer(1))   # ohne Board: darf nur nicht abstürzen
+
+
+def test_layers_without_an_assignment_use_the_selected_head(app):
+    from wallplotter.pipeline import Layer
+
+    app.layers = [Layer(1, "#000000", [[(0.0, 0.0), (100.0, 0.0)]])]
+    app.refresh_layers()
+    assert app.layer_tools() == {}

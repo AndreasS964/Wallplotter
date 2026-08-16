@@ -144,3 +144,33 @@ def test_flat_drawing_is_still_scaled_to_the_area():
     red = [x for x, _ in coordinates(programs["#e02020"])]
     assert max(black) - min(black) == pytest.approx(1000.0, abs=1e-6)
     assert max(red) - min(red) == pytest.approx(500.0, abs=1e-6)
+
+
+def test_no_park_run_across_the_wall_before_a_pen_change():
+    """Vor jeder M0-Pause stand die abschließende Parkfahrt.
+
+    Aus dem Programm für sich gesehen harmlos, an der Wand nicht: die Gondel
+    fuhr vor jedem Stiftwechsel quer über die Fläche zum Nullpunkt und danach
+    wieder zurück. Bei einer kalibrierten Fläche liegt der Nullpunkt obendrein
+    außerhalb der Zeichenfläche.
+    """
+    # Fläche mit Versatz: dort liegt der Nullpunkt garantiert außerhalb der
+    # Zeichnung, eine Fahrt dorthin ist also nie Teil des Bildes
+    combined = layers_to_gcode([BLACK, RED], CALIBRATED, separate=False)
+    lines = combined.splitlines()
+    pause = next(index for index, line in enumerate(lines) if line.startswith("M0 "))
+    assert not any(line.startswith("G0 X0 Y0") for line in lines[:pause])
+    # genau eine Parkfahrt, und die steht am Schluss
+    assert combined.count("G0 X0 Y0") == 1
+    # das Werkzeug ist trotzdem aus, bevor jemand hinfasst
+    assert any(line.startswith("M5") for line in lines[pause - 4 : pause])
+
+
+def test_each_layer_gets_the_tool_preamble_after_a_change():
+    """Nach dem Wechsel muss der neue Kopf hochgefahren werden — beim Laser
+    wären das Luft an, Vorlauf und Lasermodus."""
+    combined = layers_to_gcode([BLACK, RED], CONFIG, separate=False)
+    lines = combined.splitlines()
+    pause = next(index for index, line in enumerate(lines) if line.startswith("M0 "))
+    after = lines[pause + 1 : pause + 8]
+    assert any(line.startswith("M3 S0") for line in after)   # Stift oben, definierter Zustand

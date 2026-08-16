@@ -48,6 +48,8 @@ __all__ = [
     "PENS",
     "toolhead_by_name",
     "describe_toolheads",
+    "head_for",
+    "pen_map",
     "fmt",
 ]
 
@@ -80,6 +82,12 @@ class Toolhead(Protocol):
     name: str
     color: str
     width_mm: float
+    passes: int
+    """Wie oft dieselbe Geometrie abgefahren wird — Attribut, nicht Methode.
+
+    Ein Laser schneidet mehrfach; Kreide auf rauem Putz deckt im zweiten
+    Durchgang erst richtig.
+    """
 
     def describe(self) -> str:
         """Eine Zeile für den GCode-Kopf und die Oberfläche."""
@@ -107,11 +115,6 @@ class Toolhead(Protocol):
 
     def feed_for(self, default: float) -> float:
         """Zeichenvorschub dieses Kopfes; ``default`` ist der aus der Konfiguration."""
-        ...
-
-    @property
-    def passes(self) -> int:
-        """Wie oft dieselbe Geometrie abgefahren wird."""
         ...
 
     def check(self, *, travel_as_g1: bool, draw_feed: float) -> list[str]:
@@ -179,6 +182,9 @@ class PenToolhead:
     Ein Fineliner verträgt 1500 mm/min, ein Pinsel reißt dabei ab.
     """
 
+    passes: int = 1
+    """Mehrfach überzeichnen — Kreide auf rauem Putz deckt erst im zweiten Zug."""
+
     note: str = ""
 
     def __post_init__(self) -> None:
@@ -188,6 +194,8 @@ class PenToolhead:
             raise ToolheadError("Strichbreite muss größer als 0 sein")
         if self.draw_feed is not None and self.draw_feed <= 0:
             raise ToolheadError("draw_feed muss größer als 0 sein")
+        if self.passes < 1:
+            raise ToolheadError("mindestens ein Durchgang")
 
     # -- Schnittstelle ----------------------------------------------------
 
@@ -223,10 +231,6 @@ class PenToolhead:
     def feed_for(self, default: float) -> float:
         return self.draw_feed or default
 
-    @property
-    def passes(self) -> int:
-        return 1
-
     def check(self, *, travel_as_g1: bool, draw_feed: float) -> list[str]:
         notes: list[str] = []
         feed = self.feed_for(draw_feed)
@@ -235,6 +239,14 @@ class PenToolhead:
                 f"{self.name}: keine Servo-Wartezeit — die ersten Millimeter jedes "
                 "Strichs fehlen, solange der Servo noch fährt."
             )
+        # Die speed_map der mitgelieferten config.yaml bildet 0…100 ab; alles
+        # darüber landet am Anschlag, ohne dass jemand es merkt.
+        for label, value in (("down_value", self.down_value), ("up_value", self.up_value)):
+            if not 0 <= value <= 100:
+                notes.append(
+                    f"{self.name}: {label}={value} liegt außerhalb von 0…100 — die "
+                    "speed_map der config.yaml bildet nur diesen Bereich ab."
+                )
         if self.draw_feed and feed > 2500:
             notes.append(
                 f"{self.name}: {fmt(feed, 0)} mm/min ist viel für einen Stift — "
@@ -293,7 +305,7 @@ class LaserToolhead:
     dynamic: bool = True
     """``True`` = ``M4`` (Leistung folgt dem Vorschub), ``False`` = ``M3``."""
 
-    passes: int = 1  # type: ignore[assignment]
+    passes: int = 1
     """Wie oft dieselbe Geometrie abgefahren wird."""
 
     pass_pause_s: float = 0.0

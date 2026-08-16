@@ -310,9 +310,18 @@ class WallplotterUI:
             style="max-height:68vh;display:block;margin:auto",
         )
 
+    def layer_tools(self) -> dict[str, Toolhead]:
+        """Welche Farbebene mit welchem Stift gezeichnet wird."""
+        return {
+            label: toolhead_by_name(name)
+            for label, name in getattr(self, "layer_heads", {}).items()
+            if name
+        }
+
     def refresh_layers(self) -> None:
-        """Farbebenen auflisten — jede lässt sich einzeln auf die Wand schicken."""
+        """Farbebenen auflisten — jede mit eigenem Stift und eigenem Knopf."""
         self.layer_box.clear()
+        self.layer_heads: dict[str, str] = {}
         if len(self.layers) < 2:
             return
         ui = self.ui
@@ -320,6 +329,7 @@ class WallplotterUI:
             ui.label("Farbebenen — nacheinander plotten, Stift dazwischen wechseln").classes(
                 "text-xs text-grey"
             )
+            names = {key: head.name for key, head in TOOLHEADS.items()}
             for position, layer in enumerate(self.layers, start=1):
                 with ui.row().classes("items-center gap-2 w-full no-wrap"):
                     ui.html(
@@ -328,9 +338,19 @@ class WallplotterUI:
                     )
                     ui.label(f"{position}. {layer.label}").classes("text-xs flex-grow")
                     ui.label(f"{len(layer.lines)} Linien").classes("text-xs text-grey")
+                    ui.select(
+                        names,
+                        value=None,
+                        on_change=lambda event, key=layer.label: self.assign_head(key, event.value),
+                    ).props("dense outlined options-dense clearable").classes("w-32").tooltip(
+                        "Stift für diese Farbe — ohne Auswahl der oben gewählte"
+                    )
                     ui.button(
                         icon="send", on_click=lambda i=position - 1: self.send_layer(i)
                     ).props("flat dense").tooltip("nur diese Farbe plotten")
+
+    def assign_head(self, label: str, name: str | None) -> None:
+        self.layer_heads[label] = name or ""
 
     async def send_layer(self, index: int) -> None:
         if not (0 <= index < len(self.layers)):
@@ -338,7 +358,14 @@ class WallplotterUI:
         layer = self.layers[index]
         config = self.plot_config()
         # gemeinsame Einpassung über alle Ebenen, sonst passt der Passer nicht
-        programs = layers_to_gcode(self.layers, config, separate=True)
+        try:
+            programs = layers_to_gcode(
+                self.layers, config, separate=True, correction=self.correction(),
+                tools=self.layer_tools(),
+            )
+        except ToolheadError as exc:
+            self.ui.notify(str(exc), type="negative", multi_line=True, timeout=10000)
+            return
         program = programs.get(layer.label)
         if not program:
             self.ui.notify("Ebene ist leer", type="warning")

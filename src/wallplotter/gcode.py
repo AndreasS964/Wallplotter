@@ -195,8 +195,17 @@ def _program(
     header: str | None = None,
     feeds: Sequence[float] | None = None,
     toolhead: Toolhead | None = None,
+    include_setup: bool = True,
+    include_end: bool = True,
 ) -> str:
     """GCode-Programm aus fertiger Maschinengeometrie.
+
+    ``include_setup`` und ``include_end`` schalten Grundeinstellungen
+    (``G21``/``G90``/``G17``) und Abschluss (Parkfahrt, ``M2``) ab — gebraucht
+    von :func:`_program_with_pauses`, das mehrere Blöcke aneinanderhängt. Was
+    dabei *nicht* wegfällt, ist der Vor- und Nachspann des Werkzeugs: nach
+    einem Wechsel muss der neue Kopf hochgefahren werden, und vor der Pause
+    muss der alte aus sein.
 
     Hier steht nur noch Bewegung. Was das Werkzeug tut — Servo senken, Laser
     einschalten, Messer eintauchen — liefert der Kopf selbst; ``M3``, ``M5``
@@ -217,9 +226,10 @@ def _program(
     out.append(f"; Flaeche {_fmt(cfg.width_mm)} x {_fmt(cfg.height_mm)} mm, Rand {_fmt(cfg.margin_mm)} mm")
     out.append(f"; Werkzeug: {head.describe()}")
     out.append(f"; {stats}")
-    out.append("G21 ; Millimeter")
-    out.append("G90 ; absolute Koordinaten")
-    out.append("G17 ; XY-Ebene")
+    if include_setup:
+        out.append("G21 ; Millimeter")
+        out.append("G90 ; absolute Koordinaten")
+        out.append("G17 ; XY-Ebene")
     out.extend(head.program_start())
 
     travel_cmd = f"G1 F{_fmt(cfg.travel_feed, 1)}" if cfg.travel_as_g1 else "G0"
@@ -248,27 +258,37 @@ def _program(
             out.extend(head.retract())
 
     out.extend(head.program_end())
-    out.append(f"{travel_cmd} X0 Y0")
-    out.append("M2 ; Programmende")
+    if include_end:
+        out.append(f"{travel_cmd} X0 Y0")
+        out.append("M2 ; Programmende")
     return "\n".join(out) + "\n"
 
 
 def _program_with_pauses(blocks: Sequence[tuple[str, str, Lines, Toolhead]], cfg: PlotConfig) -> str:
-    """Alle Ebenen in einem Programm, dazwischen Halt zum Werkzeugwechsel."""
+    """Alle Ebenen in einem Programm, dazwischen Halt zum Werkzeugwechsel.
+
+    Zusammengesetzt über die Schalter von :func:`_program`, nicht durch
+    Herausfiltern von Zeilen aus fertigen Programmen. Das war vorher anders und
+    hatte eine Nebenwirkung, die man erst an der Wand sieht: die abschließende
+    Parkfahrt blieb stehen, und die Gondel fuhr vor jedem Stiftwechsel quer
+    über die Fläche zum Nullpunkt und wieder zurück.
+    """
     parts = []
     for position, (header, _, geometry, head) in enumerate(blocks):
-        program = _program(geometry, cfg, header=header, toolhead=head)
-        body = program.splitlines()
-        if position > 0:
-            # Kopfzeilen der Folgeebenen kürzen, die Grundeinstellungen stehen schon
-            body = [line for line in body if not line.startswith(("G21", "G90", "G17"))]
-        # Programmende nur ganz am Schluss
-        if position < len(blocks) - 1:
-            body = [line for line in body if not line.startswith("M2 ")]
+        last = position == len(blocks) - 1
+        body = _program(
+            geometry,
+            cfg,
+            header=header,
+            toolhead=head,
+            include_setup=position == 0,
+            include_end=last,
+        ).splitlines()
+        if not last:
             # Den Wechseltext formuliert der nächste Kopf: „Stift wechseln auf"
             # stimmt nicht mehr, sobald einer davon ein Laser ist.
             next_label, next_head = blocks[position + 1][1], blocks[position + 1][3]
-            body += [f"M0 ; anhalten — {next_head.change_prompt(next_label)}"]
+            body.append(f"M0 ; anhalten — {next_head.change_prompt(next_label)}")
         parts.append("\n".join(body))
     return "\n".join(parts) + "\n"
 

@@ -86,15 +86,65 @@ Betrieb am Board.
 
 ---
 
-## 3. Toolheads (perspektivisch)
+## 3. Werkzeugköpfe
 
-| Toolhead | Stand |
+Seit 0.2.0 ist der Kopf keine Konstante mehr, sondern ein austauschbares Stück
+Software (`wallplotter.toolhead`). `gcode.py` kennt kein `M3`, kein `M5` und
+kein `G4` mehr — was das Werkzeug tut, liefert das Werkzeug.
+
+### Was mitgeliefert wird
+
+`plot --list-toolheads` zeigt den Katalog. **Alle Stiftwerte sind geschätzte
+Startwerte, keine Messwerte**: Servohebel, Federweg und Halter sind an jedem
+Aufbau anders. Nachgezogen wird mit `plot --pattern pen-test`.
+
+| Kopf | S unten | Wartezeit | Breite | Vorschub | wofür |
+| --- | --- | --- | --- | --- | --- |
+| `fineliner`, `fineliner-rot` | 30 | 0,25 s | 0,5 mm | (Konfig) | der Normalfall |
+| `kugelschreiber` | 38 | 0,20 s | 0,3 mm | 1800 | braucht Druck, verträgt Tempo |
+| `marker` | 34 | 0,35 s | 2,0 mm | 1200 | blutet im Stillstand |
+| `kreide` | 40 | 0,40 s | 5,0 mm | 900 | dunkle Wände, hoher Abrieb |
+| `pinsel` | 26 | 0,50 s | 6,0 mm | 700 | Pinsel*stift*, kein Reservoir |
+| `laser` | — | — | — | 600 | vorbereitet, nicht erprobt |
+
+Mehrfarbig bekommt jede Strichfarbe ihren eigenen Kopf:
+`--pen-for '#e02020=marker'`. Die `M0`-Pause nennt dann Farbe *und* Stift.
+
+### Laser
+
+Gegen die GRBL-Laserdoku und den FluidNC-Quelltext gebaut, **an keiner
+Hardware erprobt**. Vier Unterschiede zum Stift, alle zwingend:
+
+| | Stift am Servo | Laser |
+| --- | --- | --- |
+| Bedeutung von `S` | Position (Pulsbreite) | Leistung |
+| `S` ohne Bewegung | normal und nötig | wirkungslos (M4) bis brandgefährlich (M3) |
+| `G4` danach | zwingend | schädlich — brennt ein Loch |
+| Leerweg | Position muss halten | muss aus sein |
+| PWM | ~50 Hz | 1–100 kHz |
+
+Daraus folgt: Stift und Laser können **weder denselben Pin noch dieselbe
+Frequenz** benutzen. Der saubere Weg sind zwei Spindeln in einer `config.yaml`
+(`PWM:` mit `tool_num: 0`, `Laser:` mit eigener `tool_num` und eigenem GPIO),
+umgeschaltet mit `M6 T<n>`. Der Block steht auskommentiert in der
+`config.yaml`. Teilen beide denselben Pin, hilft nur eine zweite YAML.
+
+Die Software erzeugt `M4` (dynamische Leistung — bei konstanter Leistung
+brennt ein Seilplotter jede Ecke durch), rechnet die Leistung in Prozent von
+einem einstellbaren `s_max`, setzt `S0` vor jeden Leerweg, rollt mehrere
+Durchgänge aus und **verweigert** `--travel-as-g1`. Ohne
+`--laser-verstanden` entsteht kein Laser-GCode.
+
+### Was bewusst fehlt
+
+| Kopf | warum nicht |
 | --- | --- |
-| Stift/Marker | aktueller Plan — Sharpie, Faserstift, Kreidemarker |
-| Pinsel | braucht Farbnachschub (Reservoir), trocknet sonst zwischen Strichen |
-| Sprühdose | wie „Hektor" (Jürg Lehni); braucht Ventilbetätigung und Absaugung |
-| Kreide/Pastell | wie Stift, aber empfindlich gegen Anpressdruck → Federmechanismus |
-| Laser | firmwareseitig möglich, für verputzte Wand unpraktisch (Rauch) — eigenes Projekt |
+| Pinsel mit Reservoir | Nachtunken ist eine Fahrt zum Farbtopf, also Geometrie — Vorschau und Laufzeit würden lügen |
+| Sprühdose | wie „Hektor" (Jürg Lehni); braucht Ventilvorlauf, also ebenfalls Geometrie |
+| Schleppmesser | braucht Anschnittbögen an jeder Ecke |
+
+Lieber gar kein Kopf als einer, der so tut. Alle drei wären machbar, sobald
+das Werkzeug Geometrie beisteuern darf — das ist heute nicht vorgesehen.
 
 ---
 
@@ -214,11 +264,14 @@ Marlin-spezifischen Dialekt erzeugt (`M280`, proprietäre `D`-Codes,
 
 | Modul | Aufgabe |
 | --- | --- |
-| `config` | Wandmaße, Vorschübe, Pen-Servo-Werte, FluidNC-Zugang |
+| `config` | Wandmaße, Vorschübe, Bewegungsgrenzen, FluidNC-Zugang |
+| `toolhead` | was an der Gondel hängt: Stiftkatalog, Laser, Schnittstelle dazwischen |
 | `geometry` | Einpassen, Spiegeln, Douglas-Peucker, Linien sortieren, Längen-/Zeitschätzung |
 | `pipeline` | SVG → Linien in mm (vpype), Ebenen je Strichfarbe, SVG-Vorschau |
 | `imaging` | Fotos → Linien: hatch, stipple, tsp, spiral |
-| `gcode` | Linien → GCode (`G0`/`G1`, `M3`/`M5`), mehrfarbig mit `M0`-Pausen |
+| `gcode` | Linien → GCode; kennt nur Bewegung, das Werkzeug liefert seine Zeilen selbst |
+| `timing` | Laufzeit mit Beschleunigungsprofil, nachgebildet nach GRBLs Planer |
+| `resume` | abgebrochenen Plot fortsetzen, modalen Zustand rekonstruieren |
 | `kinematics` | Auflösung, Riemenlängen, Zugkräfte, Ankervergleich |
 | `location` | Standorte: Ankermaße + Flächenkalibrierung je Aufhängung |
 | `calibration` | angefahrene Ecken → nutzbare Fläche mit Versatz |
@@ -227,7 +280,8 @@ Marlin-spezifischen Dialekt erzeugt (`M280`, proprietäre `D`-Codes,
 | `patterns` | Testmuster für die Erstinbetriebnahme |
 | `upload` | FluidNC-Web-API: SD-Upload, `$SD/Run`, Status, Jog, Pause/Stop |
 | `sdstore` | Standortdaten auf der SD-Karte des Boards |
-| `cli` / `calibrate_cli` / `location_cli` | Kommandozeile |
+| `cli` / `calibrate_cli` / `location_cli` / `correct_cli` / `resume_cli` | Kommandozeile |
+| `doctor` | Selbsttest von der Installation bis zum Board |
 | `webapp` | NiceGUI-Oberfläche, drei Reiter |
 
 CLI und Web-UI nutzen dieselben Funktionen — es gibt bewusst keine zweite Pipeline.
