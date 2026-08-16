@@ -141,20 +141,44 @@ class FluidNCClient:
         return self._text_or_raise(response, f"Kommando {command!r} fehlgeschlagen")
 
     def upload(self, data: bytes | str, filename: str) -> str:
-        """Datei auf die µSD-Karte des Boards laden."""
+        """Datei auf die µSD-Karte des Boards laden.
+
+        Endpunkt ist ``/sdfiles`` — ``/upload`` schreibt in ESP3D v3 auf den
+        Flash-Speicher des ESP32, nicht auf die Karte.
+        """
         payload = data.encode("utf-8") if isinstance(data, str) else data
         remote_dir = self.config.remote_dir if self.config.remote_dir.endswith("/") else self.config.remote_dir + "/"
         remote_path = f"{remote_dir}{filename}"
 
         with _as_fluidnc_error(f"Upload von {filename!r} fehlgeschlagen"):
             response = self.session.post(
-                f"{self.config.base_url}/upload",
-                data={"path": remote_dir, f"{remote_path}S": str(len(payload))},
+                f"{self.config.base_url}/sdfiles",
+                params={"path": remote_dir, "createPath": "yes"},
+                data={f"{remote_path}S": str(len(payload))},
                 files={remote_path: (filename, payload, "text/plain")},
                 timeout=self.config.timeout_s,
             )
         self._text_or_raise(response, f"Upload von {filename!r} fehlgeschlagen")
         return remote_path
+
+    def download(self, remote_path: str) -> str:
+        """Datei von der Karte lesen (``GET /sd/<pfad>``)."""
+        path = remote_path if remote_path.startswith("/") else f"/{remote_path}"
+        with _as_fluidnc_error(f"Lesen von {path!r} fehlgeschlagen"):
+            response = self.session.get(
+                f"{self.config.base_url}/sd{path}", timeout=self.config.timeout_s
+            )
+        return self._text_or_raise(response, f"Lesen von {path!r} fehlgeschlagen")
+
+    def list_files(self, directory: str = "/") -> str:
+        """Verzeichnis der Karte auflisten (JSON-Antwort als Text)."""
+        with _as_fluidnc_error("Dateiliste fehlgeschlagen"):
+            response = self.session.get(
+                f"{self.config.base_url}/sdfiles",
+                params={"path": directory, "action": "list"},
+                timeout=self.config.timeout_s,
+            )
+        return self._text_or_raise(response, "Dateiliste fehlgeschlagen")
 
     def run_file(self, remote_path: str) -> str:
         """Datei von der SD-Karte abspielen lassen."""
@@ -197,8 +221,34 @@ class FluidNCClient:
         """Laufende Jog-Bewegung abbrechen (Realtime-Byte 0x85)."""
         return self.send_command("\x85")
 
+    def set_work_offset(self, x: float = 0.0, y: float = 0.0, system: int = 1) -> str:
+        """Der aktuellen Position feste Koordinaten geben — **dauerhaft**.
+
+        ``G10 L20`` verschiebt das Werkstück-Koordinatensystem (G54 bei
+        ``system=1``) so, dass die aktuelle Position die genannten Koordinaten
+        bekommt. Anders als ``G92`` liegt das im NVS des ESP32 und übersteht
+        Aus- und Einschalten.
+
+        Der Haken liegt woanders: Ohne Referenzfahrt ist die *Maschinen*-
+        position nach dem Einschalten willkürlich, dann zeigt auch ein
+        gespeicherter Versatz ins Leere. Dauerhaft nützt das erst zusammen mit
+        einer reproduzierbaren Referenz — Anschlag oder StallGuard-Homing.
+        """
+        if not 1 <= system <= 6:
+            raise FluidNCError("Koordinatensystem 1..6 (G54..G59)")
+        return self.send_command(f"G10 L20 P{system} X{x:.3f} Y{y:.3f}")
+
+    def work_offsets(self) -> str:
+        """Gespeicherte Versätze abfragen (``$#``)."""
+        return self.send_command("$#")
+
     def set_zero(self, x: float = 0.0, y: float = 0.0) -> str:
         """Der aktuellen Position feste Koordinaten zuweisen (G92).
+
+        Achtung: ``G92`` ist laut GRBL-Konvention flüchtig und wird beim
+        Programmende verworfen — für alles, was ein Ausschalten oder ein
+        ``M2`` überleben soll, ist :meth:`set_work_offset` das richtige
+        Werkzeug.
 
         Ohne Argumente ist das der Nullpunkt beim Referenzieren am Anschlag.
         Mit Argumenten lässt sich ein verlorener Nullpunkt wiederherstellen:

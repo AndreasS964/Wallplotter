@@ -52,6 +52,12 @@ def build_parser() -> argparse.ArgumentParser:
     config.add_argument("--out", type=Path, help="in Datei schreiben statt auf die Konsole")
     config.add_argument("--segment-length", type=float, default=1.0)
 
+    push = sub.add_parser("push", help="Standorte auf die SD-Karte des Boards schreiben")
+    push.add_argument("--host", default="fluidnc.local")
+
+    pull = sub.add_parser("pull", help="Standorte von der SD-Karte holen")
+    pull.add_argument("--host", default="fluidnc.local")
+
     return parser
 
 
@@ -114,6 +120,24 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Geschrieben: {args.out}")
             else:
                 print(block)
+            return 0
+
+        if args.command in ("push", "pull"):
+            from .config import FluidNCConfig  # noqa: PLC0415
+            from .sdstore import sync_locations  # noqa: PLC0415
+            from .upload import FluidNCClient, FluidNCError  # noqa: PLC0415
+
+            try:
+                print(
+                    sync_locations(
+                        args.file,
+                        FluidNCClient(FluidNCConfig(host=args.host)),
+                        direction=args.command,
+                    )
+                )
+            except FluidNCError as exc:
+                print(str(exc), file=sys.stderr)
+                return 5
             return 0
 
     except LocationError as exc:

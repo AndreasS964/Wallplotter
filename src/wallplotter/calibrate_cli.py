@@ -43,6 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     zero = sub.add_parser("zero", help="aktuelle Position zum Nullpunkt erklären (G92)")
     zero.add_argument(
+        "--persistent",
+        action="store_true",
+        help="als G54-Versatz speichern (übersteht Ausschalten) statt als flüchtiges G92",
+    )
+    zero.add_argument(
         "--corner",
         choices=CORNERS,
         help="verlorenen Nullpunkt wiederherstellen: diese kalibrierte Ecke anfahren "
@@ -110,11 +115,18 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{args.corner} ist nicht kalibriert.", file=sys.stderr)
                     return 4
                 x, y = calibration.points[args.corner]
-                client.set_zero(x, y)
-                print(f"Nullpunkt über {args.corner} wiederhergestellt: X{x:.1f} Y{y:.1f}")
             else:
-                client.set_zero()
-                print("Nullpunkt gesetzt.")
+                x = y = 0.0
+            if args.persistent:
+                client.set_work_offset(x, y)
+                where = f" über {args.corner}" if args.corner else ""
+                print(f"Nullpunkt{where} als G54-Versatz gespeichert: X{x:.1f} Y{y:.1f}")
+                print("Hinweis: hilft nach dem Einschalten nur mit reproduzierbarer "
+                      "Referenzfahrt (Anschlag oder StallGuard).")
+            else:
+                client.set_zero(x, y)
+                where = f" über {args.corner} wiederhergestellt" if args.corner else " gesetzt"
+                print(f"Nullpunkt{where}: X{x:.1f} Y{y:.1f}")
             return 0
 
         if args.command == "status":

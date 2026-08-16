@@ -22,8 +22,10 @@ class FakeSession:
         self.calls.append(("get", url, params))
         return FakeResponse(self.text, self.status_code)
 
-    def post(self, url, data=None, files=None, timeout=None):
-        self.calls.append(("post", url, {"data": data, "files": files}))
+    # kompatibel zu requests: download() ruft get() ohne params auf
+
+    def post(self, url, params=None, data=None, files=None, timeout=None):
+        self.calls.append(("post", url, {"params": params, "data": data, "files": files}))
         return FakeResponse(self.text, self.status_code)
 
 
@@ -46,15 +48,42 @@ def test_send_command_uses_plain_parameter():
     assert params == {"plain": "?"}
 
 
-def test_upload_posts_multipart_and_returns_remote_path():
+def test_upload_goes_to_the_sd_card_not_the_flash():
+    """`/upload` schreibt in ESP3D v3 auf den ESP32-Flash, `/sdfiles` auf die Karte."""
     api, session = client()
     remote = api.upload("G21\n", "wand.gcode")
     assert remote == "/wand.gcode"
     _, url, payload = session.calls[0]
-    assert url == "http://wandplotter.local/upload"
-    assert payload["data"]["path"] == "/"
+    assert url == "http://wandplotter.local/sdfiles"
+    assert payload["params"] == {"path": "/", "createPath": "yes"}
     assert payload["data"]["/wand.gcodeS"] == "4"
     assert "/wand.gcode" in payload["files"]
+
+
+def test_download_reads_from_the_card():
+    api, session = client(text="{}")
+    api.download("standorte.json")
+    assert session.calls[0][1] == "http://wandplotter.local/sd/standorte.json"
+
+
+def test_list_files_asks_for_a_listing():
+    api, session = client(text="{}")
+    api.list_files("/")
+    method, url, params = session.calls[0]
+    assert url == "http://wandplotter.local/sdfiles"
+    assert params == {"path": "/", "action": "list"}
+
+
+def test_work_offset_is_persistent_unlike_g92():
+    api, session = client()
+    api.set_work_offset(120.5, 340.0)
+    assert session.calls[0][2] == {"plain": "G10 L20 P1 X120.500 Y340.000"}
+
+
+def test_work_offset_rejects_an_unknown_system():
+    api, _ = client()
+    with pytest.raises(FluidNCError, match="1..6"):
+        api.set_work_offset(0, 0, system=9)
 
 
 def test_http_error_raises():

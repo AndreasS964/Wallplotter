@@ -88,16 +88,38 @@ Getrennt ist für mehrstündige Plots das Vernünftige: Schwarz heute, Rot
 morgen. Alle Ebenen werden *gemeinsam* eingepasst — würde jede für sich
 skaliert, fiele die Zeichnung auseinander.
 
-Wenn das Board zwischen zwei Farben aus war, ist der G92-Nullpunkt weg. Dann
-eine kalibrierte Ecke anfahren und den Nullpunkt darüber wiederherstellen:
+Wenn das Board zwischen zwei Farben aus war, ist der Nullpunkt weg — `G92`
+ist flüchtig. Zwei Wege zurück:
 
 ```bash
+# sofort: kalibrierte Ecke anfahren und den Nullpunkt darüber wiederherstellen
 wallplotter-calibrate goto bottom-left
 wallplotter-calibrate zero --corner bottom-left
+
+# dauerhaft: als G54-Versatz ablegen, der im NVS des ESP32 überlebt
+wallplotter-calibrate zero --persistent
 ```
+
+Der G54-Weg trägt allerdings nur zusammen mit einer *reproduzierbaren*
+Referenzfahrt — ohne Homing ist die Maschinenposition nach dem Einschalten
+willkürlich, und ein gespeicherter Versatz zeigt dann ins Leere. Das Rodent
+kann sensorloses StallGuard-Homing; die `config.yaml` erklärt beide Varianten.
 
 In der Web-UI erscheinen die Farbebenen mit Farbfeld unter der Vorschau, jede
 einzeln startbar.
+
+### Daten auf der SD-Karte
+
+Der Plotter wandert zwischen Wänden — dann sollen die Standortdaten
+mitwandern statt auf einem Rechner zu liegen:
+
+```bash
+wallplotter-location push --host 192.168.1.42   # Standorte auf die Karte
+wallplotter-location pull --host 192.168.1.42   # und wieder zurück
+```
+
+Bewusst ohne automatisches Zusammenführen: Welcher von zwei auseinander
+gelaufenen Ständen der richtige ist, kann nur entscheiden, wer dabei war.
 
 ### Testmuster
 
@@ -214,6 +236,7 @@ und die Pendelstöße durch Leerfahrten ganz.
 | `wallplotter.kinematics` | Auflösung, Riemenlängen, Zugkräfte nachrechnen |
 | `wallplotter.calibration` | angefahrene Ecken → nutzbare Fläche mit Versatz |
 | `wallplotter.location` | Standorte: Ankermaße + Fläche je Aufhängung |
+| `wallplotter.sdstore` | Standortdaten auf der SD-Karte des Boards |
 | `wallplotter.patterns` | Testmuster für die Erstinbetriebnahme |
 | `wallplotter.imaging` | Fotos → Linien: hatch, stipple, tsp, spiral |
 | `wallplotter.correction` | Vorverzerrung gegen Riemendehnung und Messfehler |
@@ -241,9 +264,9 @@ Board unterwegs, Mechanik noch nicht gedruckt. Was das heißt:
 
 * **Verifiziert ohne Hardware:** Geometrie, GCode-Export, Kalibrierlogik,
   Testmuster, Kinematikrechnung, UI-Verdrahtung — alles unter Test.
-* **Noch offen bis das Board da ist:** die ESP3D-Endpunkte (`/upload`,
-  `/command`) sind nach Dokumentation gebaut, aber nie gegen echte Firmware
-  gelaufen; die Servo-S-Werte für Pen-Up/Down sind Platzhalter; und der
+* **Noch offen bis das Board da ist:** die ESP3D-Endpunkte (`/sdfiles`,
+  `/sd/`, `/command`) sind nach Dokumentation gebaut, aber nie gegen echte
+  Firmware gelaufen; die Servo-S-Werte für Pen-Up/Down sind Platzhalter; und der
   PWM-Pin für den Servo in der `config.yaml` ist der einzige geratene Wert
   (siehe Kommentar dort — der 3–10-V-Ausgang des Rodent passt womöglich nicht
   zu einem MG90S).

@@ -63,8 +63,20 @@ axes:
     max_travel_mm: 4000.000
     soft_limits: false
     homing:
-      # Kein Endschalter: Gondel an den oberen Anschlag fahren, dann
-      # $H weglassen und stattdessen G92 senden (wallplotter-calibrate zero).
+      # Kein Endschalter. Zwei Wege, und die Wahl entscheidet mehr als sie
+      # aussieht — sie bestimmt, ob der Nullpunkt ein Ausschalten übersteht:
+      #
+      # a) Von Hand: Gondel an den oberen Anschlag fahren, dann G92 setzen
+      #    (wallplotter-calibrate zero). Einfach, aber nach jedem Aus- und
+      #    Einschalten neu nötig, und ein M2 am Programmende verwirft es laut
+      #    GRBL-Konvention ebenfalls.
+      #
+      # b) Sensorlos per StallGuard: cycle auf 1 setzen, homing_mode auf
+      #    CoolStep (siehe unten) und die Empfindlichkeit über stallguard
+      #    einstellen. Dann liefert $H reproduzierbare Maschinenkoordinaten,
+      #    und der Flächenversatz lässt sich als G54 dauerhaft ablegen
+      #    (wallplotter-calibrate zero --persistent). Das ist die Variante,
+      #    die mehrfarbige Plots über mehrere Tage trägt.
       cycle: 0
     motor0:
       limit_neg_pin: NO_PIN
