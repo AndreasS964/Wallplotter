@@ -367,3 +367,58 @@ def test_a_broken_locations_file_does_not_stop_the_ui(tmp_path):
     instance.build_ui()
     assert instance.location is None
     assert instance.plot_config().width_mm == 2000.0
+
+
+def test_every_corner_has_a_german_name():
+    """Vor der Wand liest niemand „bottom-left" — und ein fehlender Eintrag
+    fiele erst dort auf, weil der Bezeichner dann einfach durchgereicht wird."""
+    from wallplotter.calibration import CORNERS as ECKEN
+    from wallplotter.webapp import CORNER_NAMES
+
+    assert set(CORNER_NAMES) == set(ECKEN)
+
+
+def test_durations_read_like_someone_would_say_them():
+    from wallplotter.webapp import _duration
+
+    assert _duration(45) == "45 s"
+    assert _duration(600) == "10 min"
+    assert _duration(3540) == "59 min"
+    assert _duration(3660) == "1 h 01"
+    assert _duration(5400) == "1 h 30"
+
+
+def test_the_stat_row_fills_up_and_empties_again(app):
+    app.load_pattern("frame")
+    assert app.stat_values["lines"].text != "–"
+    assert app.stat_values["time"].text.endswith(("s", "min")) or "h" in (
+        app.stat_values["time"].text
+    )
+
+    # Der gesperrte Laser darf keine Zahlen eines Programms stehen lassen,
+    # das gar nicht entsteht
+    app.head_select.set_value("laser")
+    app.regenerate()
+    assert app.stat_values["lines"].text == "–"
+
+
+def test_the_progress_preview_greys_out_what_is_already_on_the_wall(app):
+    """Ein Balken sagt 40 %; er sagt nicht, wo die Maschine steht."""
+    app.load_pattern("grid")
+    app.show_progress(40)
+    drawn = app.live_preview.content
+    assert "#9aa0ab" in drawn                     # abgegrauter Anteil
+
+    # Dieselbe Prozentzahl baut das SVG nicht noch einmal — alle zwei Sekunden
+    # ein großes SVG über die Leitung wäre für eine unveränderte Zahl zu teuer
+    app.live_preview.content = "unangetastet"
+    app.show_progress(40.4)
+    assert app.live_preview.content == "unangetastet"
+
+    app.show_progress(41)
+    assert app.live_preview.content != "unangetastet"
+
+
+def test_without_a_drawing_the_progress_preview_stays_empty(app):
+    app.show_progress(50)
+    assert "Sobald ein Plot läuft" in app.live_preview.content

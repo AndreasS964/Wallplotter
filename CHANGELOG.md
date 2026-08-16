@@ -122,6 +122,39 @@ gegengeprüft. Sieben hielten stand:
   nirgends; `travel_mm` ignorierte die Durchgänge.
 - Ein vertippter Ausgabepfad endete im Traceback statt in einer Meldung.
 
+### Die Oberfläche
+
+Vorher war die Vorschau ein Umriss im Nichts, der Hauptknopf stand unter dem
+Scrollbalken, und vier Ecken hießen `bottom-left`.
+
+- **Die Vorschau zeigt die Wand, nicht nur die Zeichnung**: Fläche als Blatt,
+  Maßraster mit passender Schrittweite (2,5 m Wand → 500 mm, 10 cm Vorlage →
+  10 mm), Kantenlängen daneben. Erst dadurch sieht man, ob die Zeichnung die
+  Fläche füllt oder ob 40 cm Rand übrig bleiben.
+- **Ein Fineliner ist wieder sichtbar.** Maßstabsgetreu sind 0,3 mm auf zwei
+  Meter Wand ein Sechstel Bildpunkt — die Vorschau war leer, obwohl alles
+  richtig gerechnet war. Der Strich hat jetzt eine Untergrenze, das Verhältnis
+  Marker zu Fineliner bleibt darüber erhalten.
+- **Vier Zahlen statt eines Satzes**: Linien, Zeichenweg, Leerweg, Dauer —
+  und die Dauer als „1 h 20" statt „80 min".
+- **Am Handy stehen die Dinge in der Reihenfolge, in der man sie braucht.**
+  Im Plotten-Reiter kommen Vorschau und der Knopf „Auf Wand plotten" zuerst,
+  die Einstellungen darunter; am Rechner liegen die Einstellungen wie gehabt
+  links. Der Startknopf bleibt beim Scrollen stehen.
+- **Das Fahrkreuz ist daumengroß.** Es wird am Handy vor der Wand bedient,
+  nicht mit der Maus.
+- **Die Ecken heißen „unten links"**, nicht `bottom-left`. In Dateien und in
+  der CLI bleiben die englischen Bezeichner — dort stehen sie in Formaten, die
+  bereits geschrieben wurden.
+- Das Kinematik-Urteil ist eine Liste mit fetten Stichworten statt einer
+  grauen Textwand; der Upload-Kasten zeigt nicht mehr „0.0B / 0.00 %" über
+  eine Datei, die es noch gar nicht gibt.
+- **Der Maschinenreiter zeigt den Fortschritt an der Wand**: dieselbe
+  Vorschau, der geplottete Anteil abgegraut. Ein Balken sagt „43 %"; er sagt
+  nicht, ob die Maschine im Gesicht des Porträts steht oder noch im
+  Hintergrund. Die Prozentzahl zählt gelesene Bytes — die Grenze im Bild ist
+  ungefähr und ist als Ungefähres gemeint.
+
 ### Verpackung
 
 - `photo` zieht nur noch Pillow nach. Schraffur steht als eigenes Extra

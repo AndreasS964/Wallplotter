@@ -9,6 +9,7 @@ zu, es gibt keine zweite Pipeline.
 
 from __future__ import annotations
 
+import math
 import os
 import shlex
 import tempfile
@@ -234,6 +235,21 @@ def image_to_lines(*args, **kwargs):
     )
 
 
+def _grid_step_mm(width_mm: float, height_mm: float) -> float:
+    """Rasterweite, die bei jeder Flächengröße lesbar bleibt.
+
+    Ein festes Raster ist entweder auf 2,5 m Wand unsichtbar oder auf einem
+    DIN-A4-Testfeld ein schwarzer Block. Gewählt wird deshalb die Stufe aus
+    1/2/5·10ⁿ, die rund zehn Felder über die längere Seite ergibt.
+    """
+    span = max(width_mm, height_mm, 1.0)
+    grob = 10 ** math.floor(math.log10(span / 8))
+    for faktor in (1, 2, 5, 10):
+        if span / (grob * faktor) <= 12:
+            return grob * faktor
+    return grob * 10
+
+
 def lines_to_svg(
     lines: Sequence[Sequence[tuple[float, float]]],
     width_mm: float,
@@ -243,25 +259,75 @@ def lines_to_svg(
     stroke_width_mm: float = 1.0,
     travel_stroke: str | None = None,
     style: str = "",
+    grid: bool = True,
+    labels: bool = True,
+    paper: str = "#ffffff",
+    done_fraction: float = 0.0,
 ) -> str:
-    """Linien als SVG rendern — für die Vorschau in der Web-UI (Stufe 4).
+    """Linien als SVG rendern — die Vorschau vor dem Plot.
 
-    Mit ``travel_stroke`` werden zusätzlich die Leerwege (Pen-Up) gestrichelt
-    eingezeichnet, damit man vor dem Plot sieht, wie viel Zeit im Leerlauf
-    verbracht wird. Braucht kein vpype.
+    Gezeichnet wird nicht nur die Zeichnung, sondern die *Wand*: Fläche als
+    Blatt, ein Maßraster darüber, die Kantenlängen daneben. Ohne diesen Bezug
+    ist eine Vorschau nur ein Umriss im Nichts — man sieht nicht, ob die
+    Zeichnung die Fläche füllt oder ob 40 cm Rand übrig bleiben.
+
+    Mit ``travel_stroke`` kommen die Leerwege gestrichelt dazu, damit vor dem
+    Plot sichtbar ist, wie viel Zeit im Leerlauf vergeht.
+
+    ``done_fraction`` färbt den bereits geplotteten Anteil ab — gedacht für die
+    Fortschrittsanzeige während des Laufs.
 
     ``style`` landet als CSS am ``<svg>``. Ohne Höhenbegrenzung wächst eine
-    2,5 m hohe Wand im Browser über den ganzen Bildschirm hinaus — die Web-UI
-    setzt dort ``max-height``.
+    2,5 m hohe Wand im Browser über den ganzen Bildschirm hinaus.
     """
+    span = max(width_mm, height_mm, 1.0)
+    # Rand für die Maßzahlen; ohne Beschriftung bleibt er schmal
+    pad = span * (0.075 if labels else 0.02)
+    font = span * 0.026
+    hair = span * 0.0016
+    # Ein Fineliner zieht 0,3 mm — auf zwei Meter Wand ist das im Browser
+    # weniger als ein Bildpunkt. Maßstabsgetreu wäre die Vorschau leer, also
+    # bekommt der Strich eine Untergrenze; das Verhältnis dicker zu dünner
+    # Werkzeuge bleibt darüber erhalten.
+    ink = max(stroke_width_mm, span * 0.0022)
+
     parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width_mm} {height_mm}" '
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'viewBox="{-pad:.1f} {-pad:.1f} {width_mm + 2 * pad:.1f} {height_mm + 2 * pad:.1f}" '
         f'width="100%" preserveAspectRatio="xMidYMid meet"'
         + (f' style="{style}"' if style else "")
         + ">",
-        f'<rect x="0" y="0" width="{width_mm}" height="{height_mm}" '
-        f'fill="none" stroke="#999" stroke-width="{stroke_width_mm}" />',
     ]
+
+    if grid:
+        step = _grid_step_mm(width_mm, height_mm)
+        parts.append(
+            f'<defs><pattern id="wp-grid" width="{step}" height="{step}" '
+            f'patternUnits="userSpaceOnUse">'
+            f'<path d="M {step} 0 L 0 0 0 {step}" fill="none" stroke="#c9ccd4" '
+            f'stroke-width="{hair:.2f}"/></pattern></defs>'
+        )
+
+    parts.append(
+        f'<rect x="0" y="0" width="{width_mm}" height="{height_mm}" fill="{paper}" '
+        f'stroke="#9aa0ab" stroke-width="{hair * 2:.2f}" />'
+    )
+    if grid:
+        parts.append(
+            f'<rect x="0" y="0" width="{width_mm}" height="{height_mm}" fill="url(#wp-grid)" />'
+        )
+
+    if labels:
+        parts.append(
+            f'<g fill="#6b7280" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" '
+            f'font-size="{font:.1f}">'
+            f'<text x="{width_mm / 2:.1f}" y="{-pad * 0.32:.1f}" text-anchor="middle">'
+            f'{width_mm:.0f} mm</text>'
+            f'<text x="{-pad * 0.32:.1f}" y="{height_mm / 2:.1f}" text-anchor="middle" '
+            f'transform="rotate(-90 {-pad * 0.32:.1f} {height_mm / 2:.1f})">'
+            f'{height_mm:.0f} mm</text>'
+            f"</g>"
+        )
 
     if travel_stroke:
         pos = (0.0, 0.0)
@@ -274,16 +340,18 @@ def lines_to_svg(
         if travels:
             parts.append(
                 f'<path d="{" ".join(travels)}" fill="none" stroke="{travel_stroke}" '
-                f'stroke-width="{stroke_width_mm / 2}" stroke-dasharray="4 4" />'
+                f'stroke-width="{ink * 0.6:.2f}" stroke-dasharray="{ink * 3:.1f} '
+                f'{ink * 3:.1f}" opacity="0.5" />'
             )
 
-    for line in lines:
-        if len(line) < 2:
-            continue
+    drawable = [line for line in lines if len(line) >= 2]
+    done_until = int(len(drawable) * max(0.0, min(1.0, done_fraction)))
+    for index, line in enumerate(drawable):
         points = " ".join(f"{x:.2f},{y:.2f}" for x, y in line)
+        farbe = "#9aa0ab" if index < done_until else stroke
         parts.append(
-            f'<polyline points="{points}" fill="none" stroke="{stroke}" '
-            f'stroke-width="{stroke_width_mm}" stroke-linecap="round" '
+            f'<polyline points="{points}" fill="none" stroke="{farbe}" '
+            f'stroke-width="{ink:.2f}" stroke-linecap="round" '
             f'stroke-linejoin="round" />'
         )
 

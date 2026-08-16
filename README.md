@@ -10,7 +10,7 @@
   <a href="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-424-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-431-brightgreen">
   <img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-lightgrey">
 </p>
 
@@ -275,13 +275,21 @@ python -m wallplotter.webapp
 Erreichbar unter `http://<pc-ip>:8080` — auch vom Handy an der Wand. Drei
 Reiter für die drei Situationen vor der Wand:
 
-* **Plotten** — Upload oder Testmuster, Flächen- und Stiftparameter, Vorschau
-  (Zeichenwege blau, Leerwege rot gestrichelt), Plot starten
-* **Kalibrieren** — Jog-Pad, Nullpunkt setzen, Ecken übernehmen und wieder
-  anfahren, Schiefstandswarnung, Standort anlegen samt Kinematik-Urteil
-* **Maschine** — SD-Fortschritt, Pause/Weiter/Stopp
+* **Plotten** — Upload oder Testmuster, Flächen- und Werkzeugwahl. Die Vorschau
+  zeigt nicht nur die Zeichnung, sondern die *Wand*: Fläche als Blatt, Maßraster,
+  Kantenlängen daneben — daran sieht man, ob die Zeichnung die Fläche füllt oder
+  ob 40 cm Rand übrig bleiben. Leerwege gestrichelt, abschaltbar. Darunter vier
+  Zahlen (Linien, Zeichenweg, Leerweg, Dauer) statt eines Satzes.
+* **Kalibrieren** — Fahrkreuz mit daumengroßen Tasten, Nullpunkt setzen, Ecken
+  auf Deutsch übernehmen und wieder anfahren, Standort anlegen samt
+  Kinematik-Urteil
+* **Maschine** — Zustand groß, SD-Fortschritt, Pause/Weiter/Stopp — und dieselbe
+  Vorschau mit abgegrautem Anteil: ein Balken sagt „43 %", er sagt nicht, ob die
+  Maschine gerade im Gesicht des Porträts steht oder noch im Hintergrund
 
-Auf dem Handy stapeln sich die Karten, das Jog-Pad steht dabei oben.
+Auf dem Handy stapeln sich die Karten, und zwar in der Reihenfolge, in der man
+sie braucht: Vorschau und der Knopf „Auf Wand plotten" zuerst, die Einstellungen
+darunter. Im Kalibrieren-Reiter steht das Fahrkreuz oben.
 
 <table>
 <tr>
@@ -289,7 +297,7 @@ Auf dem Handy stapeln sich die Karten, das Jog-Pad steht dabei oben.
 <td width="30%"><img src="docs/images/ui-handy.png" alt="Dieselbe Seite auf dem Handy"></td>
 </tr>
 <tr>
-<td align="center"><sub>Kalibrieren: Jog-Pad, Ecken, Standort samt Kinematik-Urteil</sub></td>
+<td align="center"><sub>Kalibrieren: Fahrkreuz, Ecken, Standort samt Kinematik-Urteil</sub></td>
 <td align="center"><sub>… und auf dem Handy an der Wand</sub></td>
 </tr>
 </table>
