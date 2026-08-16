@@ -240,7 +240,9 @@ cd Wallplotter
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[geometry,dev]"   # Kern + vpype + Tests
 pip install -e ".[web]"            # Web-UI
-pip install -e ".[photo]"          # Foto-Zweig (Pillow, hatched)
+pip install -e ".[photo]"          # Foto-Zweig: stipple, tsp, spiral (nur Pillow)
+pip install -e ".[hatch]"          # zusätzlich Schraffur — `hatched` zieht vpype[all],
+                                   # OpenCV, scikit-image und matplotlib nach
 ```
 
 Ohne Extras funktionieren GCode-Export, Kalibrierlogik, Testmuster und Upload.

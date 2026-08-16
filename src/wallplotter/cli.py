@@ -14,12 +14,10 @@ from pathlib import Path
 
 from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PenConfig, PlotConfig
 from .gcode import layers_to_gcode, lines_to_gcode, prepare_geometry, stats_for
-from .imaging import TECHNIQUES, ImagingError, image_to_lines
+from .imaging import IMAGE_SUFFIXES, TECHNIQUES, ImagingError, image_to_lines
 from .imaging import describe as describe_techniques
 from .patterns import PATTERNS, build, describe
 from .pipeline import VpypeNotAvailable, lines_to_svg, svg_to_layers, svg_to_lines
-
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
 
 def _slug(text: str) -> str:
@@ -228,6 +226,22 @@ def main(argv: list[str] | None = None) -> int:
                 target = base.with_name(f"{base.stem}-{position}-{_slug(label)}{base.suffix}")
                 target.write_text(program, encoding="utf-8")
                 print(f"Ebene {label} → {target}")
+        # Sonst wartet man vor der Wand darauf, dass etwas hochgeladen wird
+        ignored = [
+            name
+            for name, used in (
+                ("--preview", args.preview),
+                ("--upload", args.upload),
+                ("--run", args.run),
+            )
+            if used
+        ]
+        if ignored:
+            print(
+                f"Hinweis: {', '.join(ignored)} gilt nicht für --layers — "
+                "welche Farbe zuerst an die Wand soll, entscheidet der Mensch.",
+                file=sys.stderr,
+            )
         return 0
 
     if args.pattern:

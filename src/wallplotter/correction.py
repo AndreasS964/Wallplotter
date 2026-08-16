@@ -159,7 +159,8 @@ class MeasuredCorrection:
         """Polynom an die gemessenen Abweichungen anpassen.
 
         Ohne Angabe wird der höchste Grad genommen, den die Messpunktzahl mit
-        Reserve trägt: 3 Punkte affin, ab 10 quadratisch, ab 16 kubisch.
+        Reserve trägt — sechs Punkte mehr als Unbekannte: bis 9 Punkte affin,
+        ab 10 bilinear, ab 12 quadratisch, ab 16 kubisch.
         """
         if len(points) < 3:
             raise CorrectionError("Mindestens 3 Messpunkte nötig, besser 16 über die Fläche verteilt")

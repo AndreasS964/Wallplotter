@@ -14,13 +14,14 @@ Arbeiten zusehen.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import replace
 
 from .calibration import CORNERS, AreaCalibration
 from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PenConfig, PlotConfig
 from .gcode import layers_to_gcode, lines_to_gcode, prepare_geometry, stats_for
-from .imaging import TECHNIQUES, ImagingError
+from .imaging import IMAGE_SUFFIXES, TECHNIQUES, ImagingError
 from .imaging import image_to_lines as image_lines
 from .location import DEFAULT_PATH as LOCATIONS_PATH
 from .location import Location, LocationBook, LocationError
@@ -28,8 +29,9 @@ from .patterns import PATTERNS, build
 from .pipeline import VpypeNotAvailable, lines_to_svg, svg_to_layers
 from .upload import FluidNCClient, FluidNCError
 
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 JOG_STEPS = [1, 10, 50, 100]
+DEFAULT_PITCH_MM = 25.0
+DEFAULT_JOG_STEP_MM = 10
 
 EMPTY_PREVIEW = (
     '<div style="display:flex;align-items:center;justify-content:center;'
@@ -84,10 +86,16 @@ class WallplotterUI:
     # -- Konfiguration ----------------------------------------------------
 
     def plot_config(self) -> PlotConfig:
+        width = self.width.value or WALL_WIDTH_MM
+        height = self.height.value or WALL_HEIGHT_MM
+        # Ein Zahlenfeld nimmt jede Eingabe an, auch 2000 mm Rand auf 2000 mm
+        # Fläche. PlotConfig wirft dafür — und ein Tippfehler darf die
+        # Oberfläche nicht zerlegen, während man vor der Wand steht.
+        margin = min(max(self.margin.value or 0, 0.0), max(min(width, height) / 2 - 1, 0.0))
         config = PlotConfig(
-            width_mm=self.width.value or WALL_WIDTH_MM,
-            height_mm=self.height.value or WALL_HEIGHT_MM,
-            margin_mm=self.margin.value or 0,
+            width_mm=width,
+            height_mm=height,
+            margin_mm=margin,
             draw_feed=self.draw_feed.value or 1500,
             pen=PenConfig(
                 down_value=int(self.pen_down.value or 0),
@@ -120,7 +128,8 @@ class WallplotterUI:
             if suffix in IMAGE_SUFFIXES:
                 options = {}
                 if self.technique.value in ("hatch", "spiral"):
-                    options["pitch_mm"] = self.pitch.value
+                    # geleertes Zahlenfeld liefert None, und None geht in keine Rechnung
+                    options["pitch_mm"] = self.pitch.value or DEFAULT_PITCH_MM
                 self.lines = image_lines(
                     self.upload_data,
                     config.width_mm,
@@ -251,7 +260,8 @@ class WallplotterUI:
         self.ui.notify(f"Plot gestartet: {remote}", type="positive")
 
     def jog(self, dx: float, dy: float) -> None:
-        step = float(self.jog_step.value)
+        # Ein Toggle lässt sich auch abwählen — dann steht dort None
+        step = float(self.jog_step.value or DEFAULT_JOG_STEP_MM)
         try:
             self.client(5).jog(dx * step, dy * step, feed=self.jog_feed.value or 1000)
         except (FluidNCError, Exception) as exc:  # noqa: B014 - Netzwerkfehler aller Art
@@ -344,10 +354,24 @@ class WallplotterUI:
         self.use_calibration.set_enabled(self.calibration.complete)
         self.regenerate()
 
-    def poll_status(self) -> None:
+    def _read_status(self):
+        """Statusabfrage — blockiert, gehört deshalb in einen Thread."""
         try:
-            machine = self.client(3).status()
+            return self.client(3).status()
         except Exception:
+            return None
+
+    async def poll_status(self) -> None:
+        """Alle zwei Sekunden den Maschinenstatus holen und anzeigen.
+
+        Die HTTP-Abfrage läuft in einem Thread: NiceGUI arbeitet die Timer in
+        derselben Event-Loop ab wie alles andere, und ein nicht erreichbares
+        Board (der Normalfall beim Basteln) würde die Oberfläche sonst alle
+        zwei Sekunden für die volle Timeout-Dauer einfrieren — für *alle*
+        Geräte, die gerade draufschauen.
+        """
+        machine = await asyncio.to_thread(self._read_status)
+        if machine is None:
             self.status_label.set_text("FluidNC nicht erreichbar")
             self.status_badge.props("color=grey")
             self.progress.set_value(0)

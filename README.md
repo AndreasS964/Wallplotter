@@ -10,7 +10,7 @@
   <a href="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-241-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-256-brightgreen">
   <img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-lightgrey">
 </p>
 
@@ -62,7 +62,8 @@ cd Wallplotter
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[geometry,dev]"      # Kern + vpype + Tests
 pip install -e ".[web]"               # zusätzlich für die Web-UI
-pip install -e ".[photo]"             # zusätzlich für den Foto-Zweig (hatched)
+pip install -e ".[photo]"             # zusätzlich für Fotos (nur Pillow)
+pip install -e ".[hatch]"             # zusätzlich für Schraffur (zieht vpype, OpenCV & Co. nach)
 ```
 
 Ohne die Extras funktionieren GCode-Export, Statistik, Vorschau und Upload —

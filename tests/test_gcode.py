@@ -83,3 +83,21 @@ def test_stats():
 def test_margin_larger_than_area_is_rejected():
     with pytest.raises(ValueError):
         PlotConfig(width_mm=100, height_mm=100, margin_mm=60)
+
+
+def test_stats_count_the_servo_dwell():
+    """Bei einem Punktraster sind die Stifthübe der Löwenanteil der Laufzeit."""
+    dots = [[(float(i), 0.0), (float(i) + 1.0, 0.0)] for i in range(0, 200, 2)]
+    config = PlotConfig(pen=PenConfig(dwell_s=0.25))
+    stats = stats_for(dots, config)
+    assert stats.pen_s == pytest.approx(2 * 100 * 0.25)
+    assert stats.duration_s == pytest.approx(stats.motion_s + stats.pen_s)
+    assert "Stifthübe" in str(stats)
+
+
+def test_stats_without_dwell_are_pure_motion():
+    config = PlotConfig(pen=PenConfig(dwell_s=0.0))
+    stats = stats_for(SQUARE, config)
+    assert stats.pen_s == 0.0
+    assert stats.duration_s == pytest.approx(stats.motion_s)
+    assert "Stifthübe" not in str(stats)

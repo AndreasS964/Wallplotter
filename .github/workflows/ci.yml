@@ -25,7 +25,10 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          # web und photo sind reine Python-Räder und in Sekunden da — ohne sie
+          # überspringt die CI stillschweigend die Tests der Web-UI und der
+          # Bildverfahren, also gerade das, was am ehesten bricht.
+          pip install -e ".[dev,web,photo]"
 
       - name: Lint
         run: ruff check .
@@ -49,7 +52,9 @@ jobs:
       - name: Install mit vpype
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[geometry,dev]"
+          # hatch gehört hierher und nicht in den schnellen Job: `hatched`
+          # bringt vpype[all], OpenCV, scikit-image und matplotlib mit
+          pip install -e ".[geometry,hatch,dev]"
 
       - name: Test
         run: pytest -q

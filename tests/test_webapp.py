@@ -5,12 +5,16 @@ hält (falsche Feldnamen, vertauschte Argumente, kaputte Callbacks fallen hier
 auf, bevor sie vor der Wand auffallen).
 """
 
+import time
+from types import SimpleNamespace
+
 import pytest
 
 pytest.importorskip("nicegui", reason="NiceGUI ist optional (Extra: web)")
 
 from wallplotter.calibration import AreaCalibration  # noqa: E402
 from wallplotter.location import Location, LocationBook  # noqa: E402
+from wallplotter.upload import FluidNCError  # noqa: E402
 from wallplotter.webapp import WallplotterUI, create_app  # noqa: E402
 
 CORNERS = {
@@ -207,3 +211,55 @@ def test_photo_upload_clears_previous_layers(app, tmp_path):
     app.upload_data, app.upload_name = path.read_bytes(), "foto.png"
     app.render_upload()
     assert app.layers == []
+
+
+def test_empty_number_fields_do_not_crash_the_ui(app, tmp_path):
+    """Ein geleertes Zahlenfeld liefert None — das darf keine Rechnung erreichen."""
+    pytest.importorskip("PIL.Image")
+    from PIL import Image
+
+    path = tmp_path / "foto.png"
+    Image.new("L", (40, 50), 120).save(path)
+    app.upload_data, app.upload_name = path.read_bytes(), "foto.png"
+
+    app.pitch.set_value(None)
+    app.render_upload()               # früher: TypeError aus imaging.spiral
+    assert app.lines
+
+    app.jog_step.set_value(None)
+    app.jog(1, 0)                     # ohne Board: darf nur nicht abstürzen
+
+
+def test_absurd_margin_does_not_crash_the_ui(app):
+    """PlotConfig wirft bei zu großem Rand — die Oberfläche darf das nicht."""
+    app.margin.set_value(9999)
+    config = app.plot_config()
+    assert config.drawable_width_mm > 0
+    assert config.drawable_height_mm > 0
+
+
+def test_status_polling_does_not_block_the_event_loop(app):
+    """Die Timer-Abfrage läuft in einem Thread — sonst friert die UI alle zwei
+    Sekunden für die Timeout-Dauer ein, sobald das Board nicht antwortet."""
+    import asyncio
+
+    def slow_status():
+        time.sleep(0.3)
+        raise FluidNCError("nicht erreichbar")
+
+    app.client = lambda timeout=10.0: SimpleNamespace(status=slow_status)
+
+    async def scenario():
+        ticks = 0
+
+        async def counter():
+            nonlocal ticks
+            for _ in range(30):
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        await asyncio.gather(app.poll_status(), counter())
+        return ticks
+
+    assert asyncio.run(scenario()) == 30
+    assert app.status_label.text == "FluidNC nicht erreichbar"

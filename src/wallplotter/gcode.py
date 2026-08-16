@@ -39,6 +39,7 @@ def prepare_geometry(
     invert_y: bool | None = None,
     apply_origin: bool = True,
     correction=None,
+    fit_bounds: tuple[float, float, float, float] | None = None,
 ) -> Lines:
     """Rohlinien in Plot-Geometrie überführen: einpassen, spiegeln, versetzen.
 
@@ -49,12 +50,21 @@ def prepare_geometry(
     Für die Vorschau ``invert_y=False`` und ``apply_origin=False`` setzen: SVG
     hat wie die Zeichnung den Ursprung oben links, und der Versatz der Fläche
     in Maschinenkoordinaten interessiert dort nicht.
+
+    ``fit_bounds`` gibt die Ausgangs-Bounding-Box vor, statt sie aus ``lines``
+    zu nehmen — so wird jede Farbebene mit derselben Abbildung eingepasst wie
+    die Zeichnung als Ganzes (siehe :func:`layers_to_gcode`).
     """
     cfg = config or PlotConfig()
     geometry: Lines = [list(line) for line in lines if len(line) >= 2]
     if fit:
         geometry = fit_to_area(
-            geometry, cfg.width_mm, cfg.height_mm, cfg.margin_mm, center=True
+            geometry,
+            cfg.width_mm,
+            cfg.height_mm,
+            cfg.margin_mm,
+            center=True,
+            source_bounds=fit_bounds,
         )
     if cfg.invert_y if invert_y is None else invert_y:
         geometry = flip_y(geometry, cfg.height_mm)
@@ -97,9 +107,13 @@ class PlotStats:
         self.point_count = sum(len(line) for line in lines)
         self.draw_mm = draw_length(lines)
         self.travel_mm = travel_length(lines)
-        self.duration_s = estimate_duration_s(
-            lines, config.draw_feed, config.travel_feed
-        )
+        self.motion_s = estimate_duration_s(lines, config.draw_feed, config.travel_feed)
+        # Je Linie hebt und senkt der Servo einmal, und nach jedem Hub wartet
+        # das Programm. Bei einem Punktraster ist das nicht die Nachkommastelle,
+        # sondern der Löwenanteil: 5000 Punkte × 2 × 0,25 s sind gut 40 Minuten,
+        # die eine reine Wegschätzung unterschlägt.
+        self.pen_s = 2 * self.line_count * max(0.0, config.pen.dwell_s)
+        self.duration_s = self.motion_s + self.pen_s
 
     def as_dict(self) -> dict[str, float | int]:
         return {
@@ -107,16 +121,21 @@ class PlotStats:
             "point_count": self.point_count,
             "draw_mm": round(self.draw_mm, 1),
             "travel_mm": round(self.travel_mm, 1),
+            "motion_s": round(self.motion_s, 1),
+            "pen_s": round(self.pen_s, 1),
             "duration_s": round(self.duration_s, 1),
         }
 
     def __str__(self) -> str:
-        minutes = self.duration_s / 60
-        return (
+        text = (
             f"{self.line_count} Linien, {self.point_count} Punkte, "
             f"{self.draw_mm / 1000:.1f} m zeichnen + {self.travel_mm / 1000:.1f} m "
-            f"Leerweg, geschätzt {minutes:.0f} min"
+            f"Leerweg, geschätzt {self.duration_s / 60:.0f} min"
         )
+        # nur ausweisen, wenn es weh tut — sonst rauscht die Zeile zu
+        if self.pen_s > 0.1 * self.duration_s:
+            text += f" (davon {self.pen_s / 60:.0f} min Stifthübe)"
+        return text
 
 
 def stats_for(lines: Sequence[Line], config: PlotConfig | None = None) -> PlotStats:
@@ -242,22 +261,16 @@ def layers_to_gcode(
     if not entries:
         return {} if separate else ""
 
-    # gemeinsame Einpassung: Grenzen über alle Ebenen bestimmen und dann
-    # jede Ebene mit derselben Abbildung behandeln
-    combined = [line for layer in entries for line in layer.lines]
-    if fit:
-        merged = prepare_geometry(combined, cfg, fit=True, correction=None)
-        source_bounds = _bounds(combined)
-        target_bounds = _bounds(merged)
-        mapper = _mapping(source_bounds, target_bounds)
-    else:
-        mapper = None
+    # Gemeinsame Einpassung: die Grenzen über *alle* Ebenen bestimmen und jeder
+    # Ebene als Bezug mitgeben. Die Ebene durchläuft danach dieselbe Kette wie
+    # eine einfarbige Zeichnung — nur eben mit fremder Bounding-Box.
+    combined = [line for layer in entries for line in layer.lines if len(line) >= 2]
+    fit_bounds = _bounds(combined) if fit else None
 
     def geometry_of(layer):
-        lines = [list(line) for line in layer.lines if len(line) >= 2]
-        if mapper:
-            lines = [[mapper(point) for point in line] for line in lines]
-        return prepare_geometry(lines, cfg, fit=False, correction=correction)
+        return prepare_geometry(
+            layer.lines, cfg, fit=fit, correction=correction, fit_bounds=fit_bounds
+        )
 
     if separate:
         result: dict[str, str] = {}
@@ -280,16 +293,3 @@ def _bounds(lines: Sequence[Line]) -> tuple[float, float, float, float]:
     xs = [x for line in lines for x, _ in line]
     ys = [y for line in lines for _, y in line]
     return (min(xs), min(ys), max(xs), max(ys)) if xs else (0.0, 0.0, 0.0, 0.0)
-
-
-def _mapping(source, target):
-    sx0, sy0, sx1, sy1 = source
-    tx0, ty0, tx1, ty1 = target
-    scale_x = (tx1 - tx0) / (sx1 - sx0) if sx1 > sx0 else 1.0
-    scale_y = (ty1 - ty0) / (sy1 - sy0) if sy1 > sy0 else 1.0
-    scale = min(scale_x, scale_y)
-
-    def mapper(point):
-        return (tx0 + (point[0] - sx0) * scale, ty0 + (point[1] - sy0) * scale)
-
-    return mapper

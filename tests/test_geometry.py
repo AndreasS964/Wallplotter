@@ -1,9 +1,13 @@
+import math
+import random
+
 from wallplotter.geometry import (
     bounds,
     draw_length,
     estimate_duration_s,
     fit_to_area,
     flip_y,
+    sort_lines,
     travel_length,
 )
 
@@ -51,3 +55,68 @@ def test_draw_and_travel_length():
 def test_estimate_duration():
     seconds = estimate_duration_s(SQUARE, draw_feed=60, travel_feed=60)
     assert round(seconds, 6) == 40.0
+
+
+def test_fit_to_area_can_use_a_foreign_bounding_box():
+    """Für mehrfarbige Zeichnungen: eine Ebene, aber die Grenzen aller Ebenen."""
+    corner = [[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]]
+    fitted = fit_to_area(corner, 100, 100, source_bounds=(0.0, 0.0, 10.0, 10.0))
+    # Maßstab kommt aus der fremden Box (10 → 100), nicht aus der eigenen (1)
+    assert bounds(fitted) == (0.0, 0.0, 10.0, 10.0)
+
+
+def _brute_force_sort(lines, start=(0.0, 0.0)):
+    """Die naive Fassung — Maßstab für die gerasterte Suche."""
+    remaining = [list(line) for line in lines if len(line) >= 2]
+    ordered, position = [], start
+    while remaining:
+        best_index, best_distance, best_flip = 0, math.inf, False
+        for index, line in enumerate(remaining):
+            for flip in (False, True):
+                head = line[-1] if flip else line[0]
+                distance = math.hypot(head[0] - position[0], head[1] - position[1])
+                if distance < best_distance:
+                    best_index, best_distance, best_flip = index, distance, flip
+        line = remaining.pop(best_index)
+        if best_flip:
+            line.reverse()
+        ordered.append(line)
+        position = line[-1]
+    return ordered
+
+
+def test_sort_lines_orders_by_shortest_travel_and_may_flip():
+    lines = [[(100.0, 0.0), (90.0, 0.0)], [(1.0, 0.0), (5.0, 0.0)]]
+    assert sort_lines(lines) == [[(1.0, 0.0), (5.0, 0.0)], [(90.0, 0.0), (100.0, 0.0)]]
+
+
+def test_sort_lines_drops_degenerate_lines():
+    assert sort_lines([[(1.0, 1.0)], []]) == []
+    assert sort_lines([]) == []
+
+
+def test_sort_lines_matches_the_brute_force_result():
+    """Die Rastersuche darf schneller sein, aber nicht anders entscheiden."""
+    rng = random.Random(20260816)
+    for _ in range(20):
+        lines = [
+            [
+                (rng.random() * 2000, rng.random() * 2500),
+                (rng.random() * 2000, rng.random() * 2500),
+            ]
+            for _ in range(rng.randint(2, 40))
+        ]
+        assert sort_lines([list(line) for line in lines]) == _brute_force_sort(lines)
+
+
+def test_sort_lines_handles_exact_ties_like_the_brute_force_version():
+    """Ein Punktraster erzeugt lauter gleich weite Nachbarn — genau der Fall,
+    in dem eine Rastersuche gern eine andere Wahl trifft als die naive."""
+    grid = [[(x * 10.0, y * 10.0), (x * 10.0 + 4.0, y * 10.0)] for y in range(8) for x in range(8)]
+    assert sort_lines([list(line) for line in grid]) == _brute_force_sort(grid)
+
+
+def test_sort_lines_finds_geometry_far_from_the_start():
+    """Der Nullpunkt kann weit außerhalb der Zeichnung liegen."""
+    far = [[(1_000_000.0, 500_000.0), (1_000_010.0, 500_000.0)]]
+    assert sort_lines(far) == far
