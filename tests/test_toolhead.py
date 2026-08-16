@@ -343,3 +343,58 @@ def test_the_pause_text_names_the_next_pen():
     )
     pause = next(line for line in combined.splitlines() if line.startswith("M0 "))
     assert "#e02020" in pause and "Marker" in pause
+
+
+@pytest.mark.parametrize(
+    "laser",
+    [
+        LaserToolhead(),
+        LaserToolhead(passes=3, pass_pause_s=1.0),
+        LaserToolhead(air_assist=None),
+        LaserToolhead(air_assist="M7", air_delay_s=0.0),
+        LaserToolhead(dynamic=False),
+        LaserToolhead(tool_number=100),
+        LaserToolhead(power_pct=100, s_max=255),
+        LaserToolhead(power_pct=0.5, s_max=1000),
+    ],
+    ids=["vorgabe", "drei-durchgaenge", "ohne-luft", "m7-ohne-vorlauf",
+         "konstant", "mit-werkzeugnummer", "volle-leistung", "kleinste-leistung"],
+)
+@pytest.mark.parametrize(
+    "geometry",
+    [
+        SQUARE,
+        [[(0.0, 0.0), (10.0, 10.0)]],                      # eine einzelne Linie
+        [[(0.0, 0.0), (5.0, 0.0)], [(8.0, 8.0), (9.0, 9.0)]],
+    ],
+    ids=["quadrat", "eine-linie", "zwei-linien"],
+)
+def test_no_laser_configuration_moves_while_the_beam_is_on(laser, geometry):
+    """Die eine Invariante, die über allen anderen steht.
+
+    Egal wie der Kopf eingestellt ist: an keiner Stelle des Programms darf eine
+    Eilfahrt stattfinden, während Leistung anliegt. Geprüft wird am fertigen
+    Programm, nicht an den Bausteinen — dazwischen liegt die Schleife, die die
+    Reihenfolge herstellt.
+    """
+    from wallplotter.resume import scan_program
+
+    config = PlotConfig(
+        width_mm=100, height_mm=100, margin_mm=10, invert_y=False, toolhead=laser
+    )
+    program = lines_to_gcode(geometry, config)
+    lines = program.splitlines()
+    states = scan_program(program)
+
+    for index, line in enumerate(lines):
+        if line.startswith("G0 "):
+            assert not states[index].drawing, (
+                f"Eilfahrt mit Strahl in Zeile {index + 1}: {line}"
+            )
+    # kein G1-Leerweg, keine Wartezeit mit Strahl
+    assert not any(line.startswith("G1 F") for line in lines)
+    for index, line in enumerate(lines):
+        if line.startswith("G4"):
+            assert not states[index].drawing, f"Wartezeit mit Strahl in Zeile {index + 1}"
+    # und am Ende ist alles aus
+    assert not states[-1].drawing
