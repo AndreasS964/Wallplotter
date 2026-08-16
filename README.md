@@ -8,6 +8,8 @@ dieses Repo enthält die Software drumherum: SVG oder Foto → optimierte Linien
 (vpype) → GCode im FluidNC/GRBL-Dialekt → Upload auf die µSD-Karte des Boards
 über die Web-API.
 
+* **Alles auf einen Blick: [`docs/wandplotter-handbuch.md`](docs/wandplotter-handbuch.md)**
+  — Hardware, Kinematik, Firmware, Abläufe, Qualität, offene Punkte
 * Hardware, Mechanik und Entscheidungen: [`docs/projektidee.md`](docs/projektidee.md)
 * Software-Stufen und UI-Architektur: [`docs/software-roadmap.md`](docs/software-roadmap.md)
 * Nachgerechnete Kinematik (Auflösung, Riemenlängen, Zugkräfte): [`docs/kinematik.md`](docs/kinematik.md)
