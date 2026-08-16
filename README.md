@@ -1,21 +1,51 @@
-# Wallplotter
+<h1 align="center">Wallplotter</h1>
 
-Bild-zu-GCode-Toolchain für einen selbstgebauten V-Plotter (Polargraph), der eine
-**2 m × 2,5 m** große Wandfläche im Kletterwand-Keller bemalt.
+<p align="center">
+  Bild-zu-GCode-Toolchain für einen selbstgebauten V-Plotter, der Wandflächen bemalt.<br>
+  Läuft mit <b>FluidNC</b> auf einem BIGTREETECH-Rodent-Board — SVG oder Foto rein,
+  GCode auf die SD-Karte raus.
+</p>
 
-Die Maschine läuft mit **FluidNC** auf einem BIGTREETECH-Rodent-Board (ESP32);
-dieses Repo enthält die Software drumherum: SVG oder Foto → optimierte Linien
-(vpype) → GCode im FluidNC/GRBL-Dialekt → Upload auf die µSD-Karte des Boards
-über die Web-API.
+<p align="center">
+  <a href="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml">
+    <img alt="CI" src="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-241-brightgreen">
+  <img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-lightgrey">
+</p>
 
-* **Alles auf einen Blick: [`docs/wandplotter-handbuch.md`](docs/wandplotter-handbuch.md)**
-  — Hardware, Kinematik, Firmware, Abläufe, Qualität, offene Punkte
-* Hardware, Mechanik und Entscheidungen: [`docs/projektidee.md`](docs/projektidee.md)
-* Software-Stufen und UI-Architektur: [`docs/software-roadmap.md`](docs/software-roadmap.md)
-* Nachgerechnete Kinematik (Auflösung, Riemenlängen, Zugkräfte): [`docs/kinematik.md`](docs/kinematik.md)
-  — die Zahlen dort gelten für *eine* Beispielaufhängung; für den echten Aufbau
-  rechnet `wallplotter-location show` dasselbe mit den gemessenen Werten
-* Firmware-Konfiguration: [`config/fluidnc-wallplotter.yaml`](config/fluidnc-wallplotter.yaml)
+<p align="center">
+  <img src="docs/images/ui-plotten.png" alt="Web-UI, Reiter Plotten" width="880">
+</p>
+
+---
+
+## Die Idee in einem Bild
+
+Eine Gondel hängt an zwei Zahnriemen zwischen zwei Motoren. Wo genau die Anker
+sitzen, ist nicht fest — der Plotter soll an wechselnden Wänden hängen. Deshalb
+wird jede Aufhängung eingemessen statt angenommen: **drei Maße mit dem
+Zollstock**, den Rest rechnet die Software.
+
+<p align="center">
+  <img src="docs/images/geometrie.svg" alt="Geometrie: Anker, Riemen, Gondel, Zeichenfläche" width="620">
+</p>
+
+```bash
+wallplotter-location new Keller --span 2300 --left 1450 --right 1470
+wallplotter-location config Keller     # fertiger kinematics-Block für FluidNC
+wallplotter-location show              # Auflösung, Riemenkräfte, Riemenlänge
+```
+
+## Dokumentation
+
+| Dokument | Inhalt |
+| --- | --- |
+| **[Projekthandbuch](docs/wandplotter-handbuch.md)** | **Alles an einer Stelle** — Hardware, Kinematik, Firmware, Abläufe, Qualität, offene Punkte |
+| [Projektidee](docs/projektidee.md) | Hardware, Mechanik, Entscheidungen |
+| [Software-Roadmap](docs/software-roadmap.md) | Stufenplan und UI-Architektur |
+| [Kinematik-Auswertung](docs/kinematik.md) | gerechnete Zahlen für eine Beispielaufhängung |
+| [FluidNC-Konfiguration](config/fluidnc-wallplotter.yaml) | kommentierte `config.yaml` fürs Rodent-Board |
 
 ## Warum eigener GCode-Export?
 
@@ -131,6 +161,8 @@ plot --pattern frame --location --upload --run
 plot --pattern feed-ramp --out out/tempo.gcode
 ```
 
+![Testmuster](docs/images/muster.png)
+
 `frame` (Rahmen, Diagonalen, Eckkreuze), `grid` (Maßstab nachmessen),
 `circles` (Verzerrung), `pen-test` (Servo-Wartezeit), `feed-ramp` (Tempo bis
 zum Riemenspringen).
@@ -168,6 +200,17 @@ Reiter für die drei Situationen vor der Wand:
 * **Maschine** — SD-Fortschritt, Pause/Weiter/Stopp
 
 Auf dem Handy stapeln sich die Karten, das Jog-Pad steht dabei oben.
+
+<table>
+<tr>
+<td width="70%"><img src="docs/images/ui-kalibrieren.png" alt="Reiter Kalibrieren"></td>
+<td width="30%"><img src="docs/images/ui-handy.png" alt="Dieselbe Seite auf dem Handy"></td>
+</tr>
+<tr>
+<td align="center"><sub>Kalibrieren: Jog-Pad, Ecken, Standort samt Kinematik-Urteil</sub></td>
+<td align="center"><sub>… und auf dem Handy an der Wand</sub></td>
+</tr>
+</table>
 
 ### Als Bibliothek
 
@@ -223,8 +266,11 @@ plot foto.jpg --technique spiral --pitch 25
 | `tsp` | dieselben Punkte als eine durchgehende Linie | keine |
 | `spiral` | Spirale mit dunkelheitsabhängiger Auslenkung | keine |
 
+![Vergleich der Bildverfahren](docs/images/verfahren.png)
+
 `tsp` und `spiral` zeichnen ohne abzusetzen — damit entfallen Servo-Artefakte
-und die Pendelstöße durch Leerfahrten ganz.
+und die Pendelstöße durch Leerfahrten ganz. Die Zeitangaben gelten für
+2 × 2,5 m bei 1500 mm/min.
 
 ## Aufbau
 

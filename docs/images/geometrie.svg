@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2900 3590" width="100%" style="max-width:720px" font-family="system-ui, sans-serif">
+<rect width="2900" height="3590" fill="#ffffff"/>
+<line x1="300" y1="290" x2="2600" y2="290" stroke="#444" stroke-width="7" marker-start="url(#m)" marker-end="url(#m)"/>
+<line x1="300" y1="290" x2="300" y2="620" stroke="#c8ccd0" stroke-width="4"/>
+<line x1="2600" y1="290" x2="2600" y2="620" stroke="#c8ccd0" stroke-width="4"/>
+<text x="1437" y="235" font-size="110" fill="#222" text-anchor="middle">① Spannweite 2300 mm</text>
+<line x1="100" y1="620" x2="2800" y2="620" stroke="#9aa0a6" stroke-width="8" stroke-dasharray="34 20"/>
+<rect x="450" y="870" width="2000" height="2500" fill="#f2f6fd" stroke="#1a4fd6" stroke-width="9"/>
+<text x="1450" y="2420" font-size="120" fill="#1a4fd6" text-anchor="middle">Zeichenfläche</text>
+<text x="1450" y="2565" font-size="100" fill="#5b7fd6" text-anchor="middle">per Ecken-Anfahrt ausgemessen</text>
+<line x1="300" y1="620" x2="1437" y2="1519" stroke="#d64545" stroke-width="11"/>
+<text x="829" y="1070" font-size="105" fill="#b03030" text-anchor="end">② 1450 mm</text>
+<line x1="2600" y1="620" x2="1437" y2="1519" stroke="#d64545" stroke-width="11"/>
+<text x="2059" y="1070" font-size="105" fill="#b03030" text-anchor="start">③ 1470 mm</text>
+<circle cx="300" cy="620" r="54" fill="#222"/>
+<text x="300" y="515" font-size="100" fill="#222" text-anchor="middle">Anker links</text>
+<circle cx="2600" cy="620" r="54" fill="#222"/>
+<text x="2600" y="515" font-size="100" fill="#222" text-anchor="middle">Anker rechts</text>
+<rect x="1349" y="1447" width="176" height="144" rx="26" fill="#222"/>
+<text x="1437" y="1749" font-size="105" fill="#222" text-anchor="middle">Gondel am Nullpunkt</text>
+<defs><marker id="m" markerWidth="12" markerHeight="12" refX="6" refY="6" orient="auto"><circle cx="6" cy="6" r="5" fill="#444"/></marker></defs>
+<text x="50" y="3545" font-size="88" fill="#6b7280">Drei Maße genügen — die Ankerkoordinaten folgen per Trilateration</text>
+</svg>
