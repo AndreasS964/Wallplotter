@@ -84,8 +84,8 @@ Mit `--from-board` kommt der Fortschritt aus dem Status der Maschine.
 - **Drei Absturzpfade in der Oberfläche**: geleertes Zahlenfeld
   „Bahnabstand", abgewähltes Jog-Toggle, Rand größer als die halbe Fläche.
 - **`sort_lines` war quadratisch** — ein Punktraster mit zehntausend Strichen
-  kostete zwanzig Sekunden, jetzt eine Viertelsekunde bei nachweislich
-  identischem Ergebnis.
+  kostete zwanzig Sekunden, jetzt eine Viertelsekunde. Dass das Ergebnis dabei
+  wirklich dasselbe bleibt, stimmte erst nach einem Nachtrag (siehe unten).
 - Jede Ebene und jeder Plot bekommen einen eigenen Dateinamen auf der Karte,
   statt sich gegenseitig als `plot.gcode` zu überschreiben — das Fortsetzen
   braucht die Originaldatei noch.
