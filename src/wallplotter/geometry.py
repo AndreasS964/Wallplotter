@@ -186,7 +186,14 @@ def _nearest_end(
     first = max(0, min_gx - cx, cx - max_gx, min_gy - cy, cy - max_gy)
     last = max(abs(cx - min_gx), abs(cx - max_gx), abs(cy - min_gy), abs(cy - max_gy))
 
-    best_index, best_squared, best_flip = -1, math.inf, False
+    # Verglichen wird das Tripel, nicht nur der Abstand. Zwei Linien, die
+    # einen Endpunkt teilen, liegen exakt gleich weit weg — und welche davon
+    # zuerst gezogen wird, entscheidet über den *nächsten* Leerweg. Die
+    # Rasterreihenfolge ist dabei eine andere als die Listenreihenfolge; ohne
+    # festen Gleichstand käme mal der eine, mal der andere Weg heraus, und
+    # gelegentlich der längere.
+    best = (math.inf, len(ends), False)
+    best_index = -1
     for ring in range(first, last + 1):
         for gx, gy in _ring_cells(cx, cy, ring, grid_box):
             for index in grid.get((gx, gy), ()):
@@ -195,11 +202,11 @@ def _nearest_end(
                 for flip in (False, True):
                     head = ends[index][1] if flip else ends[index][0]
                     squared = (head[0] - position[0]) ** 2 + (head[1] - position[1]) ** 2
-                    if squared < best_squared:
-                        best_index, best_squared, best_flip = index, squared, flip
-        if best_index >= 0 and (ring * cell) ** 2 >= best_squared:
+                    if (squared, index, flip) < best:
+                        best, best_index = (squared, index, flip), index
+        if best_index >= 0 and (ring * cell) ** 2 >= best[0]:
             break
-    return best_index, best_flip
+    return best_index, best[2]
 
 
 def _ring_cells(cx: int, cy: int, ring: int, box: tuple[int, int, int, int]):

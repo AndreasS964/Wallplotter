@@ -116,6 +116,32 @@ def test_sort_lines_handles_exact_ties_like_the_brute_force_version():
     assert sort_lines([list(line) for line in grid]) == _brute_force_sort(grid)
 
 
+def test_lines_sharing_an_endpoint_are_ordered_the_same_way():
+    """Der Fall, den Zufallszahlen nie treffen und eine Zeichnung ständig.
+
+    Teilen zwei Linien einen Endpunkt, liegen sie exakt gleich weit weg. Welche
+    zuerst gezogen wird, entscheidet über den *nächsten* Leerweg — und die
+    Rasterreihenfolge ist eine andere als die Listenreihenfolge. Ohne festen
+    Gleichstand kam mal der eine, mal der andere Weg heraus, gelegentlich der
+    längere: für ``[[(2,2),(3,2)], [(1,3),(2,2)]]`` 4,24 mm statt 3,83 mm.
+    """
+    gemeldet = [[(2.0, 2.0), (3.0, 2.0)], [(1.0, 3.0), (2.0, 2.0)]]
+    assert sort_lines([list(line) for line in gemeldet]) == _brute_force_sort(gemeldet)
+
+    # und breit: Linien auf einem groben Gitter teilen sich dauernd Endpunkte
+    rng = random.Random(4711)
+    for _ in range(200):
+        knoten = [(float(rng.randint(0, 6)), float(rng.randint(0, 6))) for _ in range(10)]
+        lines = []
+        for _ in range(rng.randint(2, 12)):
+            a, b = rng.sample(range(len(knoten)), 2)
+            if knoten[a] != knoten[b]:
+                lines.append([knoten[a], knoten[b]])
+        if len(lines) < 2:
+            continue
+        assert sort_lines([list(line) for line in lines]) == _brute_force_sort(lines)
+
+
 def test_sort_lines_finds_geometry_far_from_the_start():
     """Der Nullpunkt kann weit außerhalb der Zeichnung liegen."""
     far = [[(1_000_000.0, 500_000.0), (1_000_010.0, 500_000.0)]]
