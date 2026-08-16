@@ -137,3 +137,13 @@ def test_main_returns_zero_when_nothing_is_broken(book_path, capsys):
 def test_check_renders_mark_detail_and_hint():
     assert str(Check("Sache", OK, "geht")) == "✓ Sache: geht"
     assert "→ tu dies" in str(Check("Sache", FAIL, "geht nicht", "tu dies"))
+
+
+def test_a_locations_file_of_the_wrong_shape_is_reported(tmp_path):
+    """Eine JSON-Datei, deren oberste Ebene keine Abbildung ist, warf einen
+    AttributeError aus dem Selbsttest heraus — ausgerechnet dort."""
+    path = tmp_path / "falsch.json"
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+    checks = check_locations(path)
+    assert status_of(checks, "Standorte") == FAIL
+    assert "keine Standortdatei" in checks[0].hint

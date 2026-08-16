@@ -162,6 +162,16 @@ def check_locations(path: Path) -> list[Check]:
         book = LocationBook.load(path)
     except LocationError as exc:
         return [Check("Standorte", FAIL, str(exc), f"{path} von Hand prüfen oder löschen")]
+    except Exception as exc:
+        # etwa eine JSON-Datei, deren oberste Ebene eine Liste ist
+        return [
+            Check(
+                "Standorte",
+                FAIL,
+                f"{type(exc).__name__}: {exc}",
+                f"{path} ist keine Standortdatei — prüfen oder löschen",
+            )
+        ]
 
     if not book.locations:
         return [

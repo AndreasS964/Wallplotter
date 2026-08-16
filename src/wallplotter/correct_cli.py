@@ -68,7 +68,13 @@ def build_parser() -> argparse.ArgumentParser:
         prog="wallplotter-correct",
         description="Maschinenfehler messen und beim Plotten gegenrechnen.",
     )
-    parser.add_argument("--location", nargs="?", const="", help="Standort (ohne Namen: der aktive)")
+    # Kein nargs="?": `--location anpassen` würde sonst den Unterbefehl als
+    # Standortnamen schlucken und mit einer irreführenden Meldung abbrechen.
+    parser.add_argument(
+        "--location",
+        metavar="NAME",
+        help="Standort verwenden; leer lassen für den aktiven (--location '')",
+    )
     parser.add_argument("--measurements", type=Path, default=DEFAULT_MEASUREMENTS)
     sub = parser.add_subparsers(dest="command", required=True)
 

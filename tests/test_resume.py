@@ -267,3 +267,49 @@ def test_a_program_without_any_tool_command_says_so():
     z_achse = "\n".join(["G21", "G90", "G0 X10 Y10", "G1 Z-1", "G1 X50 Y10", "G1 Z1", "M2"])
     with pytest.raises(ResumeError, match="keine einzige Zeichenbewegung"):
         resume_program(z_achse, percent=50)
+
+
+def test_a_resumed_laser_program_actually_fires():
+    """Der Fund, der am meisten gekostet hätte: nichts.
+
+    Der Laser setzt seinen Modus einmal im Vorspann; danach folgen nur nackte
+    S-Zeilen. Wurde der Modus nicht wieder aufgebaut, fuhr das Restprogramm
+    die halbe Zeichnung ab, ohne dass der Strahl je zündete — kein Schaden,
+    aber auch kein Bild, und man merkt es erst hinterher.
+    """
+    from wallplotter.toolhead import LaserToolhead
+
+    config = PlotConfig(
+        width_mm=1000, height_mm=1000, margin_mm=50, invert_y=False,
+        toolhead=LaserToolhead(power_pct=40),
+    )
+    text = lines_to_gcode(LINES, config)
+    cut = text.splitlines().index("G1 X590 Y680 F600")
+    rest = resume_program(text, line=cut)
+    assert "M4 S0 ; Werkzeugmodus wie im Original" in rest
+    assert scan_program(rest)[-1].draw_count > 0
+
+
+def test_exact_resume_keeps_the_original_power_mode():
+    """Ein mit M4 erzeugtes Programm mit M3 fortzusetzen hieße konstante
+    Leistung, wo dynamische gemeint war — bei einem Halt brennt das ein Loch."""
+    from wallplotter.toolhead import LaserToolhead
+
+    config = PlotConfig(
+        width_mm=1000, height_mm=1000, margin_mm=50, invert_y=False,
+        toolhead=LaserToolhead(power_pct=40),
+    )
+    text = lines_to_gcode(LINES, config)
+    cut = text.splitlines().index("G1 X590 Y680 F600")
+    rest = resume_program(text, line=cut, whole_stroke=False)
+    assert not any(line.startswith("M3 S") for line in rest.splitlines())
+    assert any(line.startswith("M4 S400 ;") for line in rest.splitlines())
+
+
+def test_a_file_with_foreign_encoding_still_opens(tmp_path):
+    """Ein Latin-1-Umlaut im Kommentar ist kein Grund, ein halbfertiges
+    Wandbild aufzugeben."""
+    path = tmp_path / "fremd.gcode"
+    text = lines_to_gcode(LINES, CONFIG).replace("; erzeugt", "; erzeugt fuer Buero")
+    path.write_bytes(text.encode("utf-8").replace(b"Buero", b"B\xfcro"))
+    assert resume_file(path, percent=70).strip().endswith("M2 ; Programmende")

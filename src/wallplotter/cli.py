@@ -219,25 +219,8 @@ def _toolhead_from_args(args) -> Toolhead:
     wer ``--pen-down`` setzt, meint genau diesen Stift, nicht alle.
     """
     head = toolhead_by_name(args.toolhead)
-
     if isinstance(head, LaserToolhead):
-        changes = {}
-        if args.laser_power is not None:
-            changes["power_pct"] = args.laser_power
-        if args.laser_smax is not None:
-            changes["s_max"] = args.laser_smax
-        if args.laser_passes is not None:
-            changes["passes"] = args.laser_passes
-        if args.laser_constant:
-            changes["dynamic"] = False
-        head = replace(head, **changes) if changes else head
-        if not args.laser_verstanden:
-            raise ToolheadError(
-                "Laser-GCode entsteht nur mit --laser-verstanden.\n"
-                + "\n".join(f"  {note}" for note in head.check(travel_as_g1=False, draw_feed=0))
-                + "\n  Erst mit kleiner Leistung einen Rahmen fahren, dann schneiden."
-            )
-        return head
+        return tune_laser(head, args)
 
     changes = {}
     if args.pen_down is not None:
@@ -247,6 +230,45 @@ def _toolhead_from_args(args) -> Toolhead:
     if args.pen_dwell is not None:
         changes["dwell_s"] = args.pen_dwell
     return replace(head, **changes) if changes else head
+
+
+def tune_laser(head: LaserToolhead, args) -> LaserToolhead:
+    """Die ``--laser-*``-Schalter auf einen Laserkopf anwenden.
+
+    Eigene Funktion, weil ein Laser auf zwei Wegen ins Programm kommt: über
+    ``--toolhead laser`` und über ``--pen-for 'FARBE=laser'``. Stünde das nur
+    im ersten Weg, liefe der zweite still mit den Katalogwerten — bei einer
+    Leistungsangabe ist das der Unterschied zwischen Gravur und Brandloch.
+    """
+    changes = {}
+    if args.laser_power is not None:
+        changes["power_pct"] = args.laser_power
+    if args.laser_smax is not None:
+        changes["s_max"] = args.laser_smax
+    if args.laser_passes is not None:
+        changes["passes"] = args.laser_passes
+    if args.laser_constant:
+        changes["dynamic"] = False
+    return replace(head, **changes) if changes else head
+
+
+def guard_lasers(heads, args) -> None:
+    """Den Riegel über *jeden* Kopf ziehen, der im Programm landet.
+
+    Vorher hing die Bestätigung am Kopf aus ``--toolhead``. Über
+    ``--pen-for 'FARBE=laser'`` entstand damit vollständiger Laser-GCode ohne
+    jede Rückfrage und ohne eine einzige Warnung — genau die Lücke, gegen die
+    die Bestätigung gebaut war.
+    """
+    lasers = [head for head in heads if isinstance(head, LaserToolhead)]
+    if lasers and not args.laser_verstanden:
+        raise ToolheadError(
+            "Laser-GCode entsteht nur mit --laser-verstanden.\n"
+            + "\n".join(
+                f"  {note}" for note in lasers[0].check(travel_as_g1=False, draw_feed=0)
+            )
+            + "\n  Erst mit kleiner Leistung einen Rahmen fahren, dann schneiden."
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -339,10 +361,21 @@ def main(argv: list[str] | None = None) -> int:
     tools = None
     if args.pen_for:
         try:
-            tools = pen_map(",".join(args.pen_for))
+            tools = {
+                label: tune_laser(assigned, args) if isinstance(assigned, LaserToolhead) else assigned
+                for label, assigned in pen_map(",".join(args.pen_for)).items()
+            }
         except ToolheadError as exc:
             print(str(exc), file=sys.stderr)
             return 2
+
+    # Der Riegel gilt für alles, was tatsächlich Programm wird — nicht nur für
+    # den Kopf aus --toolhead
+    try:
+        guard_lasers([head, *(tools or {}).values()], args)
+    except ToolheadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     optimize_kwargs = {
         "simplify_tolerance_mm": args.simplify,
@@ -474,7 +507,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.adaptive_feed and location is not None:
         from .motion import conditioning_feeds  # noqa: PLC0415
 
-        feeds = conditioning_feeds(machine_lines, location.kinematics(), plot_config.draw_feed)
+        # Der Vorschub des Kopfes, nicht der aus der Konfiguration: ein Pinsel
+        # mit eigenem draw_feed bekäme sonst die Werte eines Fineliners
+        feeds = conditioning_feeds(
+            machine_lines, location.kinematics(), plot_config.toolhead.feed_for(plot_config.draw_feed)
+        )
         if feeds:
             print(
                 f"Vorschub angepasst: {min(feeds):.0f} bis {max(feeds):.0f} mm/min "
@@ -503,7 +540,9 @@ def main(argv: list[str] | None = None) -> int:
         from .motion import resonance_warning  # noqa: PLC0415
 
         warning = resonance_warning(
-            machine_lines, plot_config.draw_feed, args.pen_below_pivot
+            machine_lines,
+            plot_config.toolhead.feed_for(plot_config.draw_feed),
+            args.pen_below_pivot,
         )
         if warning is not None:
             print(str(warning), file=sys.stderr if warning.critical else sys.stdout)

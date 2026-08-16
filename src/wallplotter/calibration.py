@@ -117,6 +117,7 @@ class AreaCalibration:
             travel_as_g1=template.travel_as_g1,
             invert_y=template.invert_y,
             toolhead=template.toolhead,
+            limits=template.limits,
         )
 
     def summary(self) -> str:

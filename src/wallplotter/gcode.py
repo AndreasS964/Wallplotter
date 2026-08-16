@@ -1,9 +1,14 @@
 """Linien → GCode im FluidNC/GRBL-Dialekt.
 
 Bewusst schlank und ohne vpype-gcode-Profil-Datei: Der erzeugte Dialekt ist
-klein genug, um ihn direkt zu kontrollieren — ``G0``/``G1`` fürs Fahren,
-``M3 S<wert>``/``M5`` fürs Pen-Lift (siehe docs/Projektidee.md, Abschnitt
-Laser-Mode).
+klein genug, um ihn direkt zu kontrollieren — ``G0``/``G1`` fürs Fahren, dazu
+die Grundeinstellungen und das Programmende.
+
+Was das *Werkzeug* tut, steht hier nicht mehr: Servo senken, Laser
+einschalten, Luft zuschalten liefert der Kopf aus :mod:`wallplotter.toolhead`.
+Dieses Modul kennt nur die Stellen, an denen so etwas passieren muss — vor
+jedem Leerweg ausrücken, danach einrücken —, und ein Test hält am
+Modulquelltext fest, dass es dabei bleibt.
 """
 
 from __future__ import annotations
@@ -93,7 +98,8 @@ class PlotStats:
         self.point_count = sum(len(line) for line in lines)
         self.passes = max(1, head.passes)
         self.draw_mm = draw_length(lines) * self.passes
-        self.travel_mm = travel_length(lines)
+        # Auch die Anfahrten fallen je Durchgang neu an
+        self.travel_mm = travel_length(lines) * self.passes
         # Was das Werkzeug je Linie kostet: beim Stift zweimal Servo-Wartezeit,
         # beim Laser nichts. Bei einem Punktraster ist das nicht die
         # Nachkommastelle, sondern der Löwenanteil — 5000 Punkte × 0,5 s sind
@@ -215,7 +221,9 @@ def _program(
     head = toolhead or cfg.toolhead
     # Der Kopf darf die Konfiguration ablehnen. Beim Laser ist das kein
     # Formalismus: mit travel_as_g1 führe der Strahl über jeden Leerweg.
-    head.check(travel_as_g1=cfg.travel_as_g1, draw_feed=cfg.draw_feed)
+    # Die Einwände, die kein Abbruch sind, gehören in die Datei — dort liest
+    # sie noch jemand, wenn die Meldung auf der Konsole längst weg ist.
+    concerns = head.check(travel_as_g1=cfg.travel_as_g1, draw_feed=cfg.draw_feed)
 
     stats = PlotStats(geometry, cfg if toolhead is None else replace(cfg, toolhead=head))
     out: list[str] = []
@@ -225,6 +233,7 @@ def _program(
     out.append("; erzeugt mit wallplotter")
     out.append(f"; Flaeche {_fmt(cfg.width_mm)} x {_fmt(cfg.height_mm)} mm, Rand {_fmt(cfg.margin_mm)} mm")
     out.append(f"; Werkzeug: {head.describe()}")
+    out += [f"; ACHTUNG: {note}" for note in concerns]
     out.append(f"; {stats}")
     if include_setup:
         out.append("G21 ; Millimeter")
@@ -256,6 +265,8 @@ def _program(
 
         if engaged:
             out.extend(head.retract())
+        if run < passes - 1:
+            out.extend(head.between_passes())
 
     out.extend(head.program_end())
     if include_end:

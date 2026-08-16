@@ -320,3 +320,50 @@ def test_layers_without_an_assignment_use_the_selected_head(app):
     app.layers = [Layer(1, "#000000", [[(0.0, 0.0), (100.0, 0.0)]])]
     app.refresh_layers()
     assert app.layer_tools() == {}
+
+
+def test_the_laser_needs_arming_in_the_ui_too(app):
+    """Das Gegenstück zu --laser-verstanden.
+
+    Ohne Riegel stünde der Laser als gewöhnlicher Menüeintrag neben den
+    Stiften, und ein Klick erzeugte ein vollständiges Laserprogramm, das der
+    nächste Knopf hochlädt und startet.
+    """
+    app.load_pattern("frame")
+    assert app.gcode is not None
+
+    app.head_select.set_value("laser")
+    app.regenerate()
+    assert app.gcode is None
+    assert "scharfgeschaltet" in app.info.text
+
+    app.laser_armed.set_value(True)
+    app.regenerate()
+    assert app.gcode is not None
+    assert "M4 S0" in app.gcode
+
+
+def test_negative_numbers_do_not_tear_the_ui_apart(app):
+    """Ein Zahlenfeld nimmt auch minus tausend an."""
+    app.load_pattern("frame")
+    for feld, wert in ((app.width, -500), (app.height, -1), (app.draw_feed, -1000),
+                       (app.pen_dwell, -0.5), (app.margin, -20)):
+        feld.set_value(wert)
+        config = app.plot_config()          # darf nicht werfen
+        assert config.width_mm > 0 and config.height_mm > 0
+        assert config.draw_feed > 0
+        app.regenerate()                    # und auch das nicht
+        feld.set_value(None)
+
+
+def test_a_broken_locations_file_does_not_stop_the_ui(tmp_path):
+    """Eine kaputte standorte.json ließ die Oberfläche im Konstruktor auffliegen —
+    ausgerechnet die Datei, die man vor der Wand am ehesten von Hand anfasst."""
+    from nicegui import ui
+
+    path = tmp_path / "standorte.json"
+    path.write_text("{kein json", encoding="utf-8")
+    instance = WallplotterUI(ui, locations_path=str(path))
+    instance.build_ui()
+    assert instance.location is None
+    assert instance.plot_config().width_mm == 2000.0

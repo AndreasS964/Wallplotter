@@ -398,3 +398,83 @@ def test_no_laser_configuration_moves_while_the_beam_is_on(laser, geometry):
             assert not states[index].drawing, f"Wartezeit mit Strahl in Zeile {index + 1}"
     # und am Ende ist alles aus
     assert not states[-1].drawing
+
+
+def test_the_laser_gate_covers_every_head_in_the_program(tmp_path, capsys, monkeypatch):
+    """Der Riegel hing am Kopf aus --toolhead.
+
+    Über `--pen-for 'FARBE=laser'` entstand damit vollständiger Laser-GCode
+    ohne jede Rückfrage und ohne eine einzige Warnung — genau die Lücke, gegen
+    die die Bestätigung gebaut war.
+    """
+    from wallplotter import cli
+
+    layers = [
+        Layer(1, "#000000", [[(0.0, 0.0), (100.0, 0.0)]]),
+        Layer(2, "#e02020", [[(0.0, 50.0), (100.0, 50.0)]]),
+    ]
+    monkeypatch.setattr(cli, "svg_to_layers", lambda *a, **k: layers)
+    svg = tmp_path / "bunt.svg"
+    svg.write_text("<svg/>", encoding="utf-8")
+    ziel = tmp_path / "aus.gcode"
+
+    assert cli.main([str(svg), "--layers", "--pen-for", "#000000=laser", "-o", str(ziel)]) == 2
+    assert "--laser-verstanden" in capsys.readouterr().err
+    assert not list(tmp_path.glob("aus-*.gcode"))
+
+
+def test_laser_switches_apply_to_a_head_assigned_per_layer(tmp_path, monkeypatch):
+    """Sonst liefe ein zugeordneter Laser still mit den Katalogwerten — bei
+    einer Leistungsangabe der Unterschied zwischen Gravur und Brandloch."""
+    from wallplotter import cli
+
+    monkeypatch.setattr(
+        cli, "svg_to_layers", lambda *a, **k: [Layer(1, "#000000", [[(0.0, 0.0), (100.0, 0.0)]])]
+    )
+    svg = tmp_path / "s.svg"
+    svg.write_text("<svg/>", encoding="utf-8")
+    ziel = tmp_path / "aus.gcode"
+
+    assert cli.main([
+        str(svg), "--layers", "--pen-for", "#000000=laser", "--laser-verstanden",
+        "--laser-power", "5", "--laser-smax", "255", "-o", str(ziel),
+    ]) == 0
+    text = next(tmp_path.glob("aus-*.gcode")).read_text(encoding="utf-8")
+    assert "5 % = S13 von 255" in text     # nicht die Katalogvorgabe 20 % von 1000
+    assert "\nS13\n" in text
+
+
+def test_the_pause_between_passes_reaches_the_program():
+    config = PlotConfig(
+        width_mm=100, height_mm=100, margin_mm=10, invert_y=False,
+        toolhead=LaserToolhead(passes=2, pass_pause_s=1.5),
+    )
+    text = lines_to_gcode(SQUARE, config)
+    assert "G4 P1.5 ; abkühlen lassen" in text
+    # nur zwischen den Durchgängen, nicht nach dem letzten
+    assert text.count("abkühlen lassen") == 1
+
+
+def test_the_toolheads_concerns_end_up_in_the_file():
+    """Auf der Konsole ist die Warnung nach dem nächsten Befehl weg; in der
+    Datei liest sie noch, wer sie Wochen später öffnet."""
+    config = PlotConfig(
+        width_mm=100, height_mm=100, margin_mm=10, toolhead=LaserToolhead()
+    )
+    text = lines_to_gcode(SQUARE, config)
+    assert "; ACHTUNG: Laser: Schutzbrille" in text
+
+
+def test_a_pen_can_select_its_spindle_too():
+    """Sobald ein Laser danebensteht, muss jeder Kopf seine Spindel anwählen —
+    sonst bleibt nach dem ersten Laserprogramm die Laserspindel aktiv."""
+    ohne = PenToolhead()
+    mit = PenToolhead(tool_number=0)
+    assert not any(line.startswith("M6") for line in ohne.program_start())
+    assert mit.program_start()[0] == "M6 T0 ; Stiftspindel wählen"
+
+
+def test_an_old_positional_pen_call_fails_loudly():
+    """`PenConfig(30, 0, 0.25)` legte still einen Stift namens „30" an."""
+    with pytest.raises(ToolheadError, match="name muss Text sein"):
+        PenConfig(30, 0, 0.25)

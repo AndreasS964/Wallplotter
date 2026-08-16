@@ -126,3 +126,13 @@ def test_the_result_is_what_plot_consumes(measured, tmp_path, monkeypatch):
          "--correction", str(out), "-o", str(tmp_path / "p.gcode")]
     ) == 0
     assert (tmp_path / "p.gcode").exists()
+
+
+def test_location_does_not_swallow_the_subcommand(tmp_path, capsys):
+    """`--location anpassen` verschluckte den Unterbefehl als Standortnamen
+    und brach mit einer Meldung ab, die nach etwas ganz anderem klang."""
+    path = tmp_path / "m.json"
+    correct_cli.main(["--measurements", str(path), "messen", "--steps", "3"])
+    # ohne nargs="?" ist das schlicht ein Parserfehler statt stiller Verwirrung
+    with pytest.raises(SystemExit):
+        correct_cli.main(["--measurements", str(path), "--location", "anpassen"])

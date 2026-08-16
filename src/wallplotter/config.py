@@ -14,8 +14,11 @@ from dataclasses import dataclass, field
 from .timing import MotionLimits
 from .toolhead import PenToolhead, Toolhead
 
-#: Alter Name des Stiftkopfes. Bleibt gültig — er beschreibt weiterhin genau
-#: das, was er immer beschrieben hat.
+#: Alter Name des Stiftkopfes. Er beschreibt weiterhin genau das, was er immer
+#: beschrieben hat, und trägt alle *benannten* Aufrufe unverändert. Positional
+#: geht nicht mehr: der Kopf hat vorn ein Feld `name` bekommen. Ein alter
+#: Aufruf `PenConfig(30, 0, 0.25)` läuft deshalb in einen ToolheadError statt
+#: still einen Stift namens „30" anzulegen.
 PenConfig = PenToolhead
 
 # Wandfläche im Kletterwand-Keller (siehe docs/Projektidee.md)

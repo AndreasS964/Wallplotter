@@ -101,3 +101,28 @@ def test_stats_without_dwell_are_pure_motion():
     assert stats.pen_s == 0.0
     assert stats.duration_s == pytest.approx(stats.motion_s)
     assert "Werkzeughübe" not in str(stats)
+
+
+def test_the_area_offset_keeps_the_motion_limits():
+    """to_plot_config übertrug limits nicht — mit --location rechnete die
+    Schätzung also stets mit den Vorgabewerten statt mit der echten Maschine."""
+    from wallplotter.calibration import AreaCalibration
+    from wallplotter.timing import MotionLimits
+
+    calibration = AreaCalibration(points={
+        "bottom-left": (0.0, 0.0), "bottom-right": (1000.0, 0.0),
+        "top-right": (1000.0, 1000.0), "top-left": (0.0, 1000.0),
+    })
+    vorlage = PlotConfig(limits=MotionLimits(acceleration_mm_s2=1234.0))
+    assert calibration.to_plot_config(vorlage).limits.acceleration_mm_s2 == 1234.0
+
+
+def test_travel_is_counted_for_every_pass():
+    """_program gibt die Anfahrten je Durchgang neu aus — die Statistik muss
+    dieselbe Rechnung machen."""
+    from wallplotter.toolhead import LaserToolhead
+
+    lines = [[(0.0, 0.0), (10.0, 0.0)], [(50.0, 50.0), (60.0, 50.0)]]
+    einmal = stats_for(lines, PlotConfig(toolhead=LaserToolhead()))
+    dreimal = stats_for(lines, PlotConfig(toolhead=LaserToolhead(passes=3)))
+    assert dreimal.travel_mm == pytest.approx(3 * einmal.travel_mm)

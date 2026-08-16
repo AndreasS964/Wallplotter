@@ -113,6 +113,10 @@ class Toolhead(Protocol):
         """Sekunden je Linie fürs einmalige Ein- und Ausrücken."""
         ...
 
+    def between_passes(self) -> list[str]:
+        """Zeilen zwischen zwei Durchgängen — beim Stift nichts."""
+        ...
+
     def feed_for(self, default: float) -> float:
         """Zeichenvorschub dieses Kopfes; ``default`` ist der aus der Konfiguration."""
         ...
@@ -185,9 +189,26 @@ class PenToolhead:
     passes: int = 1
     """Mehrfach überzeichnen — Kreide auf rauem Putz deckt erst im zweiten Zug."""
 
+    tool_number: int | None = None
+    """``M6 T<n>``, falls in der ``config.yaml`` mehrere Spindeln stehen.
+
+    Ohne Angabe wird nicht umgeschaltet — das ist richtig, solange nur eine
+    Spindel konfiguriert ist. Sobald ein Laser danebensteht, muss *jeder* Kopf
+    seine Spindel anwählen, sonst bleibt nach dem ersten Laserprogramm die
+    Laserspindel aktiv und der Stift landet an der falschen PWM.
+    """
+
     note: str = ""
 
     def __post_init__(self) -> None:
+        # `name` steht vorn, weil der Katalog danach benannt ist — ein alter
+        # positionaler Aufruf `PenConfig(30, 0, 0.25)` landete damit still als
+        # Stift namens „30" mit down_value 0. Lieber laut danebenliegen.
+        if not isinstance(self.name, str):
+            raise ToolheadError(
+                f"name muss Text sein, nicht {self.name!r} — die Felder heißen "
+                "name, down_value, up_value, dwell_s; benannte Argumente benutzen"
+            )
         if self.dwell_s < 0:
             raise ToolheadError("dwell_s kann nicht negativ sein")
         if self.width_mm <= 0:
@@ -208,7 +229,8 @@ class PenToolhead:
         return text + (f" ({self.note})" if self.note else "")
 
     def program_start(self) -> list[str]:
-        return self.retract()
+        lines = [f"M6 T{self.tool_number} ; Stiftspindel wählen"] if self.tool_number is not None else []
+        return lines + self.retract()
 
     def program_end(self) -> list[str]:
         return ["M5 ; Servo/PWM aus"]
@@ -227,6 +249,9 @@ class PenToolhead:
 
     def cycle_time_s(self) -> float:
         return 2 * max(0.0, self.dwell_s)
+
+    def between_passes(self) -> list[str]:
+        return []
 
     def feed_for(self, default: float) -> float:
         return self.draw_feed or default
@@ -348,6 +373,8 @@ class LaserToolhead:
             raise ToolheadError("draw_feed muss größer als 0 sein")
         if self.air_assist not in (None, "M7", "M8"):
             raise ToolheadError("air_assist ist 'M7', 'M8' oder None")
+        if self.pass_pause_s < 0:
+            raise ToolheadError("pass_pause_s kann nicht negativ sein")
 
     # -- abgeleitet -------------------------------------------------------
 
@@ -400,6 +427,13 @@ class LaserToolhead:
 
     def cycle_time_s(self) -> float:
         return 0.0
+
+    def between_passes(self) -> list[str]:
+        """Was zwischen zwei Durchgängen passiert — Leistung aus, Wärme raus."""
+        lines = ["S0"]
+        if self.pass_pause_s > 0:
+            lines.append(f"G4 P{fmt(self.pass_pause_s, 2)} ; abkühlen lassen")
+        return lines
 
     def feed_for(self, default: float) -> float:
         return self.draw_feed or default

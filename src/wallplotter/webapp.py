@@ -50,6 +50,15 @@ EMPTY_PREVIEW = (
 )
 
 
+def _positive(value, fallback: float) -> float:
+    """Zahlenfeldwert, der garantiert größer als null ist."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return number if number > 0 else fallback
+
+
 def _require_nicegui():
     try:
         from nicegui import ui  # noqa: PLC0415
@@ -75,7 +84,14 @@ class WallplotterUI:
         self.source_is_pattern = False
         self.gcode: str | None = None
         self.layers: list = []
-        self.book = LocationBook.load(locations_path)
+        # Eine unlesbare Standortdatei darf die Oberfläche nicht am Start
+        # hindern — sie ist die einzige Datei, die man vor der Wand von Hand
+        # anfasst, und ohne Oberfläche lässt sie sich auch nicht reparieren.
+        try:
+            self.book = LocationBook.load(locations_path)
+            self.book_error = ""
+        except LocationError as exc:
+            self.book, self.book_error = LocationBook(), str(exc)
         self.correction_path = CORRECTION_PATH
         self._clients: dict = {}
 
@@ -111,21 +127,24 @@ class WallplotterUI:
             head,
             down_value=int(self.pen_down.value or head.down_value),
             up_value=int(self.pen_up.value or 0),
-            dwell_s=self.pen_dwell.value if self.pen_dwell.value is not None else head.dwell_s,
+            # negative Wartezeit gäbe es an keinem Servo, und ToolheadError
+            # mitten im Aufbau der Konfiguration hilft niemandem
+            dwell_s=max(0.0, self.pen_dwell.value if self.pen_dwell.value is not None else head.dwell_s),
         )
 
     def plot_config(self) -> PlotConfig:
-        width = self.width.value or WALL_WIDTH_MM
-        height = self.height.value or WALL_HEIGHT_MM
-        # Ein Zahlenfeld nimmt jede Eingabe an, auch 2000 mm Rand auf 2000 mm
-        # Fläche. PlotConfig wirft dafür — und ein Tippfehler darf die
-        # Oberfläche nicht zerlegen, während man vor der Wand steht.
+        # Ein Zahlenfeld nimmt jede Eingabe an: 2000 mm Rand auf 2000 mm Fläche,
+        # eine negative Breite, einen Vorschub von minus tausend. PlotConfig und
+        # das Bewegungsmodell werfen dafür zu Recht — aber ein Tippfehler darf
+        # die Oberfläche nicht zerlegen, während man vor der Wand steht.
+        width = _positive(self.width.value, WALL_WIDTH_MM)
+        height = _positive(self.height.value, WALL_HEIGHT_MM)
         margin = min(max(self.margin.value or 0, 0.0), max(min(width, height) / 2 - 1, 0.0))
         config = PlotConfig(
             width_mm=width,
             height_mm=height,
             margin_mm=margin,
-            draw_feed=self.draw_feed.value or 1500,
+            draw_feed=_positive(self.draw_feed.value, 1500.0),
             toolhead=self.toolhead(),
         )
         if self.calibration.complete and self.use_calibration.value:
@@ -173,6 +192,23 @@ class WallplotterUI:
         stem = os.path.splitext(self.source_name.split(" (")[0])[0].strip()
         safe = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in stem).strip("-")
         return f"{safe or 'plot'}.gcode"
+
+    def laser_blocked(self) -> str:
+        """Meldung, falls ein Laser gewählt, aber nicht scharfgeschaltet ist.
+
+        Das Gegenstück zu ``--laser-verstanden``: In der Oberfläche steht der
+        Laser sonst als gewöhnlicher Menüeintrag neben den Stiften, und ein
+        Klick erzeugte ein vollständiges Laserprogramm, das sich mit dem
+        nächsten Knopf hochladen und starten lässt.
+        """
+        head = toolhead_by_name(self.head_select.value or "fineliner")
+        armed = getattr(self, "laser_armed", None)
+        if isinstance(head, LaserToolhead) and not (armed and armed.value):
+            return (
+                "Laser gewählt, aber nicht scharfgeschaltet. Erst die Warnungen lesen "
+                "und den Schalter \u201eLaser scharf\u201c umlegen \u2014 dann entsteht Laser-GCode."
+            )
+        return ""
 
     def change_toolhead(self) -> None:
         """Werkzeug gewechselt: Regler auf die Katalogwerte, Warnungen zeigen."""
@@ -259,6 +295,12 @@ class WallplotterUI:
 
     def regenerate(self) -> None:
         if not self.lines:
+            return
+        blocked = self.laser_blocked()
+        if blocked:
+            self.gcode = None
+            self.info.set_text(blocked)
+            self.preview.content = EMPTY_PREVIEW
             return
         config = self.plot_config()
         fit = getattr(self, "fit_source", True) and not self.source_is_pattern
@@ -493,6 +535,15 @@ class WallplotterUI:
         self.refresh_calibration()
 
     def refresh_calibration(self) -> None:
+        if self.book_error:
+            # sichtbar machen statt verschweigen: der Standort ist weg, nicht leer
+            self.ui.notify(
+                f"Standortdatei nicht lesbar: {self.book_error}",
+                type="negative",
+                multi_line=True,
+                timeout=15000,
+            )
+            self.book_error = ""
         location = self.location
         self.location_label.set_text(
             location.report().splitlines()[2].strip() if location else "Kein Standort angelegt"
@@ -632,6 +683,11 @@ class WallplotterUI:
                         .tooltip("Die Werte je Stift sind Startwerte — mit pen-test nachziehen")
                     )
                     self.head_label = ui.label("").classes("text-xs text-grey whitespace-pre-line")
+                    self.laser_armed = ui.switch("Laser scharf", value=False).tooltip(
+                        "Das Gegenstück zu --laser-verstanden: ohne diesen Schalter "
+                        "entsteht kein Laser-GCode"
+                    )
+                    self.laser_armed.on_value_change(lambda _: self.regenerate())
 
                 with ui.expansion("Stift und Tempo").classes("w-full bg-white rounded"):
                     self.draw_feed = ui.number("Vorschub mm/min", value=1500).props("dense outlined")

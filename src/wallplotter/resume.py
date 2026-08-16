@@ -35,6 +35,7 @@ __all__ = [
     "scan_program",
     "line_for_percent",
     "resume_program",
+    "resume_file",
 ]
 
 _WORD = re.compile(r"([A-Za-z])\s*(-?\d*\.?\d+)")
@@ -56,6 +57,16 @@ class ProgramState:
 
     tool_on: bool = False
     """Spindelzustand: ``M3``/``M4`` an, ``M5`` aus."""
+
+    tool_mode: str = ""
+    """Der zuletzt gesehene Spindelbefehl — ``M3`` oder ``M4``.
+
+    Beim Stift steht er in jedem Absetzen mit drin und ist deshalb nie
+    verloren. Beim Laser steht er *einmal* im Vorspann, danach folgen nur noch
+    nackte ``S``-Zeilen: wer den Modus nicht wieder aufbaut, bekommt ein
+    Restprogramm, das die halbe Zeichnung abfährt, ohne dass der Strahl je
+    zündet.
+    """
 
     drawing: bool = False
     """Ob das Werkzeug *wirkt* — und das ist nicht dasselbe wie ``tool_on``.
@@ -126,6 +137,7 @@ def scan_program(program: str) -> list[ProgramState]:
             feed=current.feed,
             tool_value=current.tool_value,
             tool_on=current.tool_on,
+            tool_mode=current.tool_mode,
             drawing=current.drawing,
             move_count=current.move_count,
             draw_count=current.draw_count,
@@ -158,6 +170,7 @@ def scan_program(program: str) -> list[ProgramState]:
                     following.draw_count += 1
         elif code in {"M3", "M03", "M4", "M04"}:
             following.tool_on = True
+            following.tool_mode = "M4" if code in {"M4", "M04"} else "M3"
             following.tool_value = words.get("S", current.tool_value)
         elif code in {"M5", "M05"}:
             following.tool_on = False
@@ -301,6 +314,11 @@ def resume_program(
     # Modalen Zustand wieder aufbauen: die Maschine weiß nach einem Abbruch nichts mehr
     out += before.setup or ["G21", "G90", "G17"]
     out.append("M5 ; Werkzeug aus, bevor irgendetwas verfahren wird")
+    if before.tool_mode:
+        # Den Spindelmodus wieder setzen, Leistung auf null. Ohne das fährt ein
+        # fortgesetztes Laserprogramm den ganzen Rest ab, ohne je zu zünden:
+        # seine S-Zeilen setzen die Leistung, nicht den Zustand.
+        out.append(f"{before.tool_mode} S0 ; Werkzeugmodus wie im Original")
 
     first_move = next((text for text in rest if _has_xy(text)), "")
     starts_with_rapid = _code(first_move) in {"G0", "G00"}
@@ -313,7 +331,9 @@ def resume_program(
     if before.feed and "F" not in _words(first_move):
         out.append(f"F{before.feed:g} ; Vorschub war modal gesetzt")
     if not whole_stroke and before.drawing and before.tool_value is not None:
-        out.append(f"M3 S{before.tool_value:g} ; Werkzeug stand an")
+        # Modus aus dem Original übernehmen: ein mit M4 erzeugtes Programm mit
+        # M3 fortzusetzen hieße konstante Leistung, wo dynamische gemeint war
+        out.append(f"{before.tool_mode or 'M3'} S{before.tool_value:g} ; Werkzeug stand an")
     out += rest
     return "\n".join(out) + "\n"
 
@@ -328,8 +348,10 @@ def resume_file(
     source = Path(path)
     if not source.exists():
         raise ResumeError(f"Keine Datei unter {source}")
+    # Fremde Toolchains schreiben Kommentare gern in Latin-1; ein Umlaut
+    # darin ist kein Grund, ein halbfertiges Wandbild aufzugeben.
     return resume_program(
-        source.read_text(encoding="utf-8"),
+        source.read_text(encoding="utf-8", errors="replace"),
         line=line,
         percent=percent,
         whole_stroke=whole_stroke,
