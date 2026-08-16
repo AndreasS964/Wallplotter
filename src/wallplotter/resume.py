@@ -52,15 +52,29 @@ class ProgramState:
     y: float | None = None
     feed: float | None = None
     tool_value: float | None = None
-    """S-Wert des letzten ``M3``; ``None`` heißt: ``M5``, Werkzeug aus."""
+    """Zuletzt gesetzter ``S``-Wert; ``None`` heißt: nach ``M5``, also aus."""
 
     tool_on: bool = False
+    """Spindelzustand: ``M3``/``M4`` an, ``M5`` aus."""
+
+    drawing: bool = False
+    """Ob das Werkzeug *wirkt* — und das ist nicht dasselbe wie ``tool_on``.
+
+    Der Stift wird mit ``M3 S0`` angehoben, nicht mit ``M5``: die Spindel läuft
+    weiter, der Servo hält nur die obere Stellung. Wer allein auf ``M3`` sieht,
+    hält jeden Leerweg für einen Strich. Unterschieden wird deshalb am
+    ``S``-Wert (siehe :func:`scan_program`).
+    """
+
     move_count: int = 0
     draw_count: int = 0
     units_mm: bool = True
     absolute: bool = True
     setup: list[str] = field(default_factory=list)
     """Die gesehenen Grundeinstellungen (G21/G90/G17), in Reihenfolge."""
+
+    last_pause: str = ""
+    """Text der zuletzt passierten ``M0``-Pause — welches Werkzeug stecken muss."""
 
 
 def _code(line: str) -> str:
@@ -74,6 +88,25 @@ def _words(line: str) -> dict[str, float]:
     return {letter.upper(): float(value) for letter, value in _WORD.findall(text)}
 
 
+def _idle_value(program: str) -> float:
+    """Welcher ``S``-Wert in diesem Programm „Werkzeug aus" bedeutet.
+
+    Steht nirgends im GCode und lässt sich nur erschließen: Der kleinste
+    vorkommende ``S``-Wert ist die Ruhestellung — beim Stift die angehobene
+    (meist ``S0``), beim Laser die Leistung null. Kommt nur ein einziger Wert
+    vor, wird der Stift über ``M5`` gehoben; dann ist alles über null ein
+    wirkender Zustand.
+    """
+    values = set()
+    for line in program.splitlines():
+        code = _code(line)
+        if code in {"M3", "M03", "M4", "M04"} or (code.startswith("S") and len(code) > 1):
+            words = _words(line)
+            if "S" in words:
+                values.add(words["S"])
+    return min(values) if len(values) >= 2 else 0.0
+
+
 def scan_program(program: str) -> list[ProgramState]:
     """Zustand nach jeder Zeile — Grundlage für jeden Schnitt.
 
@@ -81,6 +114,7 @@ def scan_program(program: str) -> list[ProgramState]:
     Zeilen hat; Eintrag *i* beschreibt die Maschine, *nachdem* Zeile *i*
     abgearbeitet ist.
     """
+    idle = _idle_value(program)
     states: list[ProgramState] = []
     current = ProgramState()
     for line in program.splitlines():
@@ -92,11 +126,13 @@ def scan_program(program: str) -> list[ProgramState]:
             feed=current.feed,
             tool_value=current.tool_value,
             tool_on=current.tool_on,
+            drawing=current.drawing,
             move_count=current.move_count,
             draw_count=current.draw_count,
             units_mm=current.units_mm,
             absolute=current.absolute,
             setup=list(current.setup),
+            last_pause=current.last_pause,
         )
         if code in {"G21", "G20", "G90", "G91", "G17"}:
             if code == "G20":
@@ -118,7 +154,7 @@ def scan_program(program: str) -> list[ProgramState]:
                 following.y = words["Y"] if following.absolute else (following.y or 0) + words["Y"]
             if "X" in words or "Y" in words:
                 following.move_count += 1
-                if code in {"G1", "G01"} and following.tool_on:
+                if code in {"G1", "G01"} and following.drawing:
                     following.draw_count += 1
         elif code in {"M3", "M03", "M4", "M04"}:
             following.tool_on = True
@@ -126,9 +162,16 @@ def scan_program(program: str) -> list[ProgramState]:
         elif code in {"M5", "M05"}:
             following.tool_on = False
             following.tool_value = None
+        elif code.startswith("S") and len(code) > 1 and "S" in words:
+            # Nackte S-Zeile: setzt die Leistung, nicht den Spindelzustand.
+            # So schaltet der Laserkopf zwischen Strich und Leerweg um.
+            following.tool_value = words["S"]
+        elif code in {"M0", "M00"}:
+            following.last_pause = line.partition(";")[2].strip() or "Halt"
         elif code == "F" or (code.startswith("F") and len(code) > 1):
             if "F" in words:
                 following.feed = words["F"]
+        following.drawing = following.tool_on and (following.tool_value or 0.0) > idle
         states.append(following)
         current = following
     return states
@@ -152,24 +195,41 @@ def line_for_percent(program: str, percent: float) -> int:
     return max(0, len(program.splitlines()) - 1)
 
 
-def _stroke_start(lines: list[str], target: int) -> int:
-    """Zum Anfang des angefangenen Strichs zurückgehen.
+def _has_xy(line: str) -> bool:
+    return bool({"X", "Y"} & set(_words(line)))
 
-    Gesucht wird der letzte Werkzeugbefehl vor der Abbruchstelle; die
-    Anfahrbewegung davor gehört noch dazu, sonst setzt der Stift an der
-    falschen Stelle auf.
+
+def _block_starts(lines: list[str], states: list[ProgramState]) -> list[int]:
+    """Die Anfahrbewegungen — dort beginnt jeweils ein Strichblock.
+
+    Ein Block ist: hinfahren, Werkzeug einrücken, zeichnen. Erkennbar ist der
+    Anfang daran, dass eine Bewegung stattfindet, während das Werkzeug *nicht*
+    wirkt.
     """
-    index = target
-    while index >= 0 and _code(lines[index]) not in {"M3", "M03", "M4", "M04", "M5", "M05"}:
-        index -= 1
-    if index < 0:
-        return 0
-    previous = index - 1
-    while previous >= 0 and not _code(lines[previous]):
-        previous -= 1  # Kommentare und Leerzeilen überspringen
-    if previous >= 0 and {"X", "Y"} & set(_words(lines[previous])):
-        return previous
-    return index
+    return [
+        index
+        for index, line in enumerate(lines)
+        if _has_xy(line) and not states[index].drawing
+    ]
+
+
+def _stroke_start(lines: list[str], states: list[ProgramState], target: int) -> int:
+    """Zum Anfang des Strichblocks zurückgehen, in dem der Abbruch liegt.
+
+    Zurückgegangen wird bis zur *Anfahrt*, nicht bis zum Werkzeugbefehl: sonst
+    landet die letzte Zeichenbewegung des vorigen Strichs hinter dem
+    eingefügten „Werkzeug aus" und wird mit gehobenem Stift abgefahren statt
+    gezeichnet — ein Segment, das lautlos im Bild fehlt.
+
+    Fällt die Abbruchstelle zwischen zwei Blöcke, wird der *vorige* noch einmal
+    gezogen. Das ist Absicht: FluidNC meldet den Fortschritt anhand der
+    gelesenen Bytes, und der Planer liest der Mechanik um etliche Zeilen
+    voraus. Die gemeldete Stelle liegt also weiter als die tatsächliche —
+    lieber einen Strich doppelt als einen gar nicht.
+    """
+    starts = _block_starts(lines, states)
+    earlier = [index for index in starts if index <= target]
+    return earlier[-1] if earlier else 0
 
 
 def resume_program(
@@ -200,7 +260,7 @@ def resume_program(
         raise ResumeError(f"Zeile {target} liegt außerhalb des Programms (0…{len(lines) - 1})")
 
     states = scan_program(program)
-    start = _stroke_start(lines, target) if whole_stroke else target
+    start = _stroke_start(lines, states, target) if whole_stroke else target
     before = states[start - 1] if start > 0 else ProgramState()
 
     rest = [text for text in lines[start:] if text.strip()]
@@ -225,20 +285,26 @@ def resume_program(
         + (", der angefangene Strich wird neu gezogen" if whole_stroke and start < target else ""),
         "; Nullpunkt muss stehen — nach einem Reset erst die kalibrierte Ecke anfahren",
     ]
+    if before.last_pause:
+        # Bei einem mehrfarbigen Programm mit M0-Pausen steckt jetzt ein
+        # bestimmtes Werkzeug im Halter — und das steht nur im Original.
+        out.append(f"; Im Halter muss stecken: {before.last_pause.removeprefix('anhalten — ')}")
     # Modalen Zustand wieder aufbauen: die Maschine weiß nach einem Abbruch nichts mehr
     out += before.setup or ["G21", "G90", "G17"]
     out.append("M5 ; Werkzeug aus, bevor irgendetwas verfahren wird")
 
-    first_move = next((text for text in rest if {"X", "Y"} & set(_words(text))), "")
+    first_move = next((text for text in rest if _has_xy(text)), "")
     starts_with_rapid = _code(first_move) in {"G0", "G00"}
     if not starts_with_rapid and before.x is not None and before.y is not None:
         # Das Restprogramm fährt nicht selbst an: mit gehobenem Werkzeug hin
         out.append(f"G0 X{before.x:g} Y{before.y:g} ; an die Abbruchstelle")
-    if not whole_stroke:
-        if before.feed:
-            out.append(f"F{before.feed:g} ; Vorschub war modal gesetzt")
-        if before.tool_on and before.tool_value is not None:
-            out.append(f"M3 S{before.tool_value:g} ; Werkzeug stand an")
+    # Der Vorschub ist modal. Bringt das Restprogramm keinen eigenen mit — bei
+    # fremden Dateien der Normalfall —, führe die erste G1-Bewegung ohne
+    # Vorschub und die Firmware quittiert mit error:22.
+    if before.feed and "F" not in _words(first_move):
+        out.append(f"F{before.feed:g} ; Vorschub war modal gesetzt")
+    if not whole_stroke and before.drawing and before.tool_value is not None:
+        out.append(f"M3 S{before.tool_value:g} ; Werkzeug stand an")
     out += rest
     return "\n".join(out) + "\n"
 

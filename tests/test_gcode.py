@@ -53,7 +53,7 @@ def test_pen_lift_between_lines():
 
 
 def test_pen_up_can_use_m5():
-    config = PlotConfig(pen=PenConfig(use_m5_for_up=True, dwell_s=0))
+    config = PlotConfig(toolhead=PenConfig(use_m5_for_up=True, dwell_s=0))
     gcode = lines_to_gcode(SQUARE, config)
     assert "M3 S0" not in gcode
     assert gcode.count("M5") >= 2
@@ -88,16 +88,16 @@ def test_margin_larger_than_area_is_rejected():
 def test_stats_count_the_servo_dwell():
     """Bei einem Punktraster sind die Stifthübe der Löwenanteil der Laufzeit."""
     dots = [[(float(i), 0.0), (float(i) + 1.0, 0.0)] for i in range(0, 200, 2)]
-    config = PlotConfig(pen=PenConfig(dwell_s=0.25))
+    config = PlotConfig(toolhead=PenConfig(dwell_s=0.25))
     stats = stats_for(dots, config)
     assert stats.pen_s == pytest.approx(2 * 100 * 0.25)
     assert stats.duration_s == pytest.approx(stats.motion_s + stats.pen_s)
-    assert "Stifthübe" in str(stats)
+    assert "Werkzeughübe" in str(stats)
 
 
 def test_stats_without_dwell_are_pure_motion():
-    config = PlotConfig(pen=PenConfig(dwell_s=0.0))
+    config = PlotConfig(toolhead=PenConfig(dwell_s=0.0))
     stats = stats_for(SQUARE, config)
     assert stats.pen_s == 0.0
     assert stats.duration_s == pytest.approx(stats.motion_s)
-    assert "Stifthübe" not in str(stats)
+    assert "Werkzeughübe" not in str(stats)

@@ -8,20 +8,21 @@ Laser-Mode).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
-from .config import PenConfig, PlotConfig
+from .config import PlotConfig
 from .geometry import (
     Line,
     Lines,
     draw_length,
-    estimate_duration_s,
     fit_to_area,
     flip_y,
     transform,
     travel_length,
 )
 from .timing import plot_duration_s
+from .toolhead import Toolhead, fmt, head_for
 
 __all__ = [
     "lines_to_gcode",
@@ -78,48 +79,34 @@ def prepare_geometry(
     return geometry
 
 
-def _fmt(value: float, decimals: int = 3) -> str:
-    """Koordinate ohne unnötige Nullen ausgeben (``10.500`` → ``10.5``)."""
-    text = f"{value:.{decimals}f}"
-    if "." in text:
-        text = text.rstrip("0").rstrip(".")
-    return text or "0"
-
-
-def _pen_up(pen: PenConfig) -> list[str]:
-    cmd = "M5" if pen.use_m5_for_up else f"M3 S{pen.up_value}"
-    lines = [cmd]
-    if pen.dwell_s > 0:
-        lines.append(f"G4 P{_fmt(pen.dwell_s, 2)}")
-    return lines
-
-
-def _pen_down(pen: PenConfig) -> list[str]:
-    lines = [f"M3 S{pen.down_value}"]
-    if pen.dwell_s > 0:
-        lines.append(f"G4 P{_fmt(pen.dwell_s, 2)}")
-    return lines
+_fmt = fmt
+"""Koordinaten formatiert jetzt :mod:`wallplotter.toolhead` — beide Seiten
+müssen dieselben Zahlen schreiben, also gibt es nur eine Fassung davon."""
 
 
 class PlotStats:
     """Kennzahlen eines Plots, für CLI-Ausgabe und Web-UI."""
 
     def __init__(self, lines: Sequence[Line], config: PlotConfig) -> None:
+        head = config.toolhead
         self.line_count = len(lines)
         self.point_count = sum(len(line) for line in lines)
-        self.draw_mm = draw_length(lines)
+        self.passes = max(1, head.passes)
+        self.draw_mm = draw_length(lines) * self.passes
         self.travel_mm = travel_length(lines)
-        # Je Linie hebt und senkt der Servo einmal, und nach jedem Hub wartet
-        # das Programm. Bei einem Punktraster ist das nicht die Nachkommastelle,
-        # sondern der Löwenanteil: 5000 Punkte × 2 × 0,25 s sind gut 40 Minuten,
-        # die eine reine Wegschätzung unterschlägt.
-        self.pen_s = 2 * self.line_count * max(0.0, config.pen.dwell_s)
+        # Was das Werkzeug je Linie kostet: beim Stift zweimal Servo-Wartezeit,
+        # beim Laser nichts. Bei einem Punktraster ist das nicht die
+        # Nachkommastelle, sondern der Löwenanteil — 5000 Punkte × 0,5 s sind
+        # gut 40 Minuten, die eine reine Wegschätzung unterschlägt.
+        self.pen_s = self.line_count * max(0.0, head.cycle_time_s()) * self.passes
         # Mit Beschleunigungsprofil statt Weg durch Tempo — bei kurzen Strichen
         # ist das der Unterschied zwischen sieben und einundzwanzig Minuten.
-        self.motion_s = plot_duration_s(
-            lines, config.draw_feed, config.travel_feed, config.limits
+        self.motion_s = (
+            plot_duration_s(
+                lines, head.feed_for(config.draw_feed), config.travel_feed, config.limits
+            )
+            * self.passes
         )
-        self.naive_motion_s = estimate_duration_s(lines, config.draw_feed, config.travel_feed)
         self.duration_s = self.motion_s + self.pen_s
 
     def as_dict(self) -> dict[str, float | int]:
@@ -130,6 +117,7 @@ class PlotStats:
             "travel_mm": round(self.travel_mm, 1),
             "motion_s": round(self.motion_s, 1),
             "pen_s": round(self.pen_s, 1),
+            "passes": self.passes,
             "duration_s": round(self.duration_s, 1),
         }
 
@@ -139,9 +127,11 @@ class PlotStats:
             f"{self.draw_mm / 1000:.1f} m zeichnen + {self.travel_mm / 1000:.1f} m "
             f"Leerweg, geschätzt {self.duration_s / 60:.0f} min"
         )
+        if self.passes > 1:
+            text += f" ({self.passes} Durchgänge)"
         # nur ausweisen, wenn es weh tut — sonst rauscht die Zeile zu
         if self.pen_s > 0.1 * self.duration_s:
-            text += f" (davon {self.pen_s / 60:.0f} min Stifthübe)"
+            text += f" (davon {self.pen_s / 60:.0f} min Werkzeughübe)"
         return text
 
 
@@ -204,51 +194,70 @@ def _program(
     *,
     header: str | None = None,
     feeds: Sequence[float] | None = None,
+    toolhead: Toolhead | None = None,
 ) -> str:
-    """GCode-Programm aus fertiger Maschinengeometrie."""
-    stats = PlotStats(geometry, cfg)
+    """GCode-Programm aus fertiger Maschinengeometrie.
+
+    Hier steht nur noch Bewegung. Was das Werkzeug tut — Servo senken, Laser
+    einschalten, Messer eintauchen — liefert der Kopf selbst; ``M3``, ``M5``
+    und ``G4`` kommen in dieser Funktion nicht mehr vor, und ein Test hält das
+    am Modulquelltext fest.
+    """
+    head = toolhead or cfg.toolhead
+    # Der Kopf darf die Konfiguration ablehnen. Beim Laser ist das kein
+    # Formalismus: mit travel_as_g1 führe der Strahl über jeden Leerweg.
+    head.check(travel_as_g1=cfg.travel_as_g1, draw_feed=cfg.draw_feed)
+
+    stats = PlotStats(geometry, cfg if toolhead is None else replace(cfg, toolhead=head))
     out: list[str] = []
 
     if header:
         out.append(f"; {header}")
     out.append("; erzeugt mit wallplotter")
     out.append(f"; Flaeche {_fmt(cfg.width_mm)} x {_fmt(cfg.height_mm)} mm, Rand {_fmt(cfg.margin_mm)} mm")
+    out.append(f"; Werkzeug: {head.describe()}")
     out.append(f"; {stats}")
     out.append("G21 ; Millimeter")
     out.append("G90 ; absolute Koordinaten")
     out.append("G17 ; XY-Ebene")
-    out.extend(_pen_up(cfg.pen))
+    out.extend(head.program_start())
 
     travel_cmd = f"G1 F{_fmt(cfg.travel_feed, 1)}" if cfg.travel_as_g1 else "G0"
-    pen_is_down = False
+    default_feed = head.feed_for(cfg.draw_feed)
+    passes = max(1, head.passes)
 
-    for index, line in enumerate(geometry):
-        feed = feeds[index] if feeds is not None else cfg.draw_feed
-        start_x, start_y = line[0]
-        if pen_is_down:
-            out.extend(_pen_up(cfg.pen))
-            pen_is_down = False
-        out.append(f"{travel_cmd} X{_fmt(start_x)} Y{_fmt(start_y)}")
-        out.extend(_pen_down(cfg.pen))
-        pen_is_down = True
+    for run in range(passes):
+        if passes > 1:
+            out.append(f"; Durchgang {run + 1}/{passes}")
+        engaged = False
+        for index, line in enumerate(geometry):
+            feed = feeds[index] if feeds is not None else default_feed
+            start_x, start_y = line[0]
+            if engaged:
+                out.extend(head.retract())
+                engaged = False
+            out.append(f"{travel_cmd} X{_fmt(start_x)} Y{_fmt(start_y)}")
+            out.extend(head.engage())
+            engaged = True
 
-        out.append(f"G1 X{_fmt(line[1][0])} Y{_fmt(line[1][1])} F{_fmt(feed, 1)}")
-        for x, y in line[2:]:
-            out.append(f"G1 X{_fmt(x)} Y{_fmt(y)}")
+            out.append(f"G1 X{_fmt(line[1][0])} Y{_fmt(line[1][1])} F{_fmt(feed, 1)}")
+            for x, y in line[2:]:
+                out.append(f"G1 X{_fmt(x)} Y{_fmt(y)}")
 
-    if pen_is_down:
-        out.extend(_pen_up(cfg.pen))
-    out.append("M5 ; Servo/PWM aus")
+        if engaged:
+            out.extend(head.retract())
+
+    out.extend(head.program_end())
     out.append(f"{travel_cmd} X0 Y0")
     out.append("M2 ; Programmende")
     return "\n".join(out) + "\n"
 
 
-def _program_with_pauses(blocks: Sequence[tuple[str, str, Lines]], cfg: PlotConfig) -> str:
-    """Alle Ebenen in einem Programm, dazwischen Halt zum Stiftwechsel."""
+def _program_with_pauses(blocks: Sequence[tuple[str, str, Lines, Toolhead]], cfg: PlotConfig) -> str:
+    """Alle Ebenen in einem Programm, dazwischen Halt zum Werkzeugwechsel."""
     parts = []
-    for position, (header, _, geometry) in enumerate(blocks):
-        program = _program(geometry, cfg, header=header)
+    for position, (header, _, geometry, head) in enumerate(blocks):
+        program = _program(geometry, cfg, header=header, toolhead=head)
         body = program.splitlines()
         if position > 0:
             # Kopfzeilen der Folgeebenen kürzen, die Grundeinstellungen stehen schon
@@ -256,8 +265,10 @@ def _program_with_pauses(blocks: Sequence[tuple[str, str, Lines]], cfg: PlotConf
         # Programmende nur ganz am Schluss
         if position < len(blocks) - 1:
             body = [line for line in body if not line.startswith("M2 ")]
-            next_label = blocks[position + 1][1]
-            body += [f"M0 ; anhalten — Stift wechseln auf: {next_label}"]
+            # Den Wechseltext formuliert der nächste Kopf: „Stift wechseln auf"
+            # stimmt nicht mehr, sobald einer davon ein Laser ist.
+            next_label, next_head = blocks[position + 1][1], blocks[position + 1][3]
+            body += [f"M0 ; anhalten — {next_head.change_prompt(next_label)}"]
         parts.append("\n".join(body))
     return "\n".join(parts) + "\n"
 
@@ -269,6 +280,7 @@ def layers_to_gcode(
     separate: bool = True,
     fit: bool = True,
     correction=None,
+    tools: Mapping[str, Toolhead] | None = None,
 ) -> dict[str, str] | str:
     """Mehrfarbige Zeichnung in GCode übersetzen — eine Ebene je Stiftfarbe.
 
@@ -279,6 +291,12 @@ def layers_to_gcode(
     Mit ``separate=False`` entsteht ein einziges Programm, das zwischen den
     Farben mit ``M0`` anhält. Bequemer, aber es setzt voraus, dass die
     Firmware ``M0`` als Pause versteht und jemand zum Weiterdrücken da ist.
+
+    ``tools`` ordnet den Ebenen Werkzeugköpfe zu, angesprochen über die
+    Beschriftung oder die Farbe. Damit bekommt jede Farbe ihren eigenen Stift
+    samt Servo-Werten und Vorschub — ein Pinselstift will nun einmal langsamer
+    geführt werden als ein Fineliner. Ohne Zuordnung nimmt jede Ebene den Kopf
+    aus der Konfiguration.
 
     Wichtig für die Passgenauigkeit: Alle Ebenen werden *gemeinsam*
     eingepasst, nicht jede für sich — sonst zöge jede Farbe ihre eigene
@@ -300,18 +318,28 @@ def layers_to_gcode(
             layer.lines, cfg, fit=fit, correction=correction, fit_bounds=fit_bounds
         )
 
+    def head_of(layer) -> Toolhead:
+        return head_for(layer, tools, cfg.toolhead)
+
     if separate:
         result: dict[str, str] = {}
         for position, layer in enumerate(entries, start=1):
+            head = head_of(layer)
             result[layer.label] = _program(
                 geometry_of(layer),
                 cfg,
-                header=f"Ebene {position}/{len(entries)}: {layer.label}",
+                header=f"Ebene {position}/{len(entries)}: {layer.label} — {head.name}",
+                toolhead=head,
             )
         return result
 
     blocks = [
-        (f"Ebene {position}/{len(entries)}: {layer.label}", layer.label, geometry_of(layer))
+        (
+            f"Ebene {position}/{len(entries)}: {layer.label} — {head_of(layer).name}",
+            layer.label,
+            geometry_of(layer),
+            head_of(layer),
+        )
         for position, layer in enumerate(entries, start=1)
     ]
     return _program_with_pauses(blocks, cfg)

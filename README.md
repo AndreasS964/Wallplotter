@@ -110,16 +110,97 @@ größte Rechteck *innerhalb* der angefahrenen Punkte: lieber etwas kleiner als
 neben der Wand. `wallplotter-location show` rechnet dann Auflösung, Riemenkräfte
 und Riemenlänge für genau diese Fläche durch.
 
+### Werkzeug wählen
+
+Was unten an der Gondel hängt, ist keine Konstante. Der Katalog liefert
+Startwerte je Stiftsorte:
+
+```bash
+plot --list-toolheads                  # was es gibt und mit welchen Werten
+plot bild.svg --toolhead marker        # dickerer Strich, längere Servo-Wartezeit
+plot bild.svg --toolhead pinsel --pen-dwell 0.6   # Katalogwert nachjustieren
+```
+
+Die Zahlen sind **geschätzte Startwerte**, keine Messwerte — Servohebel,
+Federweg und Halter sind an jedem Aufbau anders. Nachgezogen wird mit
+`plot --pattern pen-test`: fehlende Strichanfänge heißen zu kurze Wartezeit,
+ausgefranste Enden zu viel Anpressdruck.
+
 ### Mehrfarbig plotten
 
 ```bash
 plot bild.svg --layers                 # je Strichfarbe eine GCode-Datei
 plot bild.svg --layers --one-file      # eine Datei, M0-Pause zum Stiftwechsel
+plot bild.svg --layers --pen-for '#000000=fineliner' --pen-for '#e02020=marker'
 ```
 
 Getrennt ist für mehrstündige Plots das Vernünftige: Schwarz heute, Rot
 morgen. Alle Ebenen werden *gemeinsam* eingepasst — würde jede für sich
-skaliert, fiele die Zeichnung auseinander.
+skaliert, fiele die Zeichnung auseinander. Mit `--pen-for` bekommt jede Farbe
+ihren eigenen Stift samt Servo-Werten und Vorschub; die `M0`-Pause nennt dann
+Farbe *und* Stift.
+
+### Laser
+
+Vorbereitet, aber an keiner Hardware erprobt — vor dem ersten scharfen Schuss
+gehört das erzeugte Programm gelesen, nicht geglaubt.
+
+```bash
+plot bild.svg --toolhead laser --laser-verstanden \
+     --laser-smax 1000 --laser-power 35 --laser-passes 2
+```
+
+`--laser-smax` steht in der `speed_map` der `config.yaml` und ist je nach
+Aufbau 255 oder 1000; die Leistung wird in Prozent davon gerechnet. Ohne
+`--laser-verstanden` entsteht kein Laser-GCode, und `--travel-as-g1` wird
+zusammen mit einem Laser *verweigert* statt bloß bemängelt: ein G1-Leerweg
+führte mit eingeschaltetem Strahl quer über die Wand.
+
+Stift und Laser können nicht denselben Pin und nicht dieselbe PWM-Frequenz
+benutzen (50 Hz gegen Kilohertz). Die `config.yaml` trägt den zweiten
+Spindelblock auskommentiert bei.
+
+### Abgebrochenen Plot fortsetzen
+
+Ein Wandbild läuft Stunden; irgendwann bricht ein Lauf ab.
+
+```bash
+wallplotter-resume wand.gcode --from-board --host 192.168.1.42
+wallplotter-resume wand.gcode --percent 42        # oder von Hand geschätzt
+```
+
+Angesetzt wird am Anfang des angefangenen Strichs, nicht exakt an der
+Abbruchstelle: FluidNC meldet den Fortschritt in gelesenen Bytes, und der
+Planer liest der Mechanik voraus — lieber einen Strich doppelt als einen gar
+nicht. Vor dem Start muss der Nullpunkt wieder stehen.
+
+### Nachmessen und gegenrechnen
+
+Über drei Meter Länge ist ein GT2-Riemen eine Feder. Was davon übrig bleibt,
+lässt sich messen und vorverzerren:
+
+```bash
+wallplotter-correct raster --steps 4 -o raster.gcode   # 16 Kreuze plotten
+wallplotter-correct messen --steps 4                   # Vorlage zum Eintragen
+# Ist-Werte mit dem Zollstock nachtragen, dann:
+wallplotter-correct anpassen                           # → korrektur.json
+plot bild.svg --correction korrektur.json
+```
+
+Der Anpassungsschritt sagt, wieviel die Korrektur überhaupt wegnimmt. Wird der
+Fehler nicht deutlich kleiner, war zu grob gemessen oder das Modell passt
+nicht — dann ist die Mechanik die richtige Antwort, nicht die Software.
+
+### Wenn etwas nicht geht
+
+```bash
+wallplotter-doctor --host 192.168.1.42
+```
+
+Geht die Kette einmal von vorn nach hinten durch: Installation, Kern,
+Standort, Firmware-Konfiguration, Board. Prüft dabei auch, ob die Ankermaße
+in der `config.yaml` noch zu denen des aktiven Standorts passen — genau da
+wird ein Wandbild unbemerkt schief.
 
 Wenn das Board zwischen zwei Farben aus war, ist der Nullpunkt weg — `G92`
 ist flüchtig. Zwei Wege zurück:

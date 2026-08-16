@@ -176,6 +176,51 @@ pwm:
 Laser:
   laser_mode: false
 
+# ---------------------------------------------------------------------------
+# Zweiter Werkzeugkopf (Laser) — bewusst auskommentiert
+# ---------------------------------------------------------------------------
+#
+# FluidNC kann mehrere Spindeln in einer Datei führen; umgeschaltet wird im
+# Programm mit `M6 T<nummer>`. Der Wallplotter erzeugt diese Zeile, wenn beim
+# Laserkopf `tool_number` gesetzt ist:
+#
+#   plot bild.svg --toolhead laser --laser-verstanden --laser-smax 1000
+#
+# Zwei Dinge gehen dabei NICHT:
+#
+#   1. Beide Köpfe am selben GPIO. FluidNC belegt einen Pin exklusiv; zwei
+#      Spindeln auf gpio.25 lassen sich nicht einmal parsen. Der Laser braucht
+#      also einen eigenen Ausgang.
+#   2. Beide Köpfe an derselben Frequenz. Ein RC-Servo will 50 Hz, ein Laser
+#      braucht Kilohertz — FluidNC begrenzt `pwm_hz` einer Laser-Spindel auf
+#      1000 bis 100000. Wer den Stift versehentlich an eine `Laser:`-Spindel
+#      hängt, bekommt einen Servo, der bei jedem Leerweg in die Nullstellung
+#      schnappt und im Betrieb mit dem Vorschub mitflattert: eine
+#      rate-adjusted Spindel skaliert S mit der Geschwindigkeit.
+#
+# Sitzt der Laser physisch auf demselben Pin wie der Servo (Kopf wird
+# getauscht), hilft kein M6 — dann braucht es zwei config.yaml und einen
+# Neustart dazwischen.
+#
+# Vor dem Einschalten: `speed_map` gegen das eigene Netzteil prüfen und den
+# Endwert als `--laser-smax` übernehmen. Steht dort 255 und die Software
+# rechnet mit 1000, kommt viermal zu wenig Leistung heraus — oder umgekehrt.
+#
+# Laser:
+#   laser_mode: true
+#   pwm_hz: 5000
+#   output_pin: gpio.2        # PRÜFEN, eigener Ausgang, nicht der Servo-Pin
+#   enable_pin: NO_PIN        # Freigabe der Laser-PSU, falls vorhanden
+#   disable_with_s0: true     # S0 zieht auch die Freigabe — sicherer
+#   s0_with_disable: true
+#   speed_map: 0=0.000% 1000=100.000%
+#   tool_num: 100
+#
+# coolant:
+#   mist_pin: NO_PIN
+#   flood_pin: NO_PIN         # Air Assist, angesteuert mit M8 (aus: M9)
+#   delay_ms: 500
+
 start:
   must_home: false # Referenziert wird per Anschlag und G92, nicht per $H
   deactivate_parking: true

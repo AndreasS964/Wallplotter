@@ -16,6 +16,10 @@ from typing import Any
 from .config import FluidNCConfig
 
 __all__ = [
+    "CYCLE_START",
+    "FEED_HOLD",
+    "JOG_CANCEL",
+    "SOFT_RESET",
     "FluidNCError",
     "FluidNCClient",
     "MachineStatus",
@@ -24,6 +28,17 @@ __all__ = [
 ]
 
 _STATUS_RE = re.compile(r"<([^>]*)>")
+
+# GRBL-Realtime-Bytes. Als Zahlen, nicht als Zeichen: sie gehen als
+# Prozent-Escape auf die Leitung, und ein Zeichen jenseits von ASCII würde
+# unterwegs zu UTF-8 werden (siehe FluidNCClient.send_realtime).
+FEED_HOLD = 0x21
+CYCLE_START = 0x7E
+SOFT_RESET = 0x18
+JOG_CANCEL = 0x85
+
+REALTIME_TIMEOUT_S = 5.0
+"""Ein Not-Halt darf nicht so lange warten dürfen wie ein Datei-Upload."""
 
 
 class FluidNCError(RuntimeError):
@@ -140,6 +155,28 @@ class FluidNCClient:
             )
         return self._text_or_raise(response, f"Kommando {command!r} fehlgeschlagen")
 
+    def send_realtime(self, byte: int) -> str:
+        """Ein Realtime-Byte schicken — Halt, Weiter, Reset, Jog-Abbruch.
+
+        Realtime-Bytes sind keine Kommandos: GRBL wertet sie sofort aus, noch
+        bevor eine Zeile im Puffer steht. Zwei Gründe, warum sie hier einen
+        eigenen Weg brauchen statt über :meth:`send_command` zu laufen:
+
+        * **Kodierung.** ``requests`` kodiert Zeichen jenseits von ASCII als
+          UTF-8, wenn sie durch ``params=`` gehen. Aus dem Jog-Abbruch ``0x85``
+          würde ``0xC2 0x85``, also zwei Bytes — das Board sähe nie das Byte,
+          auf das es wartet. Die Escape-Sequenz wird deshalb selbst gebaut.
+        * **Zeit.** Ein Not-Halt darf nicht dieselbe Geduld haben wie ein
+          Datei-Upload; hier gilt ein kurzes, festes Zeitlimit.
+        """
+        if not 0 <= byte <= 0xFF:
+            raise FluidNCError("Ein Realtime-Byte liegt zwischen 0 und 255")
+        timeout = min(self.config.timeout_s, REALTIME_TIMEOUT_S)
+        url = f"{self.config.base_url}/command?plain=%{byte:02X}"
+        with _as_fluidnc_error(f"Realtime-Byte 0x{byte:02X} fehlgeschlagen"):
+            response = self.session.get(url, timeout=timeout)
+        return self._text_or_raise(response, f"Realtime-Byte 0x{byte:02X} fehlgeschlagen")
+
     def upload(self, data: bytes | str, filename: str) -> str:
         """Datei auf die µSD-Karte des Boards laden.
 
@@ -190,14 +227,21 @@ class FluidNCClient:
         return parse_status(self.send_command("?"))
 
     def pause(self) -> str:
-        return self.send_command("!")
+        """Feed Hold (``!``) — die Maschine bremst kontrolliert ab."""
+        return self.send_realtime(FEED_HOLD)
 
     def resume(self) -> str:
-        return self.send_command("~")
+        """Cycle Start (``~``) — weiter nach einem Feed Hold."""
+        return self.send_realtime(CYCLE_START)
 
     def stop(self) -> str:
-        """Soft-Reset (Ctrl-X) — bricht einen laufenden SD-Job ab."""
-        return self.send_command("\x18")
+        """Soft-Reset (Ctrl-X) — bricht einen laufenden SD-Job ab.
+
+        Danach ist ein per ``G92`` gesetzter Nullpunkt weg; zum Weiterplotten
+        erst die kalibrierte Ecke anfahren, dann
+        :func:`wallplotter.resume.resume_program`.
+        """
+        return self.send_realtime(SOFT_RESET)
 
     # -- Jog & Kalibrierung -----------------------------------------------
 
@@ -219,7 +263,7 @@ class FluidNCClient:
 
     def jog_cancel(self) -> str:
         """Laufende Jog-Bewegung abbrechen (Realtime-Byte 0x85)."""
-        return self.send_command("\x85")
+        return self.send_realtime(JOG_CANCEL)
 
     def set_work_offset(self, x: float = 0.0, y: float = 0.0, system: int = 1) -> str:
         """Der aktuellen Position feste Koordinaten geben — **dauerhaft**.

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from .geometry import Line, Lines
 
-__all__ = ["Pattern", "PATTERNS", "build", "describe"]
+__all__ = ["Pattern", "PATTERNS", "build", "describe", "cross"]
 
 
 @dataclass(frozen=True)
@@ -31,9 +31,13 @@ def _rect(x0: float, y0: float, x1: float, y1: float) -> Line:
     return [(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)]
 
 
-def _cross(x: float, y: float, size: float) -> Lines:
+def cross(x: float, y: float, size: float) -> Lines:
+    """Ein Kreuz — der einzige Punkt, den man an einer Wand genau nachmessen kann."""
     half = size / 2
     return [[(x - half, y), (x + half, y)], [(x, y - half), (x, y + half)]]
+
+
+_cross = cross
 
 
 def _circle(cx: float, cy: float, radius: float, segments: int = 72) -> Line:

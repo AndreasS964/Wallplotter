@@ -12,13 +12,22 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PenConfig, PlotConfig
+from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PlotConfig
 from .gcode import geometry_to_gcode, layers_to_gcode, prepare_geometry, stats_for
 from .imaging import IMAGE_SUFFIXES, TECHNIQUES, ImagingError, image_to_lines
 from .imaging import describe as describe_techniques
 from .patterns import PATTERNS, build, describe
 from .pipeline import VpypeNotAvailable, lines_to_svg, svg_to_layers, svg_to_lines
 from .timing import MotionLimits
+from .toolhead import (
+    LaserToolhead,
+    Toolhead,
+    ToolheadError,
+    describe_toolheads,
+    head_for,
+    pen_map,
+    toolhead_by_name,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -77,9 +86,44 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Leerwege als G1 statt G0 (schont die Riemen)",
     )
-    motion.add_argument("--pen-down", type=int, default=30, help="S-Wert Stift unten")
-    motion.add_argument("--pen-up", type=int, default=0, help="S-Wert Stift oben")
-    motion.add_argument("--pen-dwell", type=float, default=0.25, help="Sekunden")
+    tools = parser.add_argument_group("Werkzeug")
+    tools.add_argument(
+        "--toolhead",
+        default="fineliner",
+        help="Werkzeugkopf aus dem Katalog (--list-toolheads zeigt ihn)",
+    )
+    tools.add_argument(
+        "--list-toolheads", action="store_true", help="Werkzeugköpfe und ihre Werte zeigen"
+    )
+    tools.add_argument(
+        "--pen-for",
+        action="append",
+        metavar="EBENE=KOPF",
+        help="mit --layers: welche Strichfarbe mit welchem Stift gezeichnet wird "
+        "(mehrfach angebbar, z. B. --pen-for '#e02020=marker')",
+    )
+    tools.add_argument("--pen-down", type=int, help="S-Wert Stift unten, überschreibt den Katalog")
+    tools.add_argument("--pen-up", type=int, help="S-Wert Stift oben, überschreibt den Katalog")
+    tools.add_argument("--pen-dwell", type=float, help="Servo-Wartezeit in s, überschreibt den Katalog")
+
+    laser = parser.add_argument_group("Laser")
+    laser.add_argument("--laser-power", type=float, help="Leistung in Prozent von s_max")
+    laser.add_argument(
+        "--laser-smax",
+        type=int,
+        help="S-Wert für volle Leistung — steht in der speed_map der config.yaml",
+    )
+    laser.add_argument("--laser-passes", type=int, help="Anzahl der Durchgänge")
+    laser.add_argument(
+        "--laser-constant",
+        action="store_true",
+        help="konstante Leistung (M3) statt dynamischer (M4) — nur für Fokuspunkte",
+    )
+    laser.add_argument(
+        "--laser-verstanden",
+        action="store_true",
+        help="bestätigt, dass die Warnungen gelesen sind; ohne das entsteht kein Laser-GCode",
+    )
 
     colors = parser.add_argument_group("Mehrfarbig")
     colors.add_argument(
@@ -168,6 +212,43 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _toolhead_from_args(args) -> Toolhead:
+    """Den Kopf aus dem Katalog holen und mit den Schaltern nachjustieren.
+
+    Der Katalogeintrag ist der Startwert, die Schalter sind die Korrektur —
+    wer ``--pen-down`` setzt, meint genau diesen Stift, nicht alle.
+    """
+    head = toolhead_by_name(args.toolhead)
+
+    if isinstance(head, LaserToolhead):
+        changes = {}
+        if args.laser_power is not None:
+            changes["power_pct"] = args.laser_power
+        if args.laser_smax is not None:
+            changes["s_max"] = args.laser_smax
+        if args.laser_passes is not None:
+            changes["passes"] = args.laser_passes
+        if args.laser_constant:
+            changes["dynamic"] = False
+        head = replace(head, **changes) if changes else head
+        if not args.laser_verstanden:
+            raise ToolheadError(
+                "Laser-GCode entsteht nur mit --laser-verstanden.\n"
+                + "\n".join(f"  {note}" for note in head.check(travel_as_g1=False, draw_feed=0))
+                + "\n  Erst mit kleiner Leistung einen Rahmen fahren, dann schneiden."
+            )
+        return head
+
+    changes = {}
+    if args.pen_down is not None:
+        changes["down_value"] = args.pen_down
+    if args.pen_up is not None:
+        changes["up_value"] = args.pen_up
+    if args.pen_dwell is not None:
+        changes["dwell_s"] = args.pen_dwell
+    return replace(head, **changes) if changes else head
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -178,6 +259,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_techniques:
         print(describe_techniques())
         return 0
+
+    if args.list_toolheads:
+        print(describe_toolheads())
+        return 0
+
+    try:
+        head = _toolhead_from_args(args)
+    except ToolheadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     if not args.pattern:
         if args.input is None:
@@ -195,9 +286,7 @@ def main(argv: list[str] | None = None) -> int:
         travel_feed=args.travel_feed,
         travel_as_g1=args.travel_as_g1,
         invert_y=not args.no_invert_y,
-        pen=PenConfig(
-            down_value=args.pen_down, up_value=args.pen_up, dwell_s=args.pen_dwell
-        ),
+        toolhead=head,
         limits=MotionLimits(
             acceleration_mm_s2=args.acceleration, max_rate_mm_min=args.max_rate
         ),
@@ -247,6 +336,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    tools = None
+    if args.pen_for:
+        try:
+            tools = pen_map(",".join(args.pen_for))
+        except ToolheadError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+
     optimize_kwargs = {
         "simplify_tolerance_mm": args.simplify,
         "merge_tolerance_mm": args.merge,
@@ -273,10 +370,15 @@ def main(argv: list[str] | None = None) -> int:
             return 4
 
         base = args.out or args.input.with_suffix(".gcode")
-        result = layers_to_gcode(layer_list, plot_config, separate=not args.one_file,
-                                 fit=not args.no_fit, correction=correction)
+        try:
+            result = layers_to_gcode(layer_list, plot_config, separate=not args.one_file,
+                                     fit=not args.no_fit, correction=correction, tools=tools)
+        except ToolheadError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         for layer in layer_list:
-            print(f"  {layer.color}  {len(layer.lines):>5} Linien")
+            print(f"  {layer.color}  {len(layer.lines):>5} Linien  "
+                  f"→ {head_for(layer, tools, plot_config.toolhead).name}")
 
         if args.one_file:
             base.write_text(result, encoding="utf-8")
@@ -379,12 +481,16 @@ def main(argv: list[str] | None = None) -> int:
                 "je nach Kondition der Kinematik"
             )
 
-    gcode = geometry_to_gcode(
-        machine_lines,
-        plot_config,
-        header=f"Quelle: {source_name}",
-        feeds=feeds,
-    )
+    try:
+        gcode = geometry_to_gcode(
+            machine_lines,
+            plot_config,
+            header=f"Quelle: {source_name}",
+            feeds=feeds,
+        )
+    except ToolheadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     out_path = args.out or (
         Path(f"{args.pattern}.gcode") if args.pattern else args.input.with_suffix(".gcode")

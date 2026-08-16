@@ -18,6 +18,7 @@ from wallplotter.location import Location, LocationBook  # noqa: E402
 from wallplotter.upload import FluidNCError  # noqa: E402
 from wallplotter.webapp import WallplotterUI, create_app  # noqa: E402
 
+
 def run_handler(app, coro):
     """Eine Coroutine so ausführen, wie NiceGUI es tut: im Slot ihres Elements.
 
@@ -176,12 +177,12 @@ def test_photo_technique_can_be_switched(app, tmp_path):
     app.upload_name = "foto.png"
 
     app.technique.set_value("spiral")
-    app.render_upload()
+    run_handler(app, app.render_upload())
     assert len(app.lines) >= 1
     spiral_points = sum(len(line) for line in app.lines)
 
     app.technique.set_value("tsp")
-    app.render_upload()
+    run_handler(app, app.render_upload())
     assert len(app.lines) == 1                      # eine durchgehende Linie
     assert sum(len(line) for line in app.lines) != spiral_points
     assert "tsp" in app.source_name
@@ -195,7 +196,7 @@ def test_photo_geometry_is_not_fitted_again(app, tmp_path):
     path = tmp_path / "foto.png"
     Image.new("L", (60, 75), 100).save(path)
     app.upload_data, app.upload_name = path.read_bytes(), "foto.png"
-    app.render_upload()
+    run_handler(app, app.render_upload())
     assert app.fit_source is False
 
 
@@ -210,7 +211,7 @@ def test_colour_layers_are_listed_and_plottable(app, tmp_path):
         encoding="utf-8",
     )
     app.upload_data, app.upload_name = svg.read_bytes(), "bunt.svg"
-    app.render_upload()
+    run_handler(app, app.render_upload())
 
     assert len(app.layers) == 2
     assert {layer.color for layer in app.layers} == {"#000000", "#e02020"}
@@ -226,7 +227,7 @@ def test_photo_upload_clears_previous_layers(app, tmp_path):
     path = tmp_path / "foto.png"
     Image.new("L", (40, 50), 120).save(path)
     app.upload_data, app.upload_name = path.read_bytes(), "foto.png"
-    app.render_upload()
+    run_handler(app, app.render_upload())
     assert app.layers == []
 
 
@@ -240,7 +241,7 @@ def test_empty_number_fields_do_not_crash_the_ui(app, tmp_path):
     app.upload_data, app.upload_name = path.read_bytes(), "foto.png"
 
     app.pitch.set_value(None)
-    app.render_upload()               # früher: TypeError aus imaging.spiral
+    run_handler(app, app.render_upload())   # früher: TypeError aus imaging.spiral
     assert app.lines
 
     app.jog_step.set_value(None)

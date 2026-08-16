@@ -19,16 +19,26 @@ import os
 from dataclasses import replace
 
 from .calibration import CORNERS, AreaCalibration
-from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PenConfig, PlotConfig
-from .gcode import layers_to_gcode, lines_to_gcode, prepare_geometry, stats_for
+from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PlotConfig
+from .gcode import geometry_to_gcode, layers_to_gcode, prepare_geometry, stats_for
 from .imaging import IMAGE_SUFFIXES, TECHNIQUES, ImagingError
 from .imaging import image_to_lines as image_lines
 from .location import DEFAULT_PATH as LOCATIONS_PATH
 from .location import Location, LocationBook, LocationError
+from .motion import resonance_warning
 from .patterns import PATTERNS, build
 from .pipeline import VpypeNotAvailable, lines_to_svg, svg_to_layers
+from .toolhead import (
+    TOOLHEADS,
+    LaserToolhead,
+    PenToolhead,
+    Toolhead,
+    ToolheadError,
+    toolhead_by_name,
+)
 from .upload import FluidNCClient, FluidNCError
 
+CORRECTION_PATH = "korrektur.json"
 JOG_STEPS = [1, 10, 50, 100]
 DEFAULT_PITCH_MM = 25.0
 DEFAULT_JOG_STEP_MM = 10
@@ -66,6 +76,8 @@ class WallplotterUI:
         self.gcode: str | None = None
         self.layers: list = []
         self.book = LocationBook.load(locations_path)
+        self.correction_path = CORRECTION_PATH
+        self._clients: dict = {}
 
     @property
     def location(self) -> Location | None:
@@ -85,6 +97,23 @@ class WallplotterUI:
 
     # -- Konfiguration ----------------------------------------------------
 
+    def toolhead(self) -> Toolhead:
+        """Der gewählte Kopf, mit den Feldern der Oberfläche nachjustiert.
+
+        Der Katalogeintrag liefert die Startwerte; wer an den Servo-Reglern
+        dreht, meint genau diesen Stift. Ein Laser hat keine Servo-Werte —
+        dort bleiben die Regler wirkungslos, statt Unsinn zu erzeugen.
+        """
+        head = toolhead_by_name(self.head_select.value or "fineliner")
+        if isinstance(head, LaserToolhead):
+            return head
+        return replace(
+            head,
+            down_value=int(self.pen_down.value or head.down_value),
+            up_value=int(self.pen_up.value or 0),
+            dwell_s=self.pen_dwell.value if self.pen_dwell.value is not None else head.dwell_s,
+        )
+
     def plot_config(self) -> PlotConfig:
         width = self.width.value or WALL_WIDTH_MM
         height = self.height.value or WALL_HEIGHT_MM
@@ -97,11 +126,7 @@ class WallplotterUI:
             height_mm=height,
             margin_mm=margin,
             draw_feed=self.draw_feed.value or 1500,
-            pen=PenConfig(
-                down_value=int(self.pen_down.value or 0),
-                up_value=int(self.pen_up.value or 0),
-                dwell_s=self.pen_dwell.value or 0,
-            ),
+            toolhead=self.toolhead(),
         )
         if self.calibration.complete and self.use_calibration.value:
             config = self.calibration.to_plot_config(config)
@@ -109,53 +134,111 @@ class WallplotterUI:
         return replace(config, invert_y=not self.source_is_pattern)
 
     def client(self, timeout: float = 10.0) -> FluidNCClient:
-        return FluidNCClient(FluidNCConfig(host=self.host_input.value, timeout_s=timeout))
+        """Client für das Board — mit wiederverwendeter Verbindung.
+
+        Die Statusabfrage läuft alle zwei Sekunden. Jedes Mal einen neuen
+        Client zu bauen hieße jedes Mal eine neue ``requests.Session`` und
+        damit eine neue TCP-Verbindung zum ESP32 — der hat davon nicht viele.
+        """
+        host = self.host_input.value
+        key = (host, timeout)
+        if self._clients.get("key") != key:
+            self._clients = {"key": key, "client": FluidNCClient(
+                FluidNCConfig(host=host, timeout_s=timeout)
+            )}
+        return self._clients["client"]
+
+    def correction(self):
+        """Vorverzerrung, falls eine Datei danebenliegt und sie gewollt ist.
+
+        Das Dehnungsmodell braucht die Ankermaße des Standorts; das gemessene
+        Polynom kommt ohne aus. Fehlt beides, wird eben nicht vorverzerrt —
+        das ist kein Fehler, sondern der Normalfall vor der ersten Messreihe.
+        """
+        if not getattr(self, "use_correction", None) or not self.use_correction.value:
+            return None
+        from .correction import CorrectionError, load_correction  # noqa: PLC0415
+
+        location = self.location
+        try:
+            return load_correction(
+                self.correction_path,
+                kinematics=location.kinematics() if location else None,
+            )
+        except CorrectionError:
+            return None
+
+    def remote_name(self) -> str:
+        """Dateiname auf der Karte, aus dem Namen der Vorlage abgeleitet."""
+        stem = os.path.splitext(self.source_name.split(" (")[0])[0].strip()
+        safe = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in stem).strip("-")
+        return f"{safe or 'plot'}.gcode"
+
+    def change_toolhead(self) -> None:
+        """Werkzeug gewechselt: Regler auf die Katalogwerte, Warnungen zeigen."""
+        head = toolhead_by_name(self.head_select.value or "fineliner")
+        if isinstance(head, PenToolhead):
+            self.pen_down.set_value(head.down_value)
+            self.pen_up.set_value(head.up_value)
+            self.pen_dwell.set_value(head.dwell_s)
+        self.head_label.set_text(head.describe())
+        # Beim Laser darf niemand die Warnungen übersehen — sie stehen deshalb
+        # nicht klein im Feld, sondern als Meldung mit langer Standzeit.
+        for note in head.check(travel_as_g1=False, draw_feed=self.draw_feed.value or 1500):
+            self.ui.notify(note, type="warning", multi_line=True, timeout=10000)
+        self.regenerate()
 
     # -- Zeichnung laden --------------------------------------------------
 
-    def load_upload(self, event) -> None:
+    async def load_upload(self, event) -> None:
         self.upload_data = event.content.read()
         self.upload_name = event.name
-        self.render_upload()
+        await self.render_upload()
 
-    def render_upload(self) -> None:
+    def _convert_upload(self, suffix: str, config: PlotConfig):
+        """Die eigentliche Umrechnung — rechenintensiv, gehört in einen Thread.
+
+        Ein TSP-Weg über zehntausend Punkte oder eine Spirale über zwei Meter
+        Wand rechnet Sekunden. In der Event-Loop stünde die Oberfläche
+        währenddessen für alle.
+        """
+        if suffix in IMAGE_SUFFIXES:
+            options = {}
+            if self.technique.value in ("hatch", "spiral"):
+                # geleertes Zahlenfeld liefert None, und None geht in keine Rechnung
+                options["pitch_mm"] = self.pitch.value or DEFAULT_PITCH_MM
+            lines = image_lines(
+                self.upload_data,
+                config.width_mm,
+                config.height_mm,
+                self.technique.value,
+                margin_mm=config.margin_mm,
+                image_suffix=suffix,
+                **options,
+            )
+            return lines, [], f"{self.upload_name} ({self.technique.value})", False
+        layers = svg_to_layers(self.upload_data)
+        name = self.upload_name
+        if len(layers) > 1:
+            name += f" ({len(layers)} Farben)"
+        return [line for layer in layers for line in layer.lines], layers, name, True
+
+    async def render_upload(self) -> None:
         """Hochgeladene Vorlage (neu) übersetzen — auch beim Verfahrenswechsel."""
         if not getattr(self, "upload_data", None):
             return
         suffix = os.path.splitext(self.upload_name)[1].lower()
         config = self.plot_config()
         try:
-            if suffix in IMAGE_SUFFIXES:
-                options = {}
-                if self.technique.value in ("hatch", "spiral"):
-                    # geleertes Zahlenfeld liefert None, und None geht in keine Rechnung
-                    options["pitch_mm"] = self.pitch.value or DEFAULT_PITCH_MM
-                self.lines = image_lines(
-                    self.upload_data,
-                    config.width_mm,
-                    config.height_mm,
-                    self.technique.value,
-                    margin_mm=config.margin_mm,
-                    image_suffix=suffix,
-                    **options,
-                )
-                # Bildverfahren rechnen selbst in Millimetern
-                self.source_is_pattern = False
-                self.fit_source = False
-                name = f"{self.upload_name} ({self.technique.value})"
-            else:
-                self.layers = svg_to_layers(self.upload_data)
-                self.lines = [line for layer in self.layers for line in layer.lines]
-                self.fit_source = True
-                self.source_is_pattern = False
-                name = self.upload_name
-                if len(self.layers) > 1:
-                    name += f" ({len(self.layers)} Farben)"
+            lines, layers, name, fit = await asyncio.to_thread(
+                self._convert_upload, suffix, config
+            )
         except (VpypeNotAvailable, ImagingError) as exc:
             self.ui.notify(str(exc), type="negative", multi_line=True)
             return
-        if suffix in IMAGE_SUFFIXES:
-            self.layers = []
+        # Bildverfahren rechnen selbst in Millimetern und werden nicht eingepasst
+        self.lines, self.layers, self.fit_source = lines, layers, fit
+        self.source_is_pattern = False
         self.feeds, self.source_name = None, name
         self.refresh_layers()
         self.regenerate()
@@ -179,12 +262,28 @@ class WallplotterUI:
             return
         config = self.plot_config()
         fit = getattr(self, "fit_source", True) and not self.source_is_pattern
-        self.gcode = lines_to_gcode(
-            self.lines, config, fit=fit, header_comment=self.source_name, feeds=self.feeds
-        )
-        self.info.set_text(
-            f"{self.source_name}: {stats_for(prepare_geometry(self.lines, config, fit=fit), config)}"
-        )
+        correction = self.correction()
+        # Einmal in Maschinenkoordinaten rechnen und dabei bleiben: Statistik,
+        # GCode und Warnung müssen dieselbe Geometrie sehen.
+        machine_lines = prepare_geometry(self.lines, config, fit=fit, correction=correction)
+        try:
+            self.gcode = geometry_to_gcode(
+                machine_lines, config, header=self.source_name, feeds=self.feeds
+            )
+        except ToolheadError as exc:
+            self.gcode = None
+            self.ui.notify(str(exc), type="negative", multi_line=True, timeout=10000)
+            return
+
+        note = f"{self.source_name}: {stats_for(machine_lines, config)}"
+        if correction is not None:
+            note += "  ·  vorverzerrt"
+        warning = resonance_warning(machine_lines, config.toolhead.feed_for(config.draw_feed))
+        if warning is not None and warning.critical:
+            # Genau die Zeichnungen, die man am liebsten plottet — dichte
+            # Schraffuren —, treffen die Pendelfrequenz der Gondel.
+            note += f"\n{warning}"
+        self.info.set_text(note)
         self.area_label.set_text(
             f"{config.width_mm:.0f} × {config.height_mm:.0f} mm"
             + (
@@ -196,10 +295,17 @@ class WallplotterUI:
         # Vorschau im SVG-Sinn: Ursprung oben links, ohne Flächenversatz
         self.preview.content = lines_to_svg(
             prepare_geometry(
-                self.lines, config, fit=fit, invert_y=self.source_is_pattern, apply_origin=False
+                self.lines,
+                config,
+                fit=fit,
+                invert_y=self.source_is_pattern,
+                apply_origin=False,
+                correction=correction,
             ),
             config.width_mm,
             config.height_mm,
+            stroke=config.toolhead.color,
+            stroke_width_mm=max(0.6, config.toolhead.width_mm),
             travel_stroke="#d64545",
             style="max-height:68vh;display:block;margin:auto",
         )
@@ -272,7 +378,9 @@ class WallplotterUI:
         if not self.gcode:
             self.ui.notify("Erst eine Zeichnung oder ein Muster laden", type="warning")
             return
-        remote = await self._send(self.gcode, "plot.gcode", "Plot")
+        # Eigener Name je Vorlage: sonst überschreibt jeder Plot den vorigen auf
+        # der Karte — und genau die Originaldatei braucht das Fortsetzen später.
+        remote = await self._send(self.gcode, self.remote_name(), "Plot")
         if remote:
             self.ui.notify(f"Plot gestartet: {remote}", type="positive")
 
@@ -476,6 +584,27 @@ class WallplotterUI:
                     self.height = ui.number("Höhe mm", value=WALL_HEIGHT_MM).props("dense outlined")
                     self.margin = ui.number("Rand mm", value=50).props("dense outlined")
                     self.use_calibration = ui.switch("Kalibrierte Fläche verwenden", value=True)
+                    self.use_correction = (
+                        ui.switch("Vorverzerrung verwenden", value=False)
+                        .tooltip(
+                            f"Rechnet gegen bekannte Maschinenfehler vor, aus {CORRECTION_PATH} "
+                            "— erst nach einer Messreihe sinnvoll"
+                        )
+                    )
+
+                with ui.card().classes("w-full"):
+                    ui.label("Werkzeug").classes("text-sm text-grey-8")
+                    self.head_select = (
+                        ui.select(
+                            {key: head.name for key, head in TOOLHEADS.items()},
+                            value="fineliner",
+                            on_change=lambda _: self.change_toolhead(),
+                        )
+                        .props("dense outlined")
+                        .classes("w-full")
+                        .tooltip("Die Werte je Stift sind Startwerte — mit pen-test nachziehen")
+                    )
+                    self.head_label = ui.label("").classes("text-xs text-grey whitespace-pre-line")
 
                 with ui.expansion("Stift und Tempo").classes("w-full bg-white rounded"):
                     self.draw_feed = ui.number("Vorschub mm/min", value=1500).props("dense outlined")
@@ -510,6 +639,7 @@ class WallplotterUI:
                 ):
                     field.on_value_change(lambda _: self.regenerate())
                 self.use_calibration.on_value_change(lambda _: self.regenerate())
+                self.use_correction.on_value_change(lambda _: self.regenerate())
 
             with ui.column().classes("flex-grow gap-2 min-w-0"):
                 with ui.card().classes("w-full"):

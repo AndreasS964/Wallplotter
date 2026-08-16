@@ -87,8 +87,22 @@ def test_resume_can_also_cut_exactly(program):
     inside = lines.index("G1 X590 Y680 F1500")
     rest = resume_program(program, line=inside, whole_stroke=False)
     assert "G0 X410 Y680 ; an die Abbruchstelle" in rest
-    assert any(line.startswith("F1500") for line in rest.splitlines())
     assert any(line.startswith("M3 S30 ;") for line in rest.splitlines())
+    # der Rest bringt sein eigenes F mit — dann keine überflüssige Zeile davor
+    assert not any(line.startswith("F1500 ;") for line in rest.splitlines())
+
+
+def test_resume_restores_a_modal_feed_the_rest_does_not_carry():
+    """Fremde Dateien setzen F oft nur einmal im Kopf. Ohne Vorschub quittiert
+    die Firmware die erste G1-Bewegung mit error:22."""
+    fremd = "\n".join([
+        "G21", "G90", "F900",
+        "G0 X0 Y0", "M3 S30", "G1 X10 Y0", "G1 X10 Y10",
+        "M3 S0", "G0 X50 Y50", "M3 S30", "G1 X60 Y50",
+        "M5", "M2",
+    ])
+    rest = resume_program(fremd, line=9, whole_stroke=False)
+    assert "F900 ; Vorschub war modal gesetzt" in rest
 
 
 def test_resume_keeps_the_remaining_work(program):
@@ -145,7 +159,7 @@ def test_resume_survives_m5_style_pen_lift():
         height_mm=1000,
         margin_mm=50,
         invert_y=False,
-        pen=PenConfig(use_m5_for_up=True),
+        toolhead=PenConfig(use_m5_for_up=True),
     )
     text = lines_to_gcode(LINES, config)
     rest = resume_program(text, percent=70)
@@ -163,3 +177,84 @@ def test_resume_file(tmp_path, program):
 def test_resume_file_needs_the_file(tmp_path):
     with pytest.raises(ResumeError, match="Keine Datei"):
         resume_file(tmp_path / "weg.gcode", percent=50)
+
+
+def test_pen_up_is_not_mistaken_for_drawing(program):
+    """`M3 S0` hebt den Stift, `M3 S30` senkt ihn — beides ist M3.
+
+    Wer nur auf den Buchstaben sieht, hält jeden Leerweg für einen Strich.
+    Das Programm hat drei Linien mit zusammen fünf G1-Bewegungen; alles
+    darüber hieße, dass Anfahrten mitgezählt werden.
+    """
+    assert scan_program(program)[-1].draw_count == 5
+
+
+def test_travel_as_g1_is_not_counted_as_drawing():
+    """Mit travel_as_g1 sind auch Leerwege G1 — der Zähler darf nicht anspringen."""
+    config = PlotConfig(
+        width_mm=1000, height_mm=1000, margin_mm=50, invert_y=False, travel_as_g1=True
+    )
+    text = lines_to_gcode(LINES, config)
+    assert scan_program(text)[-1].draw_count == 5
+
+
+def test_laser_power_lines_are_understood():
+    """Beim Laser steht die Leistung in nackten S-Zeilen, nicht an M3."""
+    from wallplotter.toolhead import LaserToolhead
+
+    config = PlotConfig(
+        width_mm=1000,
+        height_mm=1000,
+        margin_mm=50,
+        invert_y=False,
+        toolhead=LaserToolhead(power_pct=40),
+    )
+    text = lines_to_gcode(LINES, config)
+    assert scan_program(text)[-1].draw_count == 5
+    rest = resume_program(text, percent=70)
+    assert rest.strip().endswith("M2 ; Programmende")
+
+
+def test_no_drawn_segment_is_silently_travelled(program):
+    """Der Fund, der diesen Umbau ausgelöst hat.
+
+    Wurde am Werkzeugbefehl statt an der Anfahrt angesetzt, rutschte die letzte
+    Zeichenbewegung des vorigen Strichs hinter das eingefügte „Werkzeug aus" —
+    und wurde mit gehobenem Stift abgefahren statt gezeichnet. Im Bild fehlte
+    lautlos ein Segment.
+
+    Geprüft wird deshalb für *jede* Abbruchstelle: keine Zeichenbewegung darf
+    verschwinden, also muss die Summe aus schon Gezeichnetem und Restprogramm
+    mindestens das Ganze ergeben.
+    """
+    total = scan_program(program)[-1].draw_count
+    for cut in range(len(program.splitlines())):
+        try:
+            rest = resume_program(program, line=cut)
+        except ResumeError:
+            continue
+        done = scan_program(program)[cut - 1].draw_count if cut else 0
+        left = scan_program(rest)[-1].draw_count
+        assert done + left >= total, f"bei Zeile {cut} fehlen Zeichenbewegungen"
+
+
+def test_resume_names_the_tool_that_has_to_be_in_the_holder():
+    """Ein mehrfarbiges Programm hält mit M0 an. Wer mittendrin fortsetzt,
+    muss wissen, welcher Stift jetzt stecken muss — sonst wird Rot schwarz."""
+    from wallplotter.gcode import layers_to_gcode
+    from wallplotter.pipeline import Layer
+
+    layers = [
+        Layer(1, "#000000", [[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]]),
+        Layer(2, "#e02020", [[(20.0, 20.0), (80.0, 20.0), (80.0, 80.0)]]),
+    ]
+    combined = layers_to_gcode(layers, CONFIG, separate=False)
+    lines = combined.splitlines()
+    pause = next(index for index, line in enumerate(lines) if line.startswith("M0 "))
+    # tief genug hinter die Pause, damit der Wiedereinstieg auch dahinter liegt
+    inside = next(
+        index for index, line in enumerate(lines) if index > pause and line.startswith("G1 ")
+    )
+    rest = resume_program(combined, line=inside)
+    assert "Im Halter muss stecken" in rest
+    assert "#e02020" in rest

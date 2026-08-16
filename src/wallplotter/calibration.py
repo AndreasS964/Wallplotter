@@ -116,7 +116,7 @@ class AreaCalibration:
             travel_feed=template.travel_feed,
             travel_as_g1=template.travel_as_g1,
             invert_y=template.invert_y,
-            pen=template.pen,
+            toolhead=template.toolhead,
         )
 
     def summary(self) -> str:

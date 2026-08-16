@@ -1,6 +1,10 @@
-"""Konfiguration für Wandfläche, Stift und GCode-Ausgabe.
+"""Konfiguration für Wandfläche, Werkzeug und GCode-Ausgabe.
 
 Alle Maße in Millimetern, alle Geschwindigkeiten in mm/min (GRBL-Konvention).
+
+Was am unteren Ende der Gondel hängt, steht nicht mehr hier, sondern in
+:mod:`wallplotter.toolhead` — seit dort auch ein Laser hineinpasst, ist ein
+Feld namens ``pen`` nicht mehr die Wahrheit.
 """
 
 from __future__ import annotations
@@ -8,35 +12,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .timing import MotionLimits
+from .toolhead import PenToolhead, Toolhead
+
+#: Alter Name des Stiftkopfes. Bleibt gültig — er beschreibt weiterhin genau
+#: das, was er immer beschrieben hat.
+PenConfig = PenToolhead
 
 # Wandfläche im Kletterwand-Keller (siehe docs/Projektidee.md)
 WALL_WIDTH_MM = 2000.0
 WALL_HEIGHT_MM = 2500.0
-
-
-@dataclass(frozen=True)
-class PenConfig:
-    """Pen-Lift über Servo am PWM-/Spindel-Pin.
-
-    FluidNC/GRBL-Dialekt: ``M3 S<wert>`` setzt die PWM-Stellung, ``M5`` schaltet
-    ab. Bewusst *nicht* ``M280`` — das ist Marlin/Makelangelo-spezifisch.
-    """
-
-    down_value: int = 30
-    """S-Wert für „Stift auf der Wand"."""
-
-    up_value: int = 0
-    """S-Wert für „Stift abgehoben"."""
-
-    dwell_s: float = 0.25
-    """Wartezeit nach jedem Hub, damit der Servo die Position erreicht."""
-
-    use_m5_for_up: bool = False
-    """``True`` sendet ``M5`` statt ``M3 S<up_value>`` zum Abheben.
-
-    Nur sinnvoll, wenn der Servo bei abgeschaltetem PWM in die Up-Position
-    federt — bei einem MG90S ist das normalerweise nicht der Fall.
-    """
 
 
 @dataclass(frozen=True)
@@ -77,7 +61,12 @@ class PlotConfig:
     dem Kopf steht.
     """
 
-    pen: PenConfig = field(default_factory=PenConfig)
+    toolhead: Toolhead = field(default_factory=PenToolhead)
+    """Was unten an der Gondel hängt — Stift, Laser, irgendwann anderes.
+
+    Hieß früher ``pen``; die Eigenschaft :attr:`pen` liest weiterhin darauf,
+    solange dort wirklich ein Stift sitzt.
+    """
 
     limits: MotionLimits = field(default_factory=MotionLimits)
     """Beschleunigung und Höchsttempo der Maschine.
@@ -86,6 +75,11 @@ class PlotConfig:
     Zahlen ist jede Laufzeitschätzung geraten. Vorgabe wie in
     ``config/fluidnc-wallplotter.yaml``.
     """
+
+    @property
+    def pen(self) -> Toolhead:
+        """Der alte Name für :attr:`toolhead`, nur lesend."""
+        return self.toolhead
 
     @property
     def drawable_width_mm(self) -> float:
