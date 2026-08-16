@@ -13,16 +13,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PenConfig, PlotConfig
-from .gcode import layers_to_gcode, lines_to_gcode, prepare_geometry, stats_for
+from .gcode import geometry_to_gcode, layers_to_gcode, prepare_geometry, stats_for
 from .imaging import IMAGE_SUFFIXES, TECHNIQUES, ImagingError, image_to_lines
 from .imaging import describe as describe_techniques
 from .patterns import PATTERNS, build, describe
 from .pipeline import VpypeNotAvailable, lines_to_svg, svg_to_layers, svg_to_lines
-
-
-def _slug(text: str) -> str:
-    """Layerbezeichnung als Dateinamensteil (``#e02020`` → ``e02020``)."""
-    return "".join(ch for ch in text if ch.isalnum()) or "ebene"
+from .timing import MotionLimits
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -125,6 +121,42 @@ def build_parser() -> argparse.ArgumentParser:
     photo.add_argument("--spacing", type=float, help="Punktabstand in Pixeln (stipple/tsp)")
     photo.add_argument("--dot", type=float, help="Punktlänge in mm (stipple)")
 
+    quality = parser.add_argument_group("Qualität")
+    quality.add_argument(
+        "--correction",
+        type=Path,
+        help="Vorverzerrung gegen bekannte Maschinenfehler (Datei aus wallplotter.correction)",
+    )
+    quality.add_argument(
+        "--adaptive-feed",
+        action="store_true",
+        help="Vorschub dort drosseln, wo die Kinematik schlecht konditioniert ist "
+        "(braucht einen eingemessenen Standort)",
+    )
+    quality.add_argument(
+        "--pen-below-pivot",
+        type=float,
+        default=100.0,
+        help="Abstand Aufhängepunkt→Stiftspitze in mm, für die Resonanzprüfung",
+    )
+    quality.add_argument(
+        "--no-resonance-check",
+        action="store_true",
+        help="nicht prüfen, ob die Zeichnung die Gondel zum Pendeln bringt",
+    )
+    quality.add_argument(
+        "--acceleration",
+        type=float,
+        default=200.0,
+        help="Beschleunigung der Maschine in mm/s², für die Laufzeitschätzung",
+    )
+    quality.add_argument(
+        "--max-rate",
+        type=float,
+        default=4000.0,
+        help="Höchstgeschwindigkeit der Achsen in mm/min, für die Laufzeitschätzung",
+    )
+
     net = parser.add_argument_group("FluidNC")
     net.add_argument("--host", default="fluidnc.local", help="Hostname oder IP")
     net.add_argument("--upload", action="store_true", help="auf die SD-Karte laden")
@@ -166,8 +198,14 @@ def main(argv: list[str] | None = None) -> int:
         pen=PenConfig(
             down_value=args.pen_down, up_value=args.pen_up, dwell_s=args.pen_dwell
         ),
+        limits=MotionLimits(
+            acceleration_mm_s2=args.acceleration, max_rate_mm_min=args.max_rate
+        ),
     )
 
+    # Der Standort trägt die Ankermaße — ohne die gibt es weder Vorverzerrung
+    # nach dem Dehnungsmodell noch einen konditionsabhängigen Vorschub.
+    location = None
     if args.calibration or args.location is not None:
         from .calibration import AreaCalibration, CalibrationError  # noqa: PLC0415
         from .location import LocationBook, LocationError  # noqa: PLC0415
@@ -186,6 +224,28 @@ def main(argv: list[str] | None = None) -> int:
             f"Kalibrierte Fläche: {plot_config.width_mm:.0f} × {plot_config.height_mm:.0f} mm "
             f"ab X{plot_config.origin_x_mm:.1f} Y{plot_config.origin_y_mm:.1f}"
         )
+
+    correction = None
+    if args.correction:
+        from .correction import CorrectionError, load_correction  # noqa: PLC0415
+
+        try:
+            # Das Dehnungsmodell rechnet mit den Ankermaßen; das gemessene
+            # Polynom kommt ohne aus.
+            correction = load_correction(
+                args.correction, kinematics=location.kinematics() if location else None
+            )
+        except CorrectionError as exc:
+            print(str(exc), file=sys.stderr)
+            return 6
+        print(f"Vorverzerrung aus {args.correction}{': ' + correction.note if correction.note else ''}")
+
+    if args.adaptive_feed and location is None:
+        print(
+            "--adaptive-feed braucht einen Standort mit Ankermaßen: --location angeben.",
+            file=sys.stderr,
+        )
+        return 2
 
     optimize_kwargs = {
         "simplify_tolerance_mm": args.simplify,
@@ -214,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
 
         base = args.out or args.input.with_suffix(".gcode")
         result = layers_to_gcode(layer_list, plot_config, separate=not args.one_file,
-                                 fit=not args.no_fit)
+                                 fit=not args.no_fit, correction=correction)
         for layer in layer_list:
             print(f"  {layer.color}  {len(layer.lines):>5} Linien")
 
@@ -222,8 +282,11 @@ def main(argv: list[str] | None = None) -> int:
             base.write_text(result, encoding="utf-8")
             print(f"{len(layer_list)} Ebenen mit Stiftwechsel-Pausen: {base}")
         else:
+            slugs = {layer.label: layer.slug for layer in layer_list}
             for position, (label, program) in enumerate(result.items(), start=1):
-                target = base.with_name(f"{base.stem}-{position}-{_slug(label)}{base.suffix}")
+                target = base.with_name(
+                    f"{base.stem}-{position}-{slugs.get(label, 'ebene')}{base.suffix}"
+                )
                 target.write_text(program, encoding="utf-8")
                 print(f"Ebene {label} → {target}")
         # Sonst wartet man vor der Wand darauf, dass etwas hochgeladen wird
@@ -298,17 +361,30 @@ def main(argv: list[str] | None = None) -> int:
         print("Keine Linien gefunden — falsche Datei oder leeres SVG?", file=sys.stderr)
         return 4
 
-    gcode = lines_to_gcode(
-        lines,
-        plot_config,
-        fit=not args.no_fit,
-        header_comment=f"Quelle: {source_name}",
-        feeds=feeds,
+    # Einmal in Maschinenkoordinaten rechnen und dabei bleiben: Statistik,
+    # Vorschübe und Ausgabe müssen dieselbe Geometrie sehen, sonst weicht die
+    # Schätzung vom GCode-Header ab und die Vorschübe sitzen auf der falschen
+    # Linie.
+    machine_lines = prepare_geometry(
+        lines, plot_config, fit=not args.no_fit, correction=correction
     )
 
-    # Statistik auf der Maschinen-Geometrie: die Leerwege zum Nullpunkt hängen
-    # an der Spiegelung, sonst weicht die Schätzung vom GCode-Header ab
-    machine_lines = prepare_geometry(lines, plot_config, fit=not args.no_fit)
+    if args.adaptive_feed and location is not None:
+        from .motion import conditioning_feeds  # noqa: PLC0415
+
+        feeds = conditioning_feeds(machine_lines, location.kinematics(), plot_config.draw_feed)
+        if feeds:
+            print(
+                f"Vorschub angepasst: {min(feeds):.0f} bis {max(feeds):.0f} mm/min "
+                "je nach Kondition der Kinematik"
+            )
+
+    gcode = geometry_to_gcode(
+        machine_lines,
+        plot_config,
+        header=f"Quelle: {source_name}",
+        feeds=feeds,
+    )
 
     out_path = args.out or (
         Path(f"{args.pattern}.gcode") if args.pattern else args.input.with_suffix(".gcode")
@@ -316,6 +392,15 @@ def main(argv: list[str] | None = None) -> int:
     out_path.write_text(gcode, encoding="utf-8")
     print(f"{stats_for(machine_lines, plot_config)}")
     print(f"GCode geschrieben: {out_path}")
+
+    if not args.no_resonance_check:
+        from .motion import resonance_warning  # noqa: PLC0415
+
+        warning = resonance_warning(
+            machine_lines, plot_config.draw_feed, args.pen_below_pivot
+        )
+        if warning is not None:
+            print(str(warning), file=sys.stderr if warning.critical else sys.stdout)
 
     if args.preview:
         # Vorschau-SVG hat den Ursprung oben links: eine SVG-Vorlage bleibt also
@@ -327,6 +412,7 @@ def main(argv: list[str] | None = None) -> int:
             fit=not args.no_fit,
             invert_y=bool(args.pattern),
             apply_origin=False,
+            correction=correction,
         )
         args.preview.write_text(
             lines_to_svg(

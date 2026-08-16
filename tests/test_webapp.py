@@ -5,6 +5,7 @@ hält (falsche Feldnamen, vertauschte Argumente, kaputte Callbacks fallen hier
 auf, bevor sie vor der Wand auffallen).
 """
 
+import asyncio
 import time
 from types import SimpleNamespace
 
@@ -16,6 +17,22 @@ from wallplotter.calibration import AreaCalibration  # noqa: E402
 from wallplotter.location import Location, LocationBook  # noqa: E402
 from wallplotter.upload import FluidNCError  # noqa: E402
 from wallplotter.webapp import WallplotterUI, create_app  # noqa: E402
+
+def run_handler(app, coro):
+    """Eine Coroutine so ausführen, wie NiceGUI es tut: im Slot ihres Elements.
+
+    NiceGUI hält den Slot über den gesamten ``await`` hinweg offen
+    (``events._await_and_handle_in_context``) — ohne ihn findet ``ui.notify``
+    keinen Client. Der Slot-Stapel hängt am asyncio-Task, deshalb muss er
+    *innerhalb* der neuen Task betreten werden.
+    """
+
+    async def wrapper():
+        with app.layer_box:
+            return await coro
+
+    return asyncio.run(wrapper())
+
 
 CORNERS = {
     "bottom-left": (100.0, 200.0),
@@ -142,7 +159,7 @@ def test_ui_survives_having_no_location_at_all(tmp_path):
     instance.build_ui()
     instance.refresh_calibration()
     assert instance.location is None
-    instance.record_corner("bottom-left")   # darf nicht abstürzen
+    run_handler(instance, instance.record_corner("bottom-left"))  # darf nicht abstürzen
     assert instance.plot_config().width_mm == 2000.0
 
 
@@ -198,7 +215,7 @@ def test_colour_layers_are_listed_and_plottable(app, tmp_path):
     assert len(app.layers) == 2
     assert {layer.color for layer in app.layers} == {"#000000", "#e02020"}
     assert "2 Farben" in app.source_name
-    app.send_layer(0)          # ohne Board: darf nur nicht abstürzen
+    run_handler(app, app.send_layer(0))   # ohne Board: darf nur nicht abstürzen
 
 
 def test_photo_upload_clears_previous_layers(app, tmp_path):
@@ -227,7 +244,7 @@ def test_empty_number_fields_do_not_crash_the_ui(app, tmp_path):
     assert app.lines
 
     app.jog_step.set_value(None)
-    app.jog(1, 0)                     # ohne Board: darf nur nicht abstürzen
+    run_handler(app, app.jog(1, 0))   # ohne Board: darf nur nicht abstürzen
 
 
 def test_absurd_margin_does_not_crash_the_ui(app):

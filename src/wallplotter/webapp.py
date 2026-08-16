@@ -226,7 +226,7 @@ class WallplotterUI:
                         icon="send", on_click=lambda i=position - 1: self.send_layer(i)
                     ).props("flat dense").tooltip("nur diese Farbe plotten")
 
-    def send_layer(self, index: int) -> None:
+    async def send_layer(self, index: int) -> None:
         if not (0 <= index < len(self.layers)):
             return
         layer = self.layers[index]
@@ -237,65 +237,86 @@ class WallplotterUI:
         if not program:
             self.ui.notify("Ebene ist leer", type="warning")
             return
-        try:
-            remote = self.client().upload(program, "plot.gcode")
-            self.client().run_file(remote)
-        except FluidNCError as exc:
-            self.ui.notify(str(exc), type="negative", multi_line=True)
-            return
-        self.ui.notify(f"Ebene {layer.label} gestartet", type="positive")
+        # Eigener Dateiname je Ebene: sonst überschreibt Rot das Schwarz auf der
+        # Karte, und hinterher ist nicht mehr nachvollziehbar, was dort läuft
+        name = f"ebene-{index + 1}-{layer.slug}.gcode"
+        remote = await self._send(program, name, f"Ebene {layer.label}")
+        if remote:
+            self.ui.notify(f"Ebene {layer.label} gestartet: {remote}", type="positive")
 
     # -- Maschine ---------------------------------------------------------
 
-    def send_plot(self) -> None:
+    async def _send(self, program: str, filename: str, what: str) -> str | None:
+        """Hochladen und starten — im Thread, damit die Oberfläche atmet.
+
+        Ein GCode-Programm für eine große Wand ist schnell ein paar Megabyte.
+        Liefe der Upload in der Event-Loop, stünde die Oberfläche währenddessen
+        für jedes Gerät im Netz, das gerade draufschaut.
+        """
+
+        def work() -> str:
+            client = self.client(30.0)
+            remote = client.upload(program, filename)
+            client.run_file(remote)
+            return remote
+
+        try:
+            return await asyncio.to_thread(work)
+        except FluidNCError as exc:
+            self.ui.notify(f"{what}: {exc}", type="negative", multi_line=True)
+        except Exception as exc:  # Netzwerkfehler aller Art
+            self.ui.notify(f"{what} fehlgeschlagen: {exc}", type="negative", multi_line=True)
+        return None
+
+    async def send_plot(self) -> None:
         if not self.gcode:
             self.ui.notify("Erst eine Zeichnung oder ein Muster laden", type="warning")
             return
-        try:
-            remote = self.client().upload(self.gcode, "plot.gcode")
-            self.client().run_file(remote)
-        except FluidNCError as exc:
-            self.ui.notify(str(exc), type="negative", multi_line=True)
-            return
-        self.ui.notify(f"Plot gestartet: {remote}", type="positive")
+        remote = await self._send(self.gcode, "plot.gcode", "Plot")
+        if remote:
+            self.ui.notify(f"Plot gestartet: {remote}", type="positive")
 
-    def jog(self, dx: float, dy: float) -> None:
+    async def jog(self, dx: float, dy: float) -> None:
         # Ein Toggle lässt sich auch abwählen — dann steht dort None
         step = float(self.jog_step.value or DEFAULT_JOG_STEP_MM)
-        try:
-            self.client(5).jog(dx * step, dy * step, feed=self.jog_feed.value or 1000)
-        except (FluidNCError, Exception) as exc:  # noqa: B014 - Netzwerkfehler aller Art
-            self.ui.notify(f"Jog fehlgeschlagen: {exc}", type="negative")
+        feed = self.jog_feed.value or 1000
+        await self.machine_command(
+            "Jog", lambda: self.client(5).jog(dx * step, dy * step, feed=feed), quiet=True
+        )
 
-    def machine_command(self, name: str, action) -> None:
+    async def machine_command(self, name: str, action, *, quiet: bool = False) -> bool:
+        """Ein Kommando ans Board schicken, ohne die Oberfläche anzuhalten."""
         try:
-            action()
+            await asyncio.to_thread(action)
         except Exception as exc:
             self.ui.notify(f"{name} fehlgeschlagen: {exc}", type="negative")
-            return
-        self.ui.notify(f"{name} gesendet", type="positive")
+            return False
+        if not quiet:
+            self.ui.notify(f"{name} gesendet", type="positive")
+        return True
 
-    def record_corner(self, corner: str) -> None:
-        try:
-            position = self.client(5).position()
-        except Exception as exc:
-            self.ui.notify(f"Position nicht lesbar: {exc}", type="negative")
-            return
+    async def record_corner(self, corner: str) -> None:
         if self.location is None:
             self.ui.notify("Erst einen Standort anlegen", type="warning")
+            return
+        try:
+            position = await asyncio.to_thread(self.client(5).position)
+        except Exception as exc:
+            self.ui.notify(f"Position nicht lesbar: {exc}", type="negative")
             return
         self.calibration.record(corner, position)
         self.save_book()
         self.refresh_calibration()
         self.ui.notify(f"{corner} bei X{position[0]:.0f} Y{position[1]:.0f}", type="positive")
 
-    def goto_corner(self, corner: str) -> None:
+    async def goto_corner(self, corner: str) -> None:
         if corner not in self.calibration.points:
             self.ui.notify(f"{corner} ist noch nicht kalibriert", type="warning")
             return
         x, y = self.calibration.points[corner]
-        self.machine_command(
-            f"Anfahrt {corner}", lambda: self.client(5).jog_to(x, y, self.jog_feed.value or 1000)
+        feed = self.jog_feed.value or 1000
+        await self.machine_command(
+            f"Anfahrt {corner}", lambda: self.client(5).jog_to(x, y, feed)
         )
 
     def clear_calibration(self) -> None:

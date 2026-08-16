@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .timing import MotionLimits
+
 # Wandfläche im Kletterwand-Keller (siehe docs/Projektidee.md)
 WALL_WIDTH_MM = 2000.0
 WALL_HEIGHT_MM = 2500.0
@@ -76,6 +78,14 @@ class PlotConfig:
     """
 
     pen: PenConfig = field(default_factory=PenConfig)
+
+    limits: MotionLimits = field(default_factory=MotionLimits)
+    """Beschleunigung und Höchsttempo der Maschine.
+
+    Geht nicht in den GCode ein — das steht in der Firmware —, aber ohne diese
+    Zahlen ist jede Laufzeitschätzung geraten. Vorgabe wie in
+    ``config/fluidnc-wallplotter.yaml``.
+    """
 
     @property
     def drawable_width_mm(self) -> float:

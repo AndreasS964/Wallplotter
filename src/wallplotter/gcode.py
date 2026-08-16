@@ -21,10 +21,12 @@ from .geometry import (
     transform,
     travel_length,
 )
+from .timing import plot_duration_s
 
 __all__ = [
     "lines_to_gcode",
     "layers_to_gcode",
+    "geometry_to_gcode",
     "prepare_geometry",
     "PlotStats",
     "stats_for",
@@ -107,12 +109,17 @@ class PlotStats:
         self.point_count = sum(len(line) for line in lines)
         self.draw_mm = draw_length(lines)
         self.travel_mm = travel_length(lines)
-        self.motion_s = estimate_duration_s(lines, config.draw_feed, config.travel_feed)
         # Je Linie hebt und senkt der Servo einmal, und nach jedem Hub wartet
         # das Programm. Bei einem Punktraster ist das nicht die Nachkommastelle,
         # sondern der Löwenanteil: 5000 Punkte × 2 × 0,25 s sind gut 40 Minuten,
         # die eine reine Wegschätzung unterschlägt.
         self.pen_s = 2 * self.line_count * max(0.0, config.pen.dwell_s)
+        # Mit Beschleunigungsprofil statt Weg durch Tempo — bei kurzen Strichen
+        # ist das der Unterschied zwischen sieben und einundzwanzig Minuten.
+        self.motion_s = plot_duration_s(
+            lines, config.draw_feed, config.travel_feed, config.limits
+        )
+        self.naive_motion_s = estimate_duration_s(lines, config.draw_feed, config.travel_feed)
         self.duration_s = self.motion_s + self.pen_s
 
     def as_dict(self) -> dict[str, float | int]:
@@ -168,6 +175,27 @@ def lines_to_gcode(
         raise ValueError("feeds muss genauso viele Einträge haben wie es Linien gibt")
     geometry = prepare_geometry(lines, cfg, fit=fit, correction=correction)
     return _program(geometry, cfg, header=header_comment, feeds=feeds)
+
+
+def geometry_to_gcode(
+    geometry: Lines,
+    config: PlotConfig | None = None,
+    *,
+    header: str | None = None,
+    feeds: Sequence[float] | None = None,
+) -> str:
+    """GCode aus bereits fertiger Maschinengeometrie.
+
+    Der Weg für alles, was zwischen Einpassen und Ausgabe noch etwas mit der
+    Geometrie vorhat — etwa den Vorschub je Linie an die örtliche Kondition
+    der Kinematik anzupassen (:func:`wallplotter.motion.conditioning_feeds`).
+    Sonst müsste dieselbe Geometrie zweimal gerechnet werden, einmal für die
+    Vorschübe und einmal für die Ausgabe, und beide könnten auseinanderlaufen.
+    """
+    cfg = config or PlotConfig()
+    if feeds is not None and len(feeds) != len(geometry):
+        raise ValueError("feeds muss genauso viele Einträge haben wie es Linien gibt")
+    return _program(geometry, cfg, header=header, feeds=feeds)
 
 
 def _program(
