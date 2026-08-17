@@ -18,7 +18,7 @@ from .gcode import geometry_to_gcode, lines_to_gcode, stats_for
 from .toolhead import LaserToolhead, PenToolhead, Toolhead
 from .upload import FluidNCClient, upload_and_run
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "FluidNCClient",

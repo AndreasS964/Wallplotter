@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wallplotter"
-version = "0.2.0"
+version = "0.3.0"
 description = "Bild-zu-GCode-Toolchain für einen selbstgebauten V-Plotter an der Kellerwand (FluidNC/GRBL)"
 readme = "README.md"
 requires-python = ">=3.10"

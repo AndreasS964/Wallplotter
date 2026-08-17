@@ -10,7 +10,7 @@
   <a href="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-424-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-451-brightgreen">
   <img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-lightgrey">
 </p>
 
@@ -44,6 +44,7 @@ wallplotter-location show              # Auflösung, Riemenkräfte, Riemenlänge
 | **[Projekthandbuch](docs/wandplotter-handbuch.md)** | **Alles an einer Stelle** — Hardware, Kinematik, Firmware, Abläufe, Qualität, offene Punkte |
 | [Projektidee](docs/projektidee.md) | Hardware, Mechanik, Entscheidungen |
 | [Software-Roadmap](docs/software-roadmap.md) | Stufenplan und UI-Architektur |
+| [Inbetriebnahme](docs/inbetriebnahme.md) | was vorher geht, und der Ablauf für den Tag, an dem das Board kommt |
 | [Kinematik-Auswertung](docs/kinematik.md) | gerechnete Zahlen für eine Beispielaufhängung |
 | [FluidNC-Konfiguration](config/fluidnc-wallplotter.yaml) | kommentierte `config.yaml` fürs Rodent-Board |
 
@@ -362,7 +363,9 @@ und die Pendelstöße durch Leerfahrten ganz. Die Zeitangaben gelten für
 | `wallplotter.geometry` | Bounding-Box, Einpassen, Spiegeln, Längen-/Zeitschätzung (ohne vpype) |
 | `wallplotter.pipeline` | SVG/Bild → Linien in mm (vpype), plus SVG-Vorschau |
 | `wallplotter.gcode` | Linien → GCode (`G0`/`G1`, `M3`/`M5`) |
-| `wallplotter.upload` | FluidNC-Web-API: Upload, `$SD/Run`, Status, Pause/Stop |
+| `wallplotter.channel` | WebSocket-Kanal zum Board: Status, G-Code, Realtime-Bytes |
+| `wallplotter.upload` | FluidNC-Anbindung: Datei-Upload über HTTP, Maschine über den Kanal |
+| `wallplotter.simulator` | ein Board nachspielen, solange keines an der Wand hängt |
 | `wallplotter.kinematics` | Auflösung, Riemenlängen, Zugkräfte nachrechnen |
 | `wallplotter.calibration` | angefahrene Ecken → nutzbare Fläche mit Versatz |
 | `wallplotter.location` | Standorte: Ankermaße + Fläche je Aufhängung |
@@ -388,18 +391,43 @@ pytest
 Tests, die vpype, NiceGUI oder PyYAML brauchen, überspringen sich selbst, wenn
 das Paket fehlt — der Rest läuft immer.
 
+## Ohne Board üben
+
+```bash
+wallplotter-sim --port 8080
+
+wallplotter-doctor --host 127.0.0.1:8080
+plot --pattern frame --host 127.0.0.1:8080 --upload --run
+```
+
+`wallplotter.simulator` spielt den Webserver von FluidNC nach — absichtlich
+**einschließlich seiner Eigenheiten**: `/sdfiles` liefert 404, `/command`
+antwortet während der Fahrt mit 503, Statusreports gibt es nur auf dem
+WebSocket, und ein Not-Aus mitten in der Bewegung hinterlässt einen Alarm
+statt eines aufgeräumten Idle. Eine gutmütigere Gegenstelle würde genau die
+Fehler durchgehen lassen, die sie finden soll.
+
+Damit lässt sich der ganze Ablauf vorher fahren: erzeugen, hochladen, starten,
+Fortschritt sehen, halten, weiter, abbrechen, Restprogramm mit `--from-board`.
+Auch die Web-UI — Host oben im Kopf auf `127.0.0.1:8080` stellen.
+
 ## Stand
 
 Board unterwegs, Mechanik noch nicht gedruckt. Was das heißt:
 
 * **Verifiziert ohne Hardware:** Geometrie, GCode-Export, Kalibrierlogik,
-  Testmuster, Kinematikrechnung, UI-Verdrahtung — alles unter Test.
-* **Noch offen bis das Board da ist:** die ESP3D-Endpunkte (`/sdfiles`,
-  `/sd/`, `/command`) sind nach Dokumentation gebaut, aber nie gegen echte
-  Firmware gelaufen; die Servo-S-Werte für Pen-Up/Down sind Platzhalter; und der
-  PWM-Pin für den Servo in der `config.yaml` ist der einzige geratene Wert
-  (siehe Kommentar dort — der 3–10-V-Ausgang des Rodent passt womöglich nicht
-  zu einem MG90S).
+  Testmuster, Kinematikrechnung, UI-Verdrahtung — alles unter Test. Die
+  board-nahe Seite ist gegen den **Quelltext** von FluidNC gebaut (v3.9.9,
+  v4.0.4, master) und läuft komplett gegen den Simulator.
+* **Noch offen bis das Board da ist:** die echte Firmware auf echter Hardware —
+  ein ESP32 unter Last ist kein Python-Server auf localhost. Die Servo-S-Werte
+  für Pen-Up/Down sind Platzhalter. Und der Servo-Pin ist zwar aus Schaltplan
+  und Board-Handbuch bestimmt (`gpio.26` am OLED-Header; der „PWM"-Anschluss
+  des Rodent ist eine analoge 0–10-V-Ausgabe und für einen Servo unbrauchbar),
+  aber am Board nachzumessen.
+
+Der Ablauf für den Tag, an dem das Board kommt, steht in
+[docs/inbetriebnahme.md](docs/inbetriebnahme.md).
 
 ## Lizenz
 

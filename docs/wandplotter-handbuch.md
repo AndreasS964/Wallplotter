@@ -3,7 +3,7 @@
 Alles zum Projekt an einer Stelle: was gebaut wird, warum es so gebaut wird,
 was gemessen und gerechnet wurde, und wie man es bedient.
 
-*Stand: August 2026 · Version 0.2.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 424 Tests, CI grün*
+*Stand: August 2026 · Version 0.3.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 451 Tests, CI grün*
 
 ---
 
@@ -27,10 +27,10 @@ Aufhängung im Code.
 | --- | --- |
 | Software (Geometrie, GCode, Kalibrierung, Bildverfahren, UI, Werkzeugköpfe) | fertig und unter Test |
 | Kinematik durchgerechnet | fertig, siehe Abschnitt 4 |
-| FluidNC-Konfiguration | entworfen, ein Pin offen (Servo-PWM) |
-| Board | bestellt, noch nicht da |
+| FluidNC-Konfiguration | entworfen, Servo-Pin aus dem Schaltplan bestimmt (Abschnitt 5) |
+| Board | bestellt, noch nicht da — Ablauf für den Tag X: [inbetriebnahme.md](inbetriebnahme.md) |
 | Mechanik | noch nicht gedruckt |
-| Alles Board-nahe (Upload, Jog, Status, Laser) | nach Doku gebaut, nie an einem Board |
+| Alles Board-nahe (Upload, Jog, Status, Laser) | gegen den Firmware-Quelltext gebaut, gegen den Simulator gefahren, nie an einem Board |
 
 ---
 
@@ -43,7 +43,9 @@ Aufhängung im Code.
 - ESP32-D0WD-V3 mit WLAN (802.11 b/g/n)
 - 4× TMC2160-Treiber, SPI-konfigurierbar, bis 3 A — wir nutzen 2 Kanäle, 2 bleiben Reserve
 - Eingangsspannung DC 24–56 V
-- FluidNC-kompatibel, µSD-Slot, PWM-Ausgang, 5 Endstop-Eingänge
+- FluidNC-kompatibel, µSD-Slot, 5 Endstop-Eingänge
+- „PWM-Ausgang (3–10 V)" — trotz des Namens ein **analoger** Ausgang für
+  einen VFD, kein Servoanschluss (Abschnitt 5)
 
 ### Motoren und Antrieb
 
@@ -71,7 +73,9 @@ Betrieb am Board.
 ### Noch zu beschaffen
 
 - Servo MG90S (Metallgetriebe) für den Pen-Lift
-- 24-V-Netzteil, ausreichend für 2× 1,2 A + Servo + Reserve
+- **Eigenes 5-V-Netzteil für den Servo** — blockiert zieht ein MG90S rund
+  700 mA, das gehört nicht an die Bordversorgung
+- 24-V-Netzteil für die Motoren, ausreichend für 2× 1,2 A + Reserve
 - Aderendhülsen, Motor-Verlängerungskabel
 - GT2-Riemen **mit Stahlkern** (siehe Abschnitt 8 — das ist der wichtigste Einkauf)
 
@@ -213,11 +217,27 @@ Pinbelegung stammt aus [BTTs eigener rodent.yaml](https://github.com/bigtreetech
 Servo am PWM-Ausgang, angesteuert per **`M3 S<wert>` / `M5`** — bewusst *nicht*
 `M280`, das ist Marlin/Makelangelo-Konvention und existiert in FluidNC nicht.
 
-**Offener Punkt:** Der PWM-Pin ist der einzige geratene Wert in der Konfiguration.
-BTTs eigene Datei nutzt einen VFD über RS485 und belegt gar keinen PWM-Port. Zwei
-Dinge am Board prüfen: welcher GPIO am PWM-Header hängt, und ob dessen 3–10 V
-für einen MG90S taugen (Servo will sauberes 5-V-Signal bei 50 Hz). Freie
-GPIO-Kandidaten laut rodent.yaml: 2, 4, 12, 13, 25.
+**Geklärt — und zwar negativ: Der Servo darf nicht an den PWM-Header.**
+
+Der Anschluss heißt „PWM (3–10 V)", ist aber keiner. Der Schaltplan (Blatt 3,
+„USB_485_PWM") führt das Signal des ESP32 über ein RC-Glied und einen LM358
+auf `0_10V_Out`, mit 10-kΩ-Trimmpoti daneben — im Handbuch als „SP-PWM
+potentiometer" (3.6) beschrieben. Das ist die analoge Drehzahlvorgabe für
+einen VFD: Heraus kommt ein Gleichspannungspegel. Ein RC-Servo braucht die
+Impulsfolge selbst, 50 Hz mit 1–2 ms Pulsbreite, und die überlebt das Filter
+nicht.
+
+Der Servo gehört deshalb an einen roh herausgeführten GPIO. Am leichtesten
+erreichbar ist der **OLED-Header**: Er trägt `gpio.26` und `gpio.27`
+(I2C), und beide sind frei, solange kein Display steckt. In der `config.yaml`
+steht jetzt `gpio.26`.
+
+Was am Board nachzumessen bleibt: Pinfolge und Versorgungsspannung des
+OLED-Headers, und ob der MG90S am 3,3-V-Pegel des ESP32 sauber schaltet.
+Seine *Versorgung* gehört ohnehin nicht ans Board — blockiert zieht er rund
+700 mA und braucht ein eigenes 5-V-Netzteil mit gemeinsamer Masse. Weitere
+unbelegte GPIOs laut rodent.yaml: 2, 4, 12, 13, 25; ob die irgendwo
+herausgeführt sind, sagt erst das Board.
 
 ### Nullpunkt und Homing — die wichtigste Firmware-Entscheidung
 
@@ -234,6 +254,11 @@ passender StallGuard-Empfindlichkeit liefert `$H` reproduzierbare
 Maschinenkoordinaten. Dann lässt sich der Flächenversatz als **G54 dauerhaft**
 im NVS des ESP32 ablegen (`G10 L20`, in unserer CLI
 `wallplotter-calibrate zero --persistent`).
+
+Am Rodent hängt das am **DIAG-Anschluss**. Das Board-Handbuch (3.8) ist dabei
+eindeutig: Wo DIAG benutzt wird, darf am zugehörigen Endstop-Eingang *kein*
+Jumper stecken, und die Empfindlichkeit wird in der Software eingestellt,
+nicht am Board.
 
 **Empfehlung:** Variante b früh einrichten. Mehrfarbige Plots über mehrere Tage
 hängen daran. Ein gespeicherter Versatz allein reicht nicht — ohne
@@ -278,7 +303,9 @@ Marlin-spezifischen Dialekt erzeugt (`M280`, proprietäre `D`-Codes,
 | `correction` | Vorverzerrung gegen Riemendehnung und Messfehler |
 | `motion` | Pendelresonanz prüfen, positionsabhängiger Vorschub |
 | `patterns` | Testmuster für die Erstinbetriebnahme |
-| `upload` | FluidNC-Web-API: SD-Upload, `$SD/Run`, Status, Jog, Pause/Stop |
+| `channel` | WebSocket-Kanal zum Board: Status, G-Code, Realtime-Bytes |
+| `upload` | FluidNC-Anbindung: SD-Upload über HTTP, Maschine über den Kanal |
+| `simulator` | ein Board nachspielen, solange keines an der Wand hängt |
 | `sdstore` | Standortdaten auf der SD-Karte des Boards |
 | `cli` / `calibrate_cli` / `location_cli` / `correct_cli` / `resume_cli` | Kommandozeile |
 | `doctor` | Selbsttest von der Installation bis zum Board |
@@ -321,13 +348,48 @@ Geprüft gegen die [ESP3D-v3-Dokumentation](https://esp3d.io/esp3d/version-3x/do
 
 | Zweck | Aufruf |
 | --- | --- |
-| Kommando senden | `GET /command?plain=<befehl>` |
-| Datei auf SD schreiben | `POST /sdfiles?path=/&createPath=yes` |
-| Datei von SD lesen | `GET /sd/<datei>` |
-| SD auflisten | `GET /sdfiles?path=/&action=list` |
+| Datei auf SD schreiben | `POST /upload` (Dateiname im Multipart = voller Pfad, dazu Feld `<pfad>S` mit der Bytegröße) |
+| SD auflisten | `GET /upload?path=/` |
+| `$`-Kommando senden | `GET /command?plain=$SD/Run=…` |
+| Halt / Weiter / Not-Aus | `GET /feedhold_reload`, `/cyclestart_reload`, `/restart_reload` |
+| Status, G-Code, Realtime | **WebSocket** `ws://<host>/` |
 
-Achtung: `/upload` schreibt in ESP3D v3 auf den **Flash** des ESP32, nicht auf
-die Karte. (Das hatten wir zuerst falsch.)
+Das steht so **nicht** in der ESP3D-Dokumentation, und die Abweichung ist
+kein Detail. FluidNC bringt einen eigenen Webserver mit, der ESP3D nur
+teilweise nachbildet. Nachgeprüft im Quelltext von v3.9.9, v4.0.4 und master —
+in diesen Punkten identisch:
+
+* **`/upload` ist die Karte, `/files` ist der Flash.** Genau andersherum als
+  in der ESP3D-Doku. Ein `/sdfiles` gibt es überhaupt nicht; der Pfad landet
+  im 404-Handler. (Zweimal falsch gelegen: erst `/upload` für den Flash
+  gehalten, dann auf `/sdfiles` ausgewichen. Beide Male war die Quelle die
+  Doku der falschen Firmware.)
+* **`/command?plain=` taugt nur für `$`-Kommandos.** Der Handler ruft
+  `settings_execute_line()` auf, und die Funktion schneidet das erste Zeichen
+  ab, weil sie `$` oder `[` erwartet. Aus `G92 X0 Y0` wird damit die Suche
+  nach einer Einstellung namens `92 X0 Y0`, aus `?` die Suche nach dem leeren
+  Namen — was auf die Hilfeseite führt, nicht auf einen Statusreport. Kein
+  Fehler, den man sieht: ein Nullpunkt, der nie gesetzt wurde.
+* **Realtime-Bytes erreichen ihren Zweig auf diesem Weg nie.** Die Firmware
+  fängt `?`, `!`, `~`, `0x18` und `0x85` im Zeichenstrom eines *Kanals* ab
+  (`Channel::push()`), und einen Kanal gibt es nur über WebSocket oder
+  seriell. Für Halt, Weiter und Not-Aus bringt FluidNC deshalb eigene
+  HTTP-Endpunkte mit, die dasselbe Firmware-Ereignis auslösen.
+* **`/command` antwortet mit HTTP 503, solange die Maschine fährt** — sofern
+  `$HTTP/BlockDuringMotion` steht, und das ist die Voreinstellung
+  (`DEFAULT_HTTP_BLOCKED_DURING_MOTION = 1`). Der WebSocket-Kanal ist davon
+  nicht betroffen.
+
+Der Kanal ist damit kein Luxus, sondern der Hauptweg: Er meldet von sich aus
+alle 200 ms einen Statusreport (`WSChannel` setzt `setReportInterval(200)`),
+nimmt G-Code und Realtime-Bytes an und trägt den laufenden Job. Die
+Arbeitsteilung in `wallplotter.upload` folgt daraus — Dateien über HTTP,
+alles Maschinennahe über `wallplotter.channel`.
+
+Zum Lesen einer Datei von der Karte dient `$SD/Show=<pfad>` statt eines
+HTTP-Pfads: Den WebDAV-Mount `/sd` gibt es erst ab FluidNC 4, `$SD/Show` in
+jeder Fassung. Die Firmware verlangt dafür Idle oder Alarm — während eines
+laufenden Plots liest dort niemand.
 
 ---
 
@@ -341,11 +403,12 @@ wichtiger als eine Versionsnummer:
 
 | | Zustand |
 | --- | --- |
-| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 424 Tests |
+| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 451 Tests |
 | Laufzeitschätzung, Fortsetzen, Vorverzerrung, Kalibrierlogik | **läuft**, gegen erzeugte Programme geprüft |
-| Web-UI, alle sechs CLIs | **läuft**, ohne Board bedienbar |
-| Upload, Jog, Status, `$SD/Run` | nach ESP3D-Doku gebaut, **nie an einem Board** |
-| Servo-Werte, PWM-Pin, `M0`-Pause | **Platzhalter**, hängen an der Hardware |
+| Web-UI, alle sieben CLIs | **läuft**, ohne Board bedienbar |
+| Upload, Jog, Status, Halt, `$SD/Run` | gegen den Firmware-**Quelltext** gebaut und gegen den mitgelieferten Simulator gefahren, **nie an einem Board** |
+| Servo-Werte | **Platzhalter**, hängen an der Hardware |
+| Servo-Pin | aus Schaltplan und Board-Handbuch bestimmt, am Board nachzumessen |
 | Laserpfad | nach Doku und Quelltext gebaut, **nie erprobt** |
 
 Wer heute `pip install -e .` macht, kann sofort: Bilder und SVGs in GCode
@@ -553,17 +616,34 @@ dunklen Stellen bedient. Die Statistik zeigt das vor jedem Plot an.
 
 **Bis das Board da ist — nichts davon ist an echter Hardware verifiziert:**
 
-- ESP3D-Endpunkte (`/sdfiles`, `/sd/`, `/command`) — nach Dokumentation gebaut,
-  gegen Simulator getestet
-- Realtime-Bytes (`!`, `~`, `0x18`, `0x85`) gehen jetzt als Prozent-Escape
-  hinaus statt durch die URL-Aufbereitung von `requests`. Dass das Board sie so
-  annimmt, ist begründet, aber nicht nachgemessen — der Not-Halt gehört als
-  Erstes ausprobiert.
+- Die Web-API ist inzwischen gegen den **Quelltext** von FluidNC geprüft
+  (v3.9.9, v4.0.4, master) statt gegen die ESP3D-Dokumentation, und die ganze
+  Kette läuft gegen den Simulator im Repo. Was fehlt, ist die echte Firmware
+  auf echter Hardware — Handshake und Rahmenformat sind Standard, aber ein
+  ESP32 unter Last ist kein Python-Server auf localhost.
+- Realtime-Bytes (`!`, `~`, `0x18`, `0x85`) gehen jetzt über den
+  WebSocket-Kanal, weil sie über HTTP ihren Zweig in der Firmware gar nicht
+  erreichen. Der Not-Halt gehört trotzdem als Erstes ausprobiert — und zwar
+  beide Wege: über den Kanal und über `/feedhold_reload`.
 - Servo-S-Werte für Pen-Up/Down sind Platzhalter, ebenso alle Werte im
   Stiftkatalog
-- PWM-Pin für den Servo in der `config.yaml` (siehe Abschnitt 5)
-- Ob FluidNC `M0` als Pause versteht (für `--layers --one-file`)
+- Servo-Pin: Der PWM-Header ist ausgeschieden (Abschnitt 5), `gpio.26` am
+  OLED-Header ist die begründete Wahl — Pinfolge, Spannung und Pegelfestigkeit
+  sind am Board zu messen
 - Der komplette Laserpfad
+
+**Seit der Nachprüfung geklärt:**
+
+- **`M0` versteht FluidNC als Pause.** `GCode.cpp` setzt
+  `ProgramFlow::Paused` und löst einen Feed Hold aus; heraus kommt man mit
+  Cycle Start — also mit demselben „Weiter" wie aus jedem anderen Halt. Damit
+  trägt `--layers --one-file` mit `M0`-Pause zum Stiftwechsel.
+- **`/sdfiles` gibt es nicht.** Die Karte liegt auf `/upload`, der Flash auf
+  `/files` (Abschnitt 6).
+- **`$HTTP/BlockDuringMotion` steht ab Werk an** und lässt `/command` während
+  jeder Fahrt mit HTTP 503 antworten.
+- **Der PWM-Header ist kein PWM-Ausgang**, sondern eine analoge 0–10-V-Vorgabe
+  für einen VFD (Abschnitt 5).
 
 **Danach zu bestimmen:**
 
@@ -580,7 +660,8 @@ dunklen Stellen bedient. Die Statistik zeigt das vor jedem Plot an.
 - Farbseparation für Fotos (CMY oder feste Stiftfarben, je Farbe eigene Dichte)
 - Flow-Field-Verfahren als fünfte Bildtechnik
 - Verlauf vergangener Plots mit Thumbnail
-- Simulator als Testgegenstelle fest im Repo statt als Wegwerf-Skript
+- Bewegung im Simulator wirklich fahren (Rampen, Segmentierung) statt die
+  Position den X/Y-Werten der abgespielten Zeilen folgen zu lassen
 
 ---
 

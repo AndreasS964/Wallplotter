@@ -6,8 +6,15 @@
 #
 # Vor dem ersten Einschalten durchgehen:
 #   1. Anker-Koordinaten aus der echten Aufhängung eintragen (siehe unten)
-#   2. Servo-PWM-Pin gegen das Board prüfen — der einzige echte Unbekannte
+#   2. Servo-Pin gegen das Board prüfen — NICHT der PWM-Header, siehe unten
 #   3. run_amps auf 1.2 lassen (17HS4412P1-3), nicht höher
+#
+# Nach dem ersten Einschalten einmalig im FluidNC-Terminal setzen:
+#   $HTTP/BlockDuringMotion=OFF
+# Ab Werk steht die Sperre an, und dann antwortet /command während jeder
+# Fahrt mit HTTP 503 — auch auf harmlose Abfragen. Der WebSocket-Kanal, über
+# den diese Software Status, G-Code und Halt schickt, ist davon zwar nicht
+# betroffen; die Sperre kostet aber jede Diagnose mit curl oder Browser.
 #
 # Prüfen lässt sich die Geometrie vorab mit:
 #   wallplotter-kinematics --width 2000 --height 2500 --overhang 150 --above 150
@@ -149,18 +156,31 @@ axes:
 # Bewusst NICHT M280 — das ist Marlin/Makelangelo-Konvention und existiert
 # in FluidNC nicht.
 #
-# PRÜFEN — der einzige geratene Pin in dieser Datei: BTTs rodent.yaml nutzt
-# einen Huanyang-VFD über RS485 und belegt gar keinen PWM-Ausgang, deshalb
-# steht dort kein GPIO für den PWM-Port. Zwei Dinge am Board gegenprüfen:
-#   a) welcher GPIO am PWM-Header hängt (Schaltplan/Silkscreen), und
-#   b) ob der Ausgang für einen MG90S taugt: das Datenblatt nennt 3-10 V für
-#      den PWM-Port, ein Servo will aber ein sauberes 5-V-Signal bei 50 Hz.
-#      Wenn das nicht passt, den Servo an einen freien GPIO hängen (Kandidaten
-#      laut rodent.yaml unbelegt: gpio.2, gpio.4, gpio.12, gpio.13, gpio.25)
-#      und die Nummer hier eintragen.
+# WICHTIG — der Servo darf NICHT an den PWM-Header des Rodent.
+#
+# Der Header heißt zwar „PWM (3-10 V)", ist aber gar kein PWM-Ausgang: Laut
+# Schaltplan (Blatt 3, „USB_485_PWM") läuft das Signal des ESP32 über ein
+# RC-Glied und einen LM358 auf `0_10V_Out`, mit 10-kOhm-Trimmpoti daneben
+# (Handbuch 3.6: „SP-PWM potentiometer"). Das ist die analoge
+# Drehzahlvorgabe für einen VFD — heraus kommt ein Gleichspannungspegel,
+# keine Impulsfolge. Ein RC-Servo braucht genau die Impulsfolge: 50 Hz,
+# 1–2 ms Pulsbreite. Am Filter bleibt davon nichts übrig.
+#
+# Der Servo gehört deshalb an einen GPIO, der roh herausgeführt ist. Am
+# leichtesten erreichbar ist der OLED-Header: Er trägt I2C, also gpio.26 und
+# gpio.27, und beide sind frei, solange kein Display steckt.
+#
+# PRÜFEN am Board, sobald es da ist — beides mit dem Messgerät, nicht raten:
+#   a) Pinfolge und Versorgungsspannung des OLED-Headers (3,3 V oder 5 V),
+#   b) ob der MG90S am 3,3-V-Pegel des ESP32 sauber schaltet. Tut er es nicht,
+#      hilft ein Pegelwandler; die Versorgung des Servos gehört ohnehin nicht
+#      an das Board (MG90S zieht blockiert ~700 mA), sondern an ein eigenes
+#      5-V-Netzteil mit gemeinsamer Masse.
+# Weitere unbelegte GPIOs laut rodent.yaml: gpio.2, gpio.4, gpio.12, gpio.13,
+# gpio.25 — ob die irgendwo herausgeführt sind, sagt erst das Board.
 pwm:
   pwm_hz: 50 # Servo-Takt
-  output_pin: gpio.25 # PRÜFEN, siehe oben
+  output_pin: gpio.26 # OLED-Header (I2C-SCL), frei ohne Display — PRÜFEN
   enable_pin: NO_PIN
   direction_pin: NO_PIN
   disable_with_s0: false

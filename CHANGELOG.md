@@ -1,5 +1,82 @@
 # Änderungen
 
+## 0.3.0 — Das Board vorbereiten, bevor es da ist
+
+Der Schwerpunkt: alles vorziehen, was sich ohne Hardware entscheiden lässt.
+Das hieß vor allem, die board-nahe Seite nicht mehr gegen die
+ESP3D-Dokumentation zu bauen, sondern gegen den Quelltext der Firmware, die
+am Ende antwortet (FluidNC v3.9.9, v4.0.4 und master — in diesen Punkten
+identisch).
+
+### Vier Annahmen, die nicht gestimmt haben
+
+Jede einzelne hätte am Tag der Inbetriebnahme gekostet, und keine hätte sich
+als Fehler *gezeigt* — sie hätten still das Falsche getan:
+
+- **`/sdfiles` gibt es in FluidNC nicht.** Der eingebaute Webserver legt die
+  SD-Karte auf `/upload` und den Flash auf `/files` — genau andersherum, als
+  die ESP3D-Doku es für die eigenständige ESP3D-Firmware beschreibt. Unser
+  Upload wäre im 404-Handler gelandet.
+- **`/command?plain=` überträgt nur `$`-Kommandos.** Der Handler ruft
+  `settings_execute_line()`, und die Funktion schneidet das erste Zeichen ab.
+  Aus `G92 X0 Y0` wurde damit die Suche nach einer Einstellung `92 X0 Y0`, aus
+  `?` die Suche nach dem leeren Namen. Kein Nullpunkt, kein Statusreport.
+- **Realtime-Bytes erreichen ihren Zweig auf diesem Weg nie.** Die Firmware
+  fängt `?`, `!`, `~`, `0x18` und `0x85` im Zeichenstrom eines Kanals ab, und
+  einen Kanal gibt es nur über WebSocket oder seriell.
+- **`/command` antwortet mit 503, solange die Maschine fährt** —
+  `$HTTP/BlockDuringMotion` steht ab Werk an.
+
+### Zwei Wege statt einem
+
+- **`wallplotter.channel`** — ein WebSocket-Kanal zum Board, ohne
+  Fremdbibliothek. Er ist im Sinne der Firmware ein *Channel* wie die serielle
+  Schnittstelle: nimmt G-Code und Realtime-Bytes an, meldet von sich aus alle
+  200 ms Status und wird von der Bewegungssperre nicht angefasst.
+- Dateien laufen weiter über HTTP. Halt, Weiter und Not-Aus haben zusätzlich
+  die firmware-eigenen Endpunkte `/feedhold_reload`, `/cyclestart_reload` und
+  `/restart_reload` als zweiten Weg — die drei Griffe müssen auch dann gehen,
+  wenn der Kanal steht.
+- Lesen von der Karte über `$SD/Show=<pfad>` statt über einen HTTP-Pfad: den
+  WebDAV-Mount `/sd` gibt es erst ab FluidNC 4, `$SD/Show` in jeder Fassung.
+
+### Simulator im Repo
+
+`wallplotter-sim` spielt das Board nach — absichtlich einschließlich seiner
+Eigenheiten, denn eine gutmütigere Gegenstelle würde genau die Fehler
+durchgehen lassen, die sie finden soll. Damit ist die Kette zum ersten Mal
+ganz durchgefahren, ohne Board an der Wand: erzeugen, hochladen, starten,
+Fortschritt sehen, halten, weiter, abbrechen, Restprogramm mit `--from-board`,
+Standorte auf die Karte und zurück.
+
+Drei Fehler sind dabei aufgefallen und behoben: Kommandoantworten und
+Statusreports liefen in denselben Puffer (eine von der Karte gelesene Datei
+bekam so einen Statusreport in die Mitte); die Statusabfrage gab den ältesten
+gepufferten Report zurück statt eines frischen, sodass der Zustand sichtbar
+hinterherhinkte; und der Dateiname im Multipart war der kurze statt des vollen
+Pfads, weshalb die Firmware ihre Größenprüfung nicht gefunden hätte.
+
+### Zwei offene Punkte geklärt
+
+- **`M0` versteht FluidNC als Pause** (`GCode.cpp`: `ProgramFlow::Paused` löst
+  einen Feed Hold aus, heraus kommt man mit Cycle Start). Damit trägt
+  `--layers --one-file` mit `M0`-Pause zum Stiftwechsel.
+- **Der PWM-Anschluss des Rodent ist kein PWM-Ausgang.** Laut Schaltplan
+  (Blatt 3) läuft das Signal über RC-Glied und LM358 auf einen analogen
+  0–10-V-Ausgang mit Trimmpoti — die Drehzahlvorgabe für einen VFD. Von einer
+  Servo-Impulsfolge bleibt dort nichts übrig. Der Servo gehört an einen roh
+  herausgeführten GPIO; die `config.yaml` nennt jetzt `gpio.26` am
+  OLED-Header, mit dem, was am Board nachzumessen ist.
+
+### Dokumentation
+
+- **[`docs/inbetriebnahme.md`](docs/inbetriebnahme.md)** — was sich vorher
+  erledigen lässt (Einkauf, Druck, Trockenlauf gegen den Simulator) und der
+  Ablauf für den Tag, an dem das Board kommt: elf Schritte, jeder mit dem
+  Kriterium, an dem man erkennt, dass er sitzt.
+- Handbuch §5 und §6 auf den nachgeprüften Stand, §10 um das Geklärte
+  bereinigt.
+
 ## 0.2.0 — Werkzeugköpfe, ehrliche Zahlen, Fortsetzen
 
 Der Schwerpunkt: Was unten an der Gondel hängt, ist keine Konstante mehr.
