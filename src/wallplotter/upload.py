@@ -241,7 +241,7 @@ class FluidNCClient:
 
         with _as_fluidnc_error(f"Kommando {command!r} fehlgeschlagen"):
             channel.send_line(command)
-            return "\n".join(channel.poll(0.3))
+            return channel.read_response(min(self.config.timeout_s, 5.0))
 
     def send_http_command(self, command: str) -> str:
         """Ein ``$``-Kommando über ``/command?plain=`` schicken.
@@ -274,10 +274,12 @@ class FluidNCClient:
     def upload(self, data: bytes | str, filename: str) -> str:
         """Datei auf die µSD-Karte des Boards laden.
 
-        Endpunkt ist ``/upload``. Das Feld im Multipart heißt wie der volle
-        Zielpfad, und daneben steht ein Parameter ``<pfad>S`` mit der
-        Bytegröße — die Firmware prüft damit vorher den freien Platz und
-        hinterher, ob alles angekommen ist.
+        Endpunkt ist ``/upload``. Der **Dateiname im Multipart** ist der volle
+        Zielpfad auf der Karte — die Firmware baut daraus direkt den Pfad —,
+        und daneben steht ein Feld ``<pfad>S`` mit der Bytegröße. Die Firmware
+        sucht dieses Feld anhand desselben Namens; steht dort nur der kurze
+        Dateiname, findet sie es nicht, nimmt Größe 0 an und prüft weder den
+        freien Platz vorher noch die Vollständigkeit hinterher.
         """
         payload = data.encode("utf-8") if isinstance(data, str) else data
         remote_dir = (
@@ -292,7 +294,7 @@ class FluidNCClient:
                 f"{self.config.base_url}{SD_PATH}",
                 params={"path": remote_dir},
                 data={f"{remote_path}S": str(len(payload))},
-                files={remote_path: (filename, payload, "text/plain")},
+                files={remote_path: (remote_path, payload, "text/plain")},
                 timeout=self.config.timeout_s,
             )
         self._text_or_raise(response, f"Upload von {filename!r} fehlgeschlagen")

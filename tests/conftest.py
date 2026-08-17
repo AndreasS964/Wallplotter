@@ -74,5 +74,8 @@ class FakeChannel:
         lines, self.lines = self.lines, []
         return lines
 
+    def read_response(self, timeout_s: float = 2.0) -> str:
+        return "\n".join(self.poll())
+
     def request_status(self, timeout_s: float = 2.0) -> str:
         return self.status_line

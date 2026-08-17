@@ -54,6 +54,9 @@ class FakeCard:
         answer, self._answer = self._answer, []
         return answer
 
+    def read_response(self, timeout_s=2.0):
+        return "\n".join(self.poll())
+
 
 def make_location(name="Keller", **kwargs) -> Location:
     return Location(

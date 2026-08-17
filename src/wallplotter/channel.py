@@ -77,6 +77,16 @@ class ChannelError(RuntimeError):
     """Der Kanal zum Board ließ sich nicht aufbauen oder brach ab."""
 
 
+_CONTROL_PREFIXES = ("currentID:", "CURRENT_ID:", "activeID:", "ACTIVE_ID:", "PING:")
+"""Verwaltungszeilen der WebUI, die die Firmware beim Verbinden und beim
+Ping schickt. Sie sehen aus wie Ausgabe, sind aber keine — ungefiltert
+stünden sie irgendwann mitten in einer von der Karte gelesenen Datei."""
+
+
+def _is_control_message(line: str) -> bool:
+    return line.startswith(_CONTROL_PREFIXES)
+
+
 def _host_and_port(host: str, default_port: int = 80) -> tuple[str, int]:
     """``fluidnc.local``, ``192.168.1.42:8080`` oder ``http://…`` zerlegen."""
     text = host if "//" in host else f"//{host}"
@@ -292,8 +302,45 @@ class BoardChannel:
                 return None
             self._drain_socket(remaining)
 
+    def read_response(self, timeout_s: float = 2.0) -> str:
+        """Die Antwort auf **eine** gesendete Zeile einsammeln.
+
+        Die Firmware quittiert jede Zeile eines Kanals mit ``ok`` oder
+        ``error:<n>`` — das ist die Grenze der Antwort. Alles davor gehört
+        dazu, Statusreports nicht: Die laufen alle 200 Millisekunden
+        unaufgefordert durch und würden sich sonst mitten in eine von der
+        Karte gelesene Datei mischen.
+
+        Bleibt die Quittung aus, wird nach ``timeout_s`` zurückgegeben, was da
+        ist — ein Kommando ohne Antwort ist kein Grund, den Aufrufer hängen zu
+        lassen.
+        """
+        deadline = time.monotonic() + timeout_s
+        collected: list[str] = []
+        while True:
+            for line in self._take_lines():
+                if line.startswith("<") and line.endswith(">"):
+                    continue
+                if line == "ok":
+                    return "\n".join(collected)
+                collected.append(line)
+                if line.startswith("error:"):
+                    return "\n".join(collected)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return "\n".join(collected)
+            self._drain_socket(remaining)
+
     def request_status(self, timeout_s: float = 2.0) -> str:
-        """``?`` schicken und den Statusreport ``<…>`` zurückgeben."""
+        """``?`` schicken und den Statusreport ``<…>`` zurückgeben.
+
+        Erst wird weggeworfen, was schon im Puffer liegt. Der Kanal meldet
+        ohnehin alle 200 ms von selbst, und ohne dieses Aufräumen bekäme man
+        den ältesten dieser Reports statt des frischen — der Zustand hinkte
+        dann sichtbar hinterher: Nach dem Weiter stünde noch „Hold".
+        """
+        self._drain_socket(0.0)
+        self._lines.clear()
         self.send_realtime(STATUS_REPORT)
         line = self.read_matching("<", timeout_s)
         if line is None:
@@ -315,6 +362,10 @@ class BoardChannel:
         try:
             chunk = sock.recv(4096)
         except TimeoutError:
+            return
+        except BlockingIOError:
+            # settimeout(0) heißt nicht blockieren, und dann meldet der Socket
+            # „gerade nichts da" als Ausnahme statt als Zeitüberschreitung.
             return
         except OSError as exc:
             self.close()
@@ -391,7 +442,7 @@ class BoardChannel:
                 break
             line, self._pending = self._pending[:index], self._pending[index + 1 :]
             text = line.decode("utf-8", "replace").strip("\r")
-            if text:
+            if text and not _is_control_message(text):
                 self._lines.append(text)
         # Ein Statusreport steht auch ohne Zeilenende für sich: Er endet mit
         # '>', und das Board hängt nicht immer ein '\n' an.

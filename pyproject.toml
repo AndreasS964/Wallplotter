@@ -38,6 +38,7 @@ wallplotter-doctor = "wallplotter.doctor:main"
 wallplotter-kinematics = "wallplotter.kinematics:main"
 wallplotter-location = "wallplotter.location_cli:main"
 wallplotter-resume = "wallplotter.resume_cli:main"
+wallplotter-sim = "wallplotter.simulator:main"
 
 [project.urls]
 Repository = "https://github.com/AndreasS964/Wallplotter"
