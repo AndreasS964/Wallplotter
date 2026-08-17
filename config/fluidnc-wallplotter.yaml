@@ -276,3 +276,51 @@ status_outputs:
 #   $Sta/Password=...
 #   $WiFi/Mode=STA
 #   $Hostname=wandplotter
+
+# ---------------------------------------------------------------------------
+# Ohne Rechner plotten — Knöpfe an der Wand
+# ---------------------------------------------------------------------------
+#
+# Der Plot selbst läuft ohnehin autark: `$SD/Run` startet ihn von der Karte,
+# danach liest das Board die Datei selbst, und Rechner wie WLAN können weg.
+# Was ohne Rechner NICHT geht, ist das Starten — dafür sind Makros da.
+#
+# FluidNC kennt vier Makros und dazu Eingänge, die sie auslösen. Ein Makro ist
+# eine Zeichenkette mit `&` als Zeilentrenner (ein echtes Zeilenende lässt
+# sich in YAML-Werten nicht eintragen).
+#
+# Die fünf Endstop-Eingänge des Rodent sind hier frei — wir referenzieren über
+# StallGuard oder den Anschlag, nicht über Schalter. Sie sind optokoppler-
+# isoliert und haben eine wählbare Spannung, also genau das Richtige für
+# Taster, die drei Meter neben dem Board an der Wand hängen.
+#
+# PRÜFEN am Board, bevor das scharf geschaltet wird:
+#   a) welcher Eingang welchem GPIO entspricht (laut BTTs rodent.yaml sind es
+#      gpio.32, gpio.33, gpio.34 und gpio.35),
+#   b) ob der Taster im Ruhezustand `low` oder `high` liefert — das hängt an
+#      der Optokoppler-Beschaltung und ist mit dem Messgerät schneller
+#      geklärt als durch Nachdenken,
+#   c) gpio.34 und gpio.35 sind am ESP32 **nur Eingang und ohne internen
+#      Pull-up**. BTT setzt `:pu` deshalb auch nur an gpio.32 und gpio.33.
+#      Wer 34/35 benutzt, braucht einen Widerstand von außen.
+#
+# WICHTIG: Ein Startknopf ist erst dann sinnvoll, wenn der Nullpunkt
+# reproduzierbar ist (Abschnitt 5 im Handbuch, StallGuard). Sonst beginnt der
+# Plot dort, wo die Gondel gerade zufällig hängt — und malt quer über die Wand.
+#
+# Und bewusst NICHT: `startup_line0` mit einem `$SD/Run` belegen. Das startet
+# den Plot bei jedem Einschalten neu, also auch nach einem Spannungsflackern
+# um drei Uhr nachts — über das fertige Bild.
+#
+# control:
+#   macro0_pin: gpio.32:low:pu      # Taster „Plot starten"
+#   feed_hold_pin: gpio.33:low:pu   # Taster „Pause"
+#   cycle_start_pin: gpio.34:low    # Taster „Weiter" (externer Pull-up nötig)
+#
+# macros:
+#   # Referenzieren, dann die Datei abspielen. Ohne das `$H` beginnt der Plot
+#   # an der aktuellen Position — siehe oben.
+#   macro0: $H&$SD/Run=/wand.gcode
+#
+# Zum Ausprobieren ohne Taster geht dasselbe über den Kanal:
+#   $Macros/Run=0

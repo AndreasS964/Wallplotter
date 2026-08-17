@@ -70,6 +70,24 @@ Pfads, weshalb die Firmware ihre Größenprüfung nicht gefunden hätte.
   herausgeführten GPIO; die `config.yaml` nennt jetzt `gpio.26` am
   OLED-Header, mit dem, was am Board nachzumessen ist.
 
+### Ohne Rechner starten — vorbereitet
+
+Der Plot lief immer schon autark von der Karte; was ohne Rechner fehlte, war
+das Starten. FluidNC kennt dafür vier Makros und Eingänge, die sie auslösen
+(`control: macro0_pin`, `macros: macro0`, nachgelesen in `Control.cpp` und
+`Machine/Macros.cpp`). Der fertige Block steht auskommentiert in der
+`config.yaml`, samt dem, was am Board zu messen ist — die Endstop-Eingänge
+sind frei, weil wir nicht über Schalter referenzieren.
+
+Zwei Dinge stehen als Warnung dabei, weil sie teuer wären: Ein Startknopf
+ohne reproduzierbaren Nullpunkt beginnt den Plot dort, wo die Gondel gerade
+hängt. Und `startup_line0` mit einem `$SD/Run` startet nach jedem
+Spannungsflackern neu — über das fertige Bild.
+
+Der Simulator kennt `$Macros/Run=<n>` jetzt auch, mit `&` als Zeilentrenner
+und Abbruch am ersten Fehler wie in der Firmware. Damit lässt sich der
+Tastendruck proben, bevor es einen Taster gibt.
+
 ### Der Laserpfad wird jetzt abgespielt, nicht nur gelesen
 
 Der Simulator schreibt den Spindelzustand modal mit und hält fest, wo ein
@@ -126,7 +144,7 @@ den Bildern.
 
 - **[`docs/inbetriebnahme.md`](docs/inbetriebnahme.md)** — was sich vorher
   erledigen lässt (Einkauf, Druck, Trockenlauf gegen den Simulator) und der
-  Ablauf für den Tag, an dem das Board kommt: elf Schritte, jeder mit dem
+  Ablauf für den Tag, an dem das Board kommt: zwölf Schritte, jeder mit dem
   Kriterium, an dem man erkennt, dass er sitzt.
 - Handbuch §5 und §6 auf den nachgeprüften Stand, §10 um das Geklärte
   bereinigt.

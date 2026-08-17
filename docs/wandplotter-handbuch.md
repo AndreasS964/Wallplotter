@@ -3,7 +3,7 @@
 Alles zum Projekt an einer Stelle: was gebaut wird, warum es so gebaut wird,
 was gemessen und gerechnet wurde, und wie man es bedient.
 
-*Stand: August 2026 · Version 0.3.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 475 Tests, CI grün*
+*Stand: August 2026 · Version 0.3.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 478 Tests, CI grün*
 
 ---
 
@@ -417,7 +417,7 @@ wichtiger als eine Versionsnummer:
 
 | | Zustand |
 | --- | --- |
-| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 475 Tests |
+| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 478 Tests |
 | Laufzeitschätzung, Fortsetzen, Vorverzerrung, Kalibrierlogik | **läuft**, gegen erzeugte Programme geprüft |
 | Web-UI, alle sieben CLIs | **läuft**, ohne Board bedienbar |
 | Upload, Jog, Status, Halt, `$SD/Run` | gegen den Firmware-**Quelltext** gebaut und gegen den mitgelieferten Simulator gefahren, **nie an einem Board** |
@@ -495,6 +495,49 @@ wallplotter-calibrate goto bottom-left
 wallplotter-calibrate zero --corner bottom-left     # sofort, flüchtig
 wallplotter-calibrate zero --persistent             # dauerhaft als G54
 ```
+
+### Ohne Rechner plotten
+
+Der Plot läuft ohnehin autark: `$SD/Run` startet ihn von der Karte, danach
+liest das Board die Datei selbst. Rechner zuklappen, WLAN abschalten — das
+Bild wird trotzdem fertig. Genau darauf beruht auch `--from-board`: Nach einem
+Abbruch weiß das Board, wie weit es kam, nicht der Rechner.
+
+Was ohne Rechner **nicht** geht, ist das Starten. Dafür kennt FluidNC vier
+Makros und Eingänge, die sie auslösen:
+
+```yaml
+control:
+  macro0_pin: gpio.32:low:pu      # Taster „Plot starten"
+  feed_hold_pin: gpio.33:low:pu   # Taster „Pause"
+  cycle_start_pin: gpio.34:low    # Taster „Weiter"
+
+macros:
+  macro0: $H&$SD/Run=/wand.gcode
+```
+
+`&` trennt die Zeilen eines Makros — ein echtes Zeilenende lässt sich in
+einem YAML-Wert nicht eintragen. Ohne Taster geht dasselbe über den Kanal:
+`$Macros/Run=0`.
+
+Die fünf Endstop-Eingänge des Rodent sind dafür frei, weil wir nicht über
+Schalter referenzieren. Sie sind optokoppler-isoliert und haben eine wählbare
+Spannung — genau das Richtige für Taster, die drei Meter neben dem Board an
+der Wand hängen. Zu beachten: `gpio.34` und `gpio.35` sind am ESP32 nur
+Eingang und **ohne internen Pull-up**; BTT setzt `:pu` deshalb auch nur an
+`gpio.32` und `gpio.33`.
+
+**Das `$H` im Makro ist kein Beiwerk.** Ein Startknopf ist erst dann sinnvoll,
+wenn der Nullpunkt reproduzierbar ist (Abschnitt 5, StallGuard) — sonst
+beginnt der Plot dort, wo die Gondel gerade zufällig hängt, und malt quer über
+die Wand.
+
+**Und bewusst nicht:** `startup_line0` mit einem `$SD/Run` belegen. Das
+startet den Plot bei jedem Einschalten neu, also auch nach einem
+Spannungsflackern um drei Uhr nachts — über das fertige Bild.
+
+Proben lässt sich der ganze Ablauf vorher gegen den Simulator, Makro
+eingetragen und `$Macros/Run=0` geschickt.
 
 ### Daten mitnehmen
 

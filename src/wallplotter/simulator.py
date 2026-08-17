@@ -143,6 +143,14 @@ class BoardSimulator:
     laser_violations: list[str] = field(default_factory=list)
     """Was beim Abspielen aufgefallen ist — Strahl an, wo er aus sein müsste."""
 
+    macros: dict[int, str] = field(default_factory=dict)
+    """Die vier Makros aus dem ``macros:``-Block der ``config.yaml``.
+
+    Damit lässt sich der Ablauf ohne Rechner proben: Ein Makro ist genau das,
+    was ein Taster an der Wand auslöst. ``&`` trennt die Zeilen — ein echtes
+    Zeilenende lässt sich in einem YAML-Wert nicht eintragen.
+    """
+
     # -- Auskunft ---------------------------------------------------------
 
     @property
@@ -223,6 +231,8 @@ class BoardSimulator:
             return "[MSG:Caution: Unlocked]"
         if name == "T" or name == "STATE":
             return f"State ({self.state})"
+        if name in {"RM", "MACROS/RUN"}:
+            return self.run_macro(value)
         if name == "#" or name == "GCODE/OFFSETS":
             return f"[G54:{self.work_offset[0]:.3f},{self.work_offset[1]:.3f},0.000]"
         if name in {"J", "JOG"}:
@@ -338,6 +348,27 @@ class BoardSimulator:
         if content is None:
             return "error:60 (Bad file)"
         return content
+
+    def run_macro(self, number: str) -> str:
+        """``$Macros/Run=<n>`` — das, was ein Taster an der Wand auslöst.
+
+        Die Firmware nimmt die erste Ziffer des Arguments und führt die Zeilen
+        des Makros nacheinander aus, getrennt an ``&``.
+        """
+        text = number.strip()
+        if not text or not text[0].isdigit():
+            return "error:2 ($Macros/Run requires a macro number argument)"
+        index = int(text[0])
+        macro = self.macros.get(index)
+        if macro is None:
+            return f"error:3 (Macro {index} ist leer)"
+        for line in macro.split("&"):
+            answer = self.execute_line(line)
+            if answer.startswith("error:"):
+                # Die Firmware bricht ein Makro beim ersten Fehler ab — sonst
+                # liefe nach einem gescheiterten $H fröhlich der Plot los.
+                return answer
+        return ""
 
     def start_job(self, path: str) -> str:
         if self.state.startswith("Alarm"):

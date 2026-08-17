@@ -482,3 +482,40 @@ def test_the_same_lines_are_harmless_with_a_pen():
     sim.start_job("/stift.gcode")
     sim.tick(1000.0)
     assert sim.laser_violations == []
+
+
+# -- Ohne Rechner starten ---------------------------------------------------
+
+
+def test_a_macro_homes_and_starts_the_plot():
+    """Was ein Taster an der Wand auslöst — ohne Rechner, ohne Handy.
+
+    Der Plot läuft ohnehin autark von der Karte; was ohne Rechner fehlt, ist
+    das Starten. Ein Makro ist genau das: ``$H`` referenzieren, dann die Datei
+    abspielen. Das ``$H`` ist dabei kein Beiwerk — ohne reproduzierbaren
+    Nullpunkt begänne der Plot dort, wo die Gondel gerade zufällig hängt.
+    """
+    sim = BoardSimulator(macros={0: "$H&$SD/Run=/wand.gcode"})
+    sim.store("/wand.gcode", "G21\n" + "\n".join(f"G1 X{i} Y{i} F1000" for i in range(20)))
+    sim.x, sim.y = 543.0, 21.0
+
+    assert sim.execute_line("$Macros/Run=0") == ""
+    assert sim.state == "Run"
+    assert sim.job is not None and sim.job.path == "/wand.gcode"
+
+    sim.tick(1000.0)
+    assert sim.state == "Idle"
+
+
+def test_a_macro_stops_at_the_first_error():
+    """Sonst liefe nach einem gescheiterten ``$H`` fröhlich der Plot los."""
+    sim = BoardSimulator(macros={0: "$SD/Run=/gibtsnicht.gcode&G1 X10 Y10 F100"})
+    answer = sim.execute_line("$Macros/Run=0")
+    assert answer.startswith("error:")
+    assert "G1 X10 Y10 F100" not in sim.log
+
+
+def test_an_empty_macro_says_so():
+    sim = BoardSimulator()
+    assert sim.execute_line("$Macros/Run=2").startswith("error:")
+    assert sim.execute_line("$Macros/Run=").startswith("error:")

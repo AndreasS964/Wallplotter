@@ -208,7 +208,21 @@ wallplotter-correct anpassen              # → korrektur.json
       passt nicht — dann ist die Mechanik die richtige Antwort, nicht die
       Software.
 
-### 11. Erst danach: der Laser
+### 11. Optional: Taster an die Wand
+
+Erst sinnvoll, wenn Schritt 8 sitzt — ein Startknopf ohne reproduzierbaren
+Nullpunkt startet den Plot dort, wo die Gondel gerade hängt.
+
+- [ ] Taster an zwei der freien Endstop-Eingänge (optokoppler-isoliert,
+      Spannung wählbar), Ruhepegel mit dem Messgerät klären
+- [ ] `control:`- und `macros:`-Block in der `config.yaml` scharf schalten
+      (steht dort auskommentiert bereit)
+- [ ] Ohne Taster gegenprüfen: `$Macros/Run=0` über den Kanal
+
+**Kriterium:** Ein Druck referenziert und startet, ein zweiter Taster hält an,
+ein dritter macht weiter — ohne dass ein Rechner im Netz ist.
+
+### 12. Erst danach: der Laser
 
 Nicht am selben Tag. Der Laserpfad ist gegen die Dokumentation und den
 Quelltext gebaut und läuft durch den Simulator, ohne dass der Strahl je auf
