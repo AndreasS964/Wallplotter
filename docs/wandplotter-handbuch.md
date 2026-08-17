@@ -3,7 +3,7 @@
 Alles zum Projekt an einer Stelle: was gebaut wird, warum es so gebaut wird,
 was gemessen und gerechnet wurde, und wie man es bedient.
 
-*Stand: August 2026 · Version 0.3.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 458 Tests, CI grün*
+*Stand: August 2026 · Version 0.3.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 464 Tests, CI grün*
 
 ---
 
@@ -375,7 +375,12 @@ in diesen Punkten identisch:
   fängt `?`, `!`, `~`, `0x18` und `0x85` im Zeichenstrom eines *Kanals* ab
   (`Channel::push()`), und einen Kanal gibt es nur über WebSocket oder
   seriell. Für Halt, Weiter und Not-Aus bringt FluidNC deshalb eigene
-  HTTP-Endpunkte mit, die dasselbe Firmware-Ereignis auslösen.
+  HTTP-Endpunkte mit, die dasselbe Firmware-Ereignis auslösen. Diese drei
+  Griffe gehen bei uns über **beide** Wege gleichzeitig: Der Kanal ist
+  schneller, quittiert aber nichts — ist die Gegenstelle weggebrochen, ohne
+  dass es schon aufgefallen wäre, gelingt das erste `send` trotzdem, weil die
+  Bytes im Puffer des Betriebssystems landen. Ein Not-Halt wäre damit still
+  verschluckt. Der HTTP-Endpunkt antwortet dagegen mit einem Statuscode.
 * **`/command` antwortet mit HTTP 503, solange die Maschine fährt** — sofern
   `$HTTP/BlockDuringMotion` steht, und das ist die Voreinstellung
   (`DEFAULT_HTTP_BLOCKED_DURING_MOTION = 1`). Der WebSocket-Kanal ist davon
@@ -404,7 +409,7 @@ wichtiger als eine Versionsnummer:
 
 | | Zustand |
 | --- | --- |
-| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 458 Tests |
+| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 464 Tests |
 | Laufzeitschätzung, Fortsetzen, Vorverzerrung, Kalibrierlogik | **läuft**, gegen erzeugte Programme geprüft |
 | Web-UI, alle sieben CLIs | **läuft**, ohne Board bedienbar |
 | Upload, Jog, Status, Halt, `$SD/Run` | gegen den Firmware-**Quelltext** gebaut und gegen den mitgelieferten Simulator gefahren, **nie an einem Board** |

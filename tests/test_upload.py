@@ -175,22 +175,43 @@ def test_jog_without_feed_is_rejected():
         api.jog(dx=10, feed=0)
 
 
-@pytest.mark.parametrize(
-    ("action", "byte"),
-    [("pause", 0x21), ("resume", 0x7E), ("stop", 0x18), ("jog_cancel", 0x85)],
-)
-def test_realtime_bytes_go_through_the_channel(action, byte):
+def test_jog_cancel_goes_through_the_channel():
     """Über HTTP gibt es keinen Weg zum Realtime-Zweig der Firmware.
 
-    ``/command?plain=%21`` landet in der Kommandotabelle, nicht bei
+    ``/command?plain=%85`` landet in der Kommandotabelle, nicht bei
     ``execute_realtime_command`` — die Realtime-Zeichen fängt die Firmware im
     Zeichenstrom eines Kanals ab, und den gibt es nur über WebSocket oder
-    seriell.
+    seriell. Für den Jog-Abbruch gibt es auch keinen eigenen Endpunkt.
+    """
+    api, session, board = client()
+    api.jog_cancel()
+    assert board.realtime == [0x85]
+    assert session.calls == []
+
+
+@pytest.mark.parametrize(
+    ("action", "byte", "path"),
+    [
+        ("pause", 0x21, "/feedhold_reload"),
+        ("resume", 0x7E, "/cyclestart_reload"),
+        ("stop", 0x18, "/restart_reload"),
+    ],
+)
+def test_halt_and_resume_take_both_ways_at_once(action, byte, path):
+    """Halt, Weiter und Stopp gehen über beide Wege — einer reicht nicht.
+
+    Der Kanal ist schneller, quittiert aber nichts: Ist die Gegenstelle weg,
+    ohne dass es hier schon aufgefallen wäre, gelingt das erste ``send``
+    trotzdem, weil die Bytes im Puffer des Betriebssystems landen. Ein
+    Not-Halt wäre damit still verschluckt. Der HTTP-Endpunkt antwortet dagegen
+    mit einem Statuscode — und die Bewegungssperre fasst ihn nicht an.
     """
     api, session, board = client()
     getattr(api, action)()
     assert board.realtime == [byte]
-    assert session.calls == []
+    method, url, _ = session.calls[0]
+    assert method == "get"
+    assert url == f"http://wandplotter.local{path}"
 
 
 @pytest.mark.parametrize(
@@ -201,17 +222,23 @@ def test_realtime_bytes_go_through_the_channel(action, byte):
         ("stop", "/restart_reload"),
     ],
 )
-def test_halt_and_resume_have_a_second_way_without_the_channel(action, path):
-    """Halt, Weiter und Stopp müssen auch dann gehen, wenn sonst nichts geht.
-
-    Die Firmware bringt dafür eigene Endpunkte mit, die dasselbe Ereignis
-    auslösen und von der Bewegungssperre nicht angefasst werden.
-    """
+def test_halt_and_resume_still_work_without_the_channel(action, path):
     api, session, _ = client(channel=FakeChannel(dead=True))
     getattr(api, action)()
     method, url, _ = session.calls[0]
     assert method == "get"
     assert url == f"http://wandplotter.local{path}"
+
+
+@pytest.mark.parametrize("action", ["pause", "resume", "stop"])
+def test_halt_fails_only_when_neither_way_gets_through(action):
+    class Dead:
+        def get(self, *a, **k):
+            raise OSError("Netzwerk weg")
+
+    api = FluidNCClient(FluidNCConfig(host="x"), Dead(), FakeChannel(dead=True))
+    with pytest.raises(FluidNCError, match="Kanal.*HTTP|HTTP.*Kanal"):
+        getattr(api, action)()
 
 
 def test_the_second_way_does_not_wait_as_long_as_an_upload():

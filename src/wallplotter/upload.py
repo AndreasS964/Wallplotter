@@ -368,30 +368,49 @@ class FluidNCClient:
         return self._hold_command(SOFT_RESET, RESET_PATH, "Stopp")
 
     def _hold_command(self, byte: int, path: str, label: str) -> str:
-        """Erst über den Kanal, sonst über den eigenen HTTP-Endpunkt.
+        """Halt, Weiter und Stopp — über **beide** Wege, nicht über einen.
 
-        Halt, Weiter und Stopp sind die drei Griffe, die auch dann noch
-        funktionieren müssen, wenn sonst nichts mehr geht — deshalb zwei Wege.
-        Die ``…_reload``-Endpunkte lösen dasselbe Firmware-Ereignis aus und
-        werden von der Bewegungssperre nicht angefasst.
+        Das sind die drei Griffe, die auch dann noch funktionieren müssen,
+        wenn sonst nichts mehr geht, und ein Weg allein reicht dafür nicht:
+
+        * Der Kanal ist der schnellere — der Socket steht schon —, aber er
+          quittiert nichts. Ist die Gegenstelle weggebrochen, ohne dass es
+          hier schon aufgefallen wäre, gelingt das erste ``send`` trotzdem:
+          Die Bytes landen im Puffer des Betriebssystems, das ``RST`` kommt
+          später. Ein Not-Halt wäre damit still verschluckt.
+        * Der HTTP-Endpunkt antwortet mit einem Statuscode, ist also
+          nachprüfbar, und die Bewegungssperre fasst ihn nicht an — er ist
+          keine Kommandozeile, sondern löst direkt das Firmware-Ereignis aus.
+
+        Beide Wege lösen dasselbe aus, und ein zweites Mal Halt oder Weiter
+        schadet nicht. Ein Fehler wird daraus erst, wenn **keiner** ankommt.
         """
+        reasons: list[str] = []
         try:
             self.channel.send_realtime(byte)
-            return label
-        except (FluidNCError, ChannelError):
-            pass
+            delivered = True
+        except (FluidNCError, ChannelError) as exc:
+            delivered = False
+            reasons.append(f"Kanal: {exc}")
+
         timeout = min(self.config.timeout_s, REALTIME_TIMEOUT_S)
-        with _as_fluidnc_error(f"{label} fehlgeschlagen"):
+        try:
             response = self.session.get(
                 f"{self.config.base_url}{path}",
                 timeout=timeout,
                 allow_redirects=False,
             )
-        # Die Endpunkte antworten mit einer Umleitung auf die WebUI-Startseite;
-        # dass sie überhaupt antworten, ist die Quittung.
-        status_code = getattr(response, "status_code", 200)
-        if status_code >= 400:
-            raise FluidNCError(f"{label} fehlgeschlagen (HTTP {status_code})")
+            # Die Endpunkte antworten mit einer Umleitung auf die
+            # WebUI-Startseite; dass sie überhaupt antworten, ist die Quittung.
+            status_code = getattr(response, "status_code", 200)
+            if status_code >= 400:
+                raise FluidNCError(f"HTTP {status_code}")
+            delivered = True
+        except Exception as exc:  # noqa: BLE001 - der Kanal kann es noch richten
+            reasons.append(f"HTTP: {exc}")
+
+        if not delivered:
+            raise FluidNCError(f"{label} fehlgeschlagen — {'; '.join(reasons)}")
         return label
 
     # -- Jog & Kalibrierung -----------------------------------------------

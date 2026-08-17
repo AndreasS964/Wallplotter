@@ -33,6 +33,7 @@ import base64
 import hashlib
 import json
 import re
+import socket
 import struct
 import threading
 import time
@@ -332,8 +333,13 @@ class BoardSimulator:
         if byte == 0x18:  # Ctrl-X Soft Reset
             # Mitten in der Fahrt kostet ein Reset die Maschinenposition —
             # GRBL geht dafür in Alarm, und das ist keine Kleinigkeit: Der
-            # Nullpunkt ist danach weg.
-            self.state = "Alarm:2" if self.in_motion else "Idle"
+            # Nullpunkt ist danach weg. Ein Reset im Alarm *löst* ihn nicht:
+            # Dazu ist `$X` da. Sonst räumte ein zweiter Not-Halt genau die
+            # Warnung weg, die der erste aufgestellt hat.
+            if self.in_motion:
+                self.state = "Alarm:2"
+            elif not self.state.startswith("Alarm"):
+                self.state = "Idle"
             self.job = None
             return "[MSG:Reset]"
         if byte == 0x85:  # Jog Cancel
@@ -482,7 +488,13 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
         except OSError:
             return
-        _WebSocketChannel(self.connection, self.board).run()
+        channel = _WebSocketChannel(self.connection, self.board)
+        server = self.server
+        server.channels.add(channel)
+        try:
+            channel.run()
+        finally:
+            server.channels.discard(channel)
 
 
 class _WebSocketChannel:
@@ -498,6 +510,25 @@ class _WebSocketChannel:
         self._buffer = b""
         self._pending = b""
         self._alive = True
+
+    def stop(self) -> None:
+        """Den Kanal abwürgen — das, was ein Board-Neustart mit ihm macht.
+
+        Ohne das überlebt eine offene Verbindung das Abschalten des Servers:
+        ``shutdown()`` beendet nur die Annahme neuer Anfragen, und der Faden
+        eines bestehenden Kanals redet munter weiter. Ein Test könnte dann
+        nicht prüfen, ob die Gegenseite einen Verbindungsabriss übersteht —
+        es gäbe keinen.
+        """
+        self._alive = False
+        try:
+            self._connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            self._connection.close()
+        except OSError:
+            pass
 
     def run(self) -> None:
         connection = self._connection
@@ -668,6 +699,7 @@ class SimulatorServer(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", port), handler)
         self.board = board
         self.verbose = verbose
+        self.channels: set[_WebSocketChannel] = set()
         self._running = True
         # Ein laufender Job hängt nicht daran, dass jemand zusieht: Auf dem
         # Board läuft er weiter, wenn die Oberfläche zugeklappt wird, und hier
@@ -685,6 +717,8 @@ class SimulatorServer(ThreadingHTTPServer):
 
     def server_close(self) -> None:
         self._running = False
+        for channel in list(self.channels):
+            channel.stop()
         super().server_close()
 
     @property

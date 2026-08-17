@@ -33,10 +33,12 @@ als Fehler *gezeigt* — sie hätten still das Falsche getan:
   Fremdbibliothek. Er ist im Sinne der Firmware ein *Channel* wie die serielle
   Schnittstelle: nimmt G-Code und Realtime-Bytes an, meldet von sich aus alle
   200 ms Status und wird von der Bewegungssperre nicht angefasst.
-- Dateien laufen weiter über HTTP. Halt, Weiter und Not-Aus haben zusätzlich
-  die firmware-eigenen Endpunkte `/feedhold_reload`, `/cyclestart_reload` und
-  `/restart_reload` als zweiten Weg — die drei Griffe müssen auch dann gehen,
-  wenn der Kanal steht.
+- Dateien laufen weiter über HTTP. Halt, Weiter und Not-Aus gehen über
+  **beide** Wege gleichzeitig: über den Kanal (schnell, aber ohne Quittung)
+  und über die firmware-eigenen Endpunkte `/feedhold_reload`,
+  `/cyclestart_reload` und `/restart_reload` (nachprüfbar, und von der
+  Bewegungssperre nicht betroffen). Ein Fehler wird daraus erst, wenn keiner
+  ankommt.
 - Lesen von der Karte über `$SD/Show=<pfad>` statt über einen HTTP-Pfad: den
   WebDAV-Mount `/sd` gibt es erst ab FluidNC 4, `$SD/Show` in jeder Fassung.
 

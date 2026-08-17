@@ -324,3 +324,83 @@ def test_doctor_warns_about_the_motion_block(board):
     api.send_command("$HTTP/BlockDuringMotion=OFF")
     assert check_motion_block(api).status == OK
     api.close()
+
+
+# -- Über Stunden ------------------------------------------------------------
+
+
+def _free_port() -> int:
+    import socket as socket_module
+
+    probe = socket_module.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    return port
+
+
+def _serve_on(port: int):
+    import threading
+
+    from wallplotter.simulator import SimulatorServer
+
+    server = SimulatorServer(BoardSimulator(), port)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def test_the_channel_comes_back_after_the_board_was_away():
+    """Ein Wandbild läuft Stunden — das WLAN nicht unbedingt.
+
+    Der Plot selbst überlebt einen Aussetzer, weil er von der Karte läuft. Die
+    Oberfläche muss ihn danach wiederfinden, ohne dass jemand sie neu startet.
+    """
+    port = _free_port()
+    server = _serve_on(port)
+    api = FluidNCClient(FluidNCConfig(host=f"127.0.0.1:{port}", timeout_s=2.0))
+    try:
+        assert api.status().state == "Idle"
+
+        server.shutdown()
+        server.server_close()
+        with pytest.raises(FluidNCError):
+            wait_until(lambda: api.status(), timeout_s=1.0)
+
+        server = _serve_on(port)
+        assert wait_until(lambda: api.status().state == "Idle", timeout_s=5.0)
+    finally:
+        api.close()
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_dead_board_says_so_instead_of_reporting_a_stale_state(board):
+    """Der gefährlichste Fehler wäre ein Status, der einfach stehen bleibt.
+
+    Wer vor der Wand steht und „Run" liest, während in Wahrheit nichts mehr
+    antwortet, wartet auf ein Bild, das nie fertig wird.
+    """
+    api = FluidNCClient(FluidNCConfig(host=board.host, timeout_s=2.0))
+    assert api.status().state == "Idle"
+    board.shutdown()
+    board.server_close()
+    with pytest.raises(FluidNCError):
+        wait_until(lambda: api.status(), timeout_s=1.0)
+    api.close()
+
+
+def test_halt_still_works_when_only_http_is_left(board):
+    """Der Not-Halt hängt nicht am Kanal — das ist der Sinn des zweiten Wegs."""
+    api = FluidNCClient(FluidNCConfig(host=board.host, timeout_s=2.0))
+    board.board.bytes_per_s = 300
+    api.upload(PROGRAM, "wand.gcode")
+    api.run_file("/wand.gcode")
+    assert wait_until(lambda: api.status().state == "Run")
+
+    # Kanal abwürgen, HTTP bleibt: genau die Lage, in der man den Halt braucht
+    for channel in list(board.channels):
+        channel.stop()
+
+    api.pause()
+    assert wait_until(lambda: board.board.state == "Hold", timeout_s=3.0)
+    api.close()
