@@ -361,7 +361,16 @@ class FluidNCClient:
             return
         if not machine.is_running:
             return
-        running = f" ({machine.sd_file}, {machine.sd_percent:.0f} %)" if machine.sd_file else ""
+        # Dateiname und Prozentwert stehen im selben Statusfeld, kommen aber
+        # getrennt an: Ein unlesbarer Prozentwert lässt `sd_percent` auf None
+        # stehen, während der Name steht. Die Ablehnung darf daran nicht
+        # zerbrechen — sie ist die Meldung, die einen Plot rettet.
+        if machine.sd_file and machine.sd_percent is not None:
+            running = f" ({machine.sd_file}, {machine.sd_percent:.0f} %)"
+        elif machine.sd_file:
+            running = f" ({machine.sd_file})"
+        else:
+            running = ""
         raise FluidNCError(
             f"Die Maschine ist beschäftigt: {machine.state}{running}. "
             f"{remote_path} wurde nicht gestartet — FluidNC würde das neue "

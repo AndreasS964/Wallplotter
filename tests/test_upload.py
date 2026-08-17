@@ -384,3 +384,16 @@ def test_uploading_during_a_plot_is_still_allowed():
     api, session, _ = client(channel=board)
     upload_and_run("G21\n", "neu.gcode", client=api, run=False)
     assert session.calls[0][0] == "post"
+
+
+def test_the_refusal_survives_a_status_without_a_percentage():
+    """Dateiname und Prozentwert stehen im selben Feld, kommen aber getrennt an.
+
+    Ein unlesbarer Prozentwert lässt `sd_percent` auf None stehen, während der
+    Name steht. Die Ablehnung darf daran nicht zerbrechen — sie ist die
+    Meldung, die einen laufenden Plot rettet.
+    """
+    board = FakeChannel(status="<Run|MPos:0.000,0.000,0.000|SD:kaputt,/wand.gcode>")
+    api, _, _ = client(channel=board)
+    with pytest.raises(FluidNCError, match=r"beschäftigt: Run \(/wand\.gcode\)"):
+        api.run_file("/neu.gcode")
