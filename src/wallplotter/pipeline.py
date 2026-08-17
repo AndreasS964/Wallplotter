@@ -243,6 +243,7 @@ def lines_to_svg(
     stroke_width_mm: float = 1.0,
     travel_stroke: str | None = None,
     style: str = "",
+    screen_stroke_px: float | None = None,
 ) -> str:
     """Linien als SVG rendern — für die Vorschau in der Web-UI (Stufe 4).
 
@@ -253,14 +254,28 @@ def lines_to_svg(
     ``style`` landet als CSS am ``<svg>``. Ohne Höhenbegrenzung wächst eine
     2,5 m hohe Wand im Browser über den ganzen Bildschirm hinaus — die Web-UI
     setzt dort ``max-height``.
+
+    ``screen_stroke_px`` zeichnet die Striche in **Bildschirmpunkten** statt in
+    Millimetern (``vector-effect: non-scaling-stroke``). Für die Vorschau ist
+    das der richtige Maßstab: Ein Fineliner zieht 0,5 mm, und 0,5 mm auf einer
+    zwei Meter breiten Wand sind auf einem Handybildschirm ein Zehntel Pixel.
+    Die Vorschau soll zeigen, *was* gezeichnet wird — wie dick der Strich wird,
+    steht im Stiftkatalog. Ohne den Wert bleibt es bei Millimetern, und für
+    eine Datei zum Ausdrucken ist das auch richtig.
     """
+    scaled = screen_stroke_px is not None
+    draw_width = screen_stroke_px if scaled else stroke_width_mm
+    travel_width = (screen_stroke_px if scaled else stroke_width_mm / 2) or 1.0
+    effect = ' vector-effect="non-scaling-stroke"' if scaled else ""
+    frame_width = draw_width if scaled else stroke_width_mm
+
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width_mm} {height_mm}" '
         f'width="100%" preserveAspectRatio="xMidYMid meet"'
         + (f' style="{style}"' if style else "")
         + ">",
         f'<rect x="0" y="0" width="{width_mm}" height="{height_mm}" '
-        f'fill="none" stroke="#999" stroke-width="{stroke_width_mm}" />',
+        f'fill="none" stroke="#c7ced6" stroke-width="{frame_width}"{effect} />',
     ]
 
     if travel_stroke:
@@ -272,9 +287,11 @@ def lines_to_svg(
             travels.append(f"M {pos[0]:.2f},{pos[1]:.2f} L {line[0][0]:.2f},{line[0][1]:.2f}")
             pos = tuple(line[-1])
         if travels:
+            dashes = "5 5" if scaled else "4 4"
             parts.append(
                 f'<path d="{" ".join(travels)}" fill="none" stroke="{travel_stroke}" '
-                f'stroke-width="{stroke_width_mm / 2}" stroke-dasharray="4 4" />'
+                f'stroke-width="{travel_width}" stroke-dasharray="{dashes}" '
+                f'stroke-opacity="0.75"{effect} />'
             )
 
     for line in lines:
@@ -283,8 +300,8 @@ def lines_to_svg(
         points = " ".join(f"{x:.2f},{y:.2f}" for x, y in line)
         parts.append(
             f'<polyline points="{points}" fill="none" stroke="{stroke}" '
-            f'stroke-width="{stroke_width_mm}" stroke-linecap="round" '
-            f'stroke-linejoin="round" />'
+            f'stroke-width="{draw_width}" stroke-linecap="round" '
+            f'stroke-linejoin="round"{effect} />'
         )
 
     parts.append("</svg>")

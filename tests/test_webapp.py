@@ -367,3 +367,40 @@ def test_a_broken_locations_file_does_not_stop_the_ui(tmp_path):
     instance.build_ui()
     assert instance.location is None
     assert instance.plot_config().width_mm == 2000.0
+
+
+# -- Karteninhalt ------------------------------------------------------------
+
+
+def test_card_listing_reads_the_firmware_json():
+    from wallplotter.webapp import _card_entries
+
+    listing = (
+        '{"files":[{"name":"wand.gcode","size":12345},'
+        '{"name":"unterordner","size":-1},'
+        '{"name":"a.gcode","size":900}],"path":"/","status":"Ok"}'
+    )
+    # Verzeichnisse meldet die Firmware mit negativer Größe — die gehören nicht
+    # in eine Liste startbarer Programme.
+    assert _card_entries(listing) == [("a.gcode", 900), ("wand.gcode", 12345)]
+
+
+def test_a_broken_listing_is_an_empty_list_not_a_traceback():
+    """Die Karte ist eine Nebensache der Oberfläche.
+
+    Wenn das Board Unsinn antwortet, soll die Liste leer bleiben — ein
+    Traceback vor der Wand hilft niemandem.
+    """
+    from wallplotter.webapp import _card_entries
+
+    assert _card_entries("kein json") == []
+    assert _card_entries("{}") == []
+    assert _card_entries('{"files":[{"size":5}]}') == []
+
+
+def test_sizes_are_readable():
+    from wallplotter.webapp import _bytes
+
+    assert _bytes(900) == "900 B"
+    assert _bytes(12345) == "12 kB"
+    assert _bytes(2_500_000) == "2.5 MB"

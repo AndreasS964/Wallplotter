@@ -10,7 +10,7 @@
   <a href="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-478-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-481-brightgreen">
   <img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-lightgrey">
 </p>
 
@@ -280,16 +280,19 @@ dadurch nicht denselben GCode. Zum Vergleichen zweier Läufe `--no-reloop`.
 python -m wallplotter.webapp
 ```
 
-Erreichbar unter `http://<pc-ip>:8080` — auch vom Handy an der Wand. Drei
-Reiter für die drei Situationen vor der Wand:
+Erreichbar unter `http://<pc-ip>:8080` — auch vom Handy an der Wand. In der
+Kopfzeile stehen dauerhaft Standort, Maschinenzustand und Boardadresse; darunter
+drei Reiter für die drei Situationen vor der Wand:
 
 * **Plotten** — Upload oder Testmuster, Flächen- und Stiftparameter, Vorschau
-  (Zeichenwege blau, Leerwege rot gestrichelt), Plot starten
+  (Zeichenwege in der Stiftfarbe, Leerwege rot gestrichelt), Plot starten
 * **Kalibrieren** — Jog-Pad, Nullpunkt setzen, Ecken übernehmen und wieder
   anfahren, Schiefstandswarnung, Standort anlegen samt Kinematik-Urteil
-* **Maschine** — SD-Fortschritt, Pause/Weiter/Stopp
+* **Maschine** — laufender Job mit Fortschritt und Position, Inhalt der
+  SD-Karte (von dort auch startbar), Pause/Weiter/Stopp
 
-Auf dem Handy stapeln sich die Karten, das Jog-Pad steht dabei oben.
+Auf dem Handy stapeln sich die Karten, Vorschau und Startknopf stehen dabei
+oben — die Reihenfolge, in der man vor der Wand arbeitet.
 
 <table>
 <tr>
@@ -301,6 +304,16 @@ Auf dem Handy stapeln sich die Karten, das Jog-Pad steht dabei oben.
 <td align="center"><sub>… und auf dem Handy an der Wand</sub></td>
 </tr>
 </table>
+
+<p align="center">
+  <img src="docs/images/ui-maschine.png" alt="Reiter Maschine" width="880"><br>
+  <sub>Maschine: laufender Job, Inhalt der Karte, und was die drei Knöpfe wirklich tun</sub>
+</p>
+
+Die Bilder oben sind nicht gemalt, sondern aufgenommen — `python
+tools/ui_screenshots.py` startet Simulator und Oberfläche, lädt ein Testmuster
+und fotografiert alle Reiter neu. Wer etwas am Aussehen ändert, hält die
+Dokumentation mit einem Befehl nach.
 
 ### Als Bibliothek
 

@@ -43,11 +43,270 @@ JOG_STEPS = [1, 10, 50, 100]
 DEFAULT_PITCH_MM = 25.0
 DEFAULT_JOG_STEP_MM = 10
 
+PATTERN_INTRO = "Fünf Muster für die Inbetriebnahme — Fläche, Maßstab, Servo, Tempo."
+
+DRAW_COLOR = "#1a4fd6"
+"""Zeichenwege in der Vorschau — und zugleich die Akzentfarbe der Oberfläche.
+
+Kein Zufall: Was der Stift auf die Wand bringt, ist das, worum es geht. Eine
+zweite, dekorative Akzentfarbe daneben hätte nichts zu sagen."""
+
+TRAVEL_COLOR = "#d64545"
+
 EMPTY_PREVIEW = (
-    '<div style="display:flex;align-items:center;justify-content:center;'
-    'height:100%;min-height:60vh;color:#8b8b8b;font-size:0.9rem;text-align:center">'
-    "Noch nichts geladen —<br>SVG oder Foto hochladen, oder ein Testmuster wählen</div>"
+    '<div class="wp-empty">'
+    '<svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M3 5h18v14H3z"/><path d="M3 15l5-5 4 4 3-3 6 6"/><circle cx="8.5" cy="9" r="1.5"/>'
+    "</svg>"
+    "<p><b>Noch nichts geladen</b></p>"
+    "<p>SVG oder Foto hochladen — oder ein Testmuster wählen.</p>"
+    "</div>"
 )
+
+#: Das ganze Aussehen an einer Stelle. Bewusst als Stylesheet und nicht als
+#: Utility-Klassen im Aufbau verteilt: Wer die Farbe der Karten ändern will,
+#: soll eine Zeile ändern müssen, nicht vierzig.
+#:
+#: Keine Schrift von einem CDN. Die Oberfläche soll in einem Keller laufen,
+#: in dem das WLAN gerade so bis zum Board reicht — eine Google-Font, die
+#: nicht lädt, ist dort kein Schönheitsfehler, sondern ein Layoutsprung.
+STYLE = """
+<style>
+:root {
+  --wp-ink: #14181c;
+  --wp-ink-soft: #495561;
+  --wp-muted: #7b8794;
+  --wp-line: #e3e7ec;
+  --wp-surface: #ffffff;
+  --wp-bg: #f2f4f7;
+  --wp-accent: #1a4fd6;
+  --wp-accent-soft: #eef2fd;
+  --wp-ok: #157f52;
+  --wp-warn: #b45309;
+  --wp-bad: #c0392b;
+  --wp-radius: 12px;
+}
+
+body {
+  background: var(--wp-bg);
+  color: var(--wp-ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Quasar schreibt Knöpfe versal. Das schreit, und eine Werkstattoberfläche
+   soll nicht schreien. */
+.q-btn { text-transform: none; font-weight: 550; letter-spacing: 0; }
+.q-tab { text-transform: none; }
+
+/* -- Kopfzeile ---------------------------------------------------------- */
+.wp-header {
+  background: var(--wp-ink);
+  box-shadow: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.wp-wordmark { font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em; }
+.wp-wordmark span { color: rgba(255, 255, 255, 0.45); font-weight: 400; }
+
+.wp-status {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  padding: 0.3rem 0.7rem 0.3rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.82rem; font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.wp-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wp-muted); flex: none; }
+.wp-dot.is-run   { background: #34d399; box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.18); }
+.wp-dot.is-hold  { background: #fbbf24; box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.18); }
+.wp-dot.is-alarm { background: #f87171; box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.18); }
+.wp-dot.is-idle  { background: #9aa5b1; }
+
+/* -- Reiter ------------------------------------------------------------- */
+.wp-tabs { background: var(--wp-ink); color: rgba(255,255,255,0.65); }
+.wp-tabs .q-tab { min-height: 46px; padding: 0 1.1rem; font-size: 0.9rem; }
+.wp-tabs .q-tab--active { color: #fff; }
+.wp-tabs .q-tab__content { min-width: 0; }
+.wp-tabs .q-tab--active .q-focus-helper,
+.wp-tabs .q-tab .q-focus-helper { opacity: 0 !important; }
+.wp-tabs .q-tab__icon { font-size: 20px; }
+
+/* -- Karten ------------------------------------------------------------- */
+.wp-card {
+  background: var(--wp-surface);
+  border: 1px solid var(--wp-line);
+  border-radius: var(--wp-radius);
+  box-shadow: 0 1px 2px rgba(20, 24, 28, 0.04);
+  padding: 1.05rem 1.1rem;
+  gap: 0.75rem;
+}
+.wp-card-title {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--wp-muted);
+}
+.wp-hint { font-size: 0.78rem; line-height: 1.45; color: var(--wp-muted); }
+.wp-readout {
+  font-size: 0.8rem; line-height: 1.5; color: var(--wp-ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.wp-rule { height: 1px; background: var(--wp-line); margin: 0.2rem 0; }
+
+/* -- Vorschau ----------------------------------------------------------- */
+.wp-stage {
+  background: var(--wp-surface);
+  border: 1px solid var(--wp-line);
+  border-radius: var(--wp-radius);
+  overflow: hidden;
+}
+.wp-stage-body { padding: 1.1rem; }
+.wp-stage-foot {
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: 0.6rem 1.1rem;
+  border-top: 1px solid var(--wp-line);
+  background: #fafbfc;
+  font-size: 0.8rem; color: var(--wp-ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.wp-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.4rem; min-height: 52vh; color: var(--wp-muted); text-align: center;
+}
+.wp-empty p { margin: 0; font-size: 0.86rem; }
+.wp-empty b { color: var(--wp-ink-soft); font-weight: 600; }
+.wp-key { display: inline-flex; align-items: center; gap: 0.4rem; }
+.wp-key i { display: inline-block; width: 16px; height: 0; border-top-width: 2px; }
+
+/* -- Ablagefeld für Dateien --------------------------------------------- */
+.wp-drop .q-uploader {
+  width: 100%; box-shadow: none; background: transparent;
+  border: 1.5px dashed var(--wp-line); border-radius: 10px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.wp-drop .q-uploader:hover { border-color: var(--wp-accent); background: var(--wp-accent-soft); }
+.wp-drop .q-uploader__header { background: transparent; color: var(--wp-ink-soft); }
+/* Fortschrittsbalken und Byte-Zähler des Uploaders: Bei einer Datei, die aus
+   dem Nachbarordner kommt, ist beides in derselben Sekunde vorbei und sieht
+   nur nach halbfertiger Oberfläche aus. */
+.wp-drop .q-uploader__header .q-linear-progress,
+.wp-drop .q-uploader__title + div { display: none; }
+
+/* -- Testmuster --------------------------------------------------------- */
+.wp-chip .q-btn {
+  border: 1px solid var(--wp-line); border-radius: 8px;
+  color: var(--wp-ink-soft) !important; background: var(--wp-surface);
+  font-size: 0.82rem; padding: 0.3rem 0.7rem; min-height: 34px;
+}
+.wp-chip .q-btn:hover { border-color: var(--wp-accent); color: var(--wp-accent) !important; }
+
+/* -- Jog-Feld ----------------------------------------------------------- */
+.wp-jog { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; }
+.wp-jog .q-btn {
+  min-height: 58px; border-radius: 10px;
+  border: 1px solid var(--wp-line); background: var(--wp-surface); color: var(--wp-ink);
+}
+.wp-jog .q-btn:hover { border-color: var(--wp-accent); color: var(--wp-accent); }
+.wp-jog .wp-stop .q-btn { border-color: #f3c6c1; color: var(--wp-bad); background: #fff6f5; }
+
+/* -- Ecken -------------------------------------------------------------- */
+.wp-corner {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.35rem 0; font-size: 0.88rem;
+}
+.wp-tick {
+  width: 20px; height: 20px; border-radius: 50%; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.7rem; font-weight: 700;
+  background: #eef1f4; color: var(--wp-muted);
+}
+.wp-tick.is-set { background: #dff3e8; color: var(--wp-ok); }
+
+/* -- Dateien auf der Karte ---------------------------------------------- */
+.wp-file {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.3rem 0; font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--wp-line);
+}
+.wp-file:last-child { border-bottom: none; }
+
+/* -- Laufender Job ------------------------------------------------------ */
+.wp-job-state { font-size: 1.5rem; font-weight: 650; letter-spacing: -0.02em; }
+.wp-job-file {
+  font-size: 0.82rem; color: var(--wp-muted);
+  font-variant-numeric: tabular-nums; word-break: break-all;
+}
+.wp-metric-label {
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--wp-muted);
+}
+.wp-metric-value {
+  font-size: 1.05rem; font-variant-numeric: tabular-nums; color: var(--wp-ink);
+}
+
+/* -- Schrittweite ------------------------------------------------------- */
+.wp-steps {
+  border: 1px solid var(--wp-line); border-radius: 9px; overflow: hidden;
+  background: var(--wp-surface);
+}
+.wp-steps .q-btn { border-radius: 0; min-height: 38px; font-variant-numeric: tabular-nums; }
+
+/* -- Handy -------------------------------------------------------------- */
+@media (max-width: 1023px) {
+  .wp-card { padding: 0.95rem 1rem; }
+  .wp-jog .q-btn { min-height: 64px; }
+  .wp-stage-body { padding: 0.6rem; }
+}
+@media (max-width: 700px) {
+  .wp-wordmark { font-size: 0.98rem; }
+  .wp-status { font-size: 0.78rem; padding: 0.25rem 0.6rem 0.25rem 0.5rem; }
+  .wp-tabs .q-tab { padding: 0 0.7rem; font-size: 0.85rem; }
+}
+</style>
+"""
+
+
+def _card_entries(listing: str) -> list[tuple[str, int]]:
+    """Dateiliste der Karte aus der JSON-Antwort der Firmware.
+
+    Kaputte oder unerwartete Antworten geben eine leere Liste: Die Karte ist
+    eine Nebensache der Oberfläche, und ein Traceback vor der Wand hilft
+    niemandem.
+    """
+    import json  # noqa: PLC0415
+
+    try:
+        data = json.loads(listing)
+        files = data.get("files") or []
+    except (ValueError, AttributeError):
+        return []
+    entries = []
+    for entry in files:
+        name = str(entry.get("name", "")).strip()
+        if not name:
+            continue
+        try:
+            size = int(entry.get("size", 0))
+        except (TypeError, ValueError):
+            size = 0
+        # Verzeichnisse meldet die Firmware mit negativer Größe
+        if size >= 0:
+            entries.append((name, size))
+    return sorted(entries)
+
+
+def _bytes(size: int) -> str:
+    if size >= 1_000_000:
+        return f"{size / 1_000_000:.1f} MB"
+    if size >= 1000:
+        return f"{size / 1000:.0f} kB"
+    return f"{size} B"
+
+
+def _key_html(color: str, dash: str, text: str) -> str:
+    """Ein Eintrag der Vorschaulegende — Strichprobe und Beschriftung."""
+    return f'<span class="wp-key"><i style="border-top:2px {dash} {color}"></i>{text}</span>'
 
 
 def _positive(value, fallback: float) -> float:
@@ -305,8 +564,8 @@ class WallplotterUI:
         self.lines, self.feeds = pattern.lines, pattern.feeds
         self.source_name, self.source_is_pattern = pattern.name, True
         self.fit_source = False
+        self.pattern_hint.set_text(pattern.description)
         self.regenerate()
-        self.ui.notify(pattern.description, multi_line=True)
 
     def regenerate(self) -> None:
         if not self.lines:
@@ -341,6 +600,9 @@ class WallplotterUI:
             # Schraffuren —, treffen die Pendelfrequenz der Gondel.
             note += f"\n{warning}"
         self.info.set_text(note)
+        self.key_draw.set_content(
+            _key_html(config.toolhead.color, "solid", "Stift unten")
+        )
         self.area_label.set_text(
             f"{config.width_mm:.0f} × {config.height_mm:.0f} mm"
             + (
@@ -363,8 +625,11 @@ class WallplotterUI:
             config.height_mm,
             stroke=config.toolhead.color,
             stroke_width_mm=max(0.6, config.toolhead.width_mm),
-            travel_stroke="#d64545",
-            style="max-height:68vh;display:block;margin:auto",
+            travel_stroke=TRAVEL_COLOR,
+            style="max-height:66vh;display:block;margin:auto",
+            # In Bildschirmpunkten, nicht in Millimetern: Ein halber Millimeter
+            # auf zwei Metern Wand wäre hier ein Zehntel Pixel.
+            screen_stroke_px=1.4,
         )
 
     def layer_tools(self) -> dict[str, Toolhead]:
@@ -571,8 +836,9 @@ class WallplotterUI:
         self.calibration_label.set_text(self.calibration.summary())
         for corner, badge in self.corner_badges.items():
             done = corner in self.calibration.points
-            badge.set_text("✓" if done else "–")
-            badge.classes(replace="text-positive" if done else "text-grey")
+            badge.set_content(
+                f'<span class="wp-tick{" is-set" if done else ""}">{"✓" if done else "–"}</span>'
+            )
         self.use_calibration.set_enabled(self.calibration.complete)
         self.regenerate()
 
@@ -582,6 +848,49 @@ class WallplotterUI:
             return self.client(3).status()
         except Exception:
             return None
+
+    # -- SD-Karte ---------------------------------------------------------
+
+    async def refresh_card(self, *, quiet: bool = False) -> None:
+        """Verzeichnis der Karte holen und anzeigen.
+
+        Das ist die Gegenprobe zum Hochladen: Wer wissen will, ob die Datei
+        wirklich oben ist, sieht hier nach — und kann sie von dort auch wieder
+        starten, ohne sie noch einmal zu schicken.
+
+        ``quiet`` ist für den Blick beim Start gedacht: Ist das Board noch gar
+        nicht da, ist das keine Fehlermeldung wert — die Zeile „noch nicht
+        gelesen" bleibt einfach stehen.
+        """
+
+        def work() -> list[tuple[str, int]]:
+            return _card_entries(self.client(10).list_files("/"))
+
+        try:
+            entries = await asyncio.to_thread(work)
+        except Exception as exc:  # FluidNC-Fehler und Netzwerkfehler aller Art
+            if not quiet:
+                self.ui.notify(f"Karte nicht lesbar: {exc}", type="negative", multi_line=True)
+            return
+
+        self.card_list.clear()
+        with self.card_list:
+            if not entries:
+                self.ui.label("Keine Dateien auf der Karte").classes("wp-hint")
+                return
+            for name, size in entries:
+                with self.ui.element("div").classes("wp-file w-full"):
+                    self.ui.label(name).classes("flex-grow truncate")
+                    self.ui.label(_bytes(size)).classes("wp-hint shrink-0")
+                    self.ui.button(
+                        icon="play_arrow", on_click=lambda n=name: self.run_from_card(n)
+                    ).props("flat dense round color=primary").tooltip("Von der Karte starten")
+
+    async def run_from_card(self, name: str) -> None:
+        """Eine Datei starten, die schon auf der Karte liegt."""
+        path = name if name.startswith("/") else f"/{name}"
+        if await self.machine_command(f"Start {path}", lambda: self.client(10).run_file(path)):
+            self.ui.notify(f"{path} gestartet", type="positive")
 
     async def poll_status(self) -> None:
         """Alle zwei Sekunden den Maschinenstatus holen und anzeigen.
@@ -593,100 +902,176 @@ class WallplotterUI:
         Geräte, die gerade draufschauen.
         """
         machine = await asyncio.to_thread(self._read_status)
+        self.job_host.set_text(self.host_input.value or self.host)
+
         if machine is None:
             self.status_label.set_text("FluidNC nicht erreichbar")
-            self.status_badge.props("color=grey")
+            self.status_detail.set_text("")
+            self.status_badge.classes(replace="wp-dot")
             self.progress.set_value(0)
             self.position_label.set_text("")
+            self.job_state.set_text("offline")
+            self.job_percent.set_text("")
+            self.job_file.set_text("Board antwortet nicht")
+            self.job_position.set_text("—")
             return
-        self.status_label.set_text(machine.state)
-        self.status_badge.props(
-            "color=" + ("green" if machine.state == "Idle" else "orange" if machine.is_running else "red")
-        )
-        self.progress.set_value((machine.sd_percent or 0) / 100)
-        if machine.position:
-            self.position_label.set_text(
-                f"X {machine.position[0]:.1f} · Y {machine.position[1]:.1f} mm"
-                + (f" · {machine.sd_file}" if machine.sd_file else "")
-            )
 
-    # -- Aufbau -----------------------------------------------------------
+        head = machine.state.split(":")[0]
+        kind = {"Idle": "idle", "Run": "run", "Jog": "run", "Hold": "hold"}.get(head, "alarm")
+        self.status_label.set_text(machine.state)
+        self.status_badge.classes(replace=f"wp-dot is-{kind}")
+
+        percent = machine.sd_percent
+        self.progress.set_value((percent or 0) / 100)
+        self.job_state.set_text(machine.state)
+        self.job_percent.set_text(f"{percent:.0f} %" if percent is not None else "")
+        self.job_file.set_text(machine.sd_file or "kein Programm")
+        self.status_detail.set_text(
+            f"{percent:.0f} %" if percent is not None and machine.is_running else ""
+        )
+
+        if machine.position:
+            position = f"X {machine.position[0]:.1f} · Y {machine.position[1]:.1f} mm"
+            self.position_label.set_text(
+                position + (f" · {machine.sd_file}" if machine.sd_file else "")
+            )
+            self.job_position.set_text(position)
+        else:
+            self.job_position.set_text("—")
+
+    # -- Bausteine ---------------------------------------------------------
+
+    def _card(self, title: str, hint: str = "", width: str = "w-full"):
+        """Karte mit einheitlichem Kopf.
+
+        Damit sehen alle Karten gleich aus, ohne dass an vierzig Stellen
+        dieselben Klassen stehen — und eine neue Karte sieht automatisch aus
+        wie die anderen, statt fast wie die anderen.
+        """
+        card = self.ui.column().classes(f"wp-card {width}")
+        with card:
+            self.ui.label(title).classes("wp-card-title")
+            if hint:
+                self.ui.label(hint).classes("wp-hint")
+        return card
+
+    def _rule(self) -> None:
+        self.ui.element("div").classes("wp-rule w-full")
+
+    def _metric(self, label: str, value: str = "—"):
+        with self.ui.column().classes("gap-0"):
+            self.ui.label(label).classes("wp-metric-label")
+            return self.ui.label(value).classes("wp-metric-value")
 
     def build_ui(self) -> None:
         ui = self.ui
-        ui.add_head_html("<style>body{background:#f6f6f7}</style>")
+        ui.add_head_html(STYLE)
 
-        with ui.header().classes("items-center justify-between px-4 py-2"):
-            with ui.row().classes("items-center gap-3"):
-                ui.label("Wandplotter").classes("text-xl font-medium")
-                self.location_select = (
-                    ui.select(
-                        sorted(self.book.locations),
-                        value=self.book.active,
-                        on_change=lambda e: self.switch_location(e.value),
+        with ui.header(elevated=False).classes("wp-header p-0"), ui.column().classes(
+            "w-full gap-0"
+        ):
+            with ui.row().classes(
+                "w-full items-center justify-between px-4 py-2 gap-x-3 gap-y-1"
+            ):
+                with ui.row().classes("items-center gap-3 no-wrap min-w-0"):
+                    ui.label("Wandplotter").classes("wp-wordmark")
+                    self.location_select = (
+                        ui.select(
+                            sorted(self.book.locations),
+                            value=self.book.active,
+                            on_change=lambda e: self.switch_location(e.value),
+                        )
+                        .props("dense borderless dark options-dense")
+                        .classes("w-36 text-sm")
+                        .tooltip("Standort — jede Aufhängung hat eigene Ankermaße")
                     )
-                    .props("dense outlined dark options-dense label-color=white")
-                    .classes("w-40")
-                    .tooltip("Standort — jede Aufhängung hat eigene Ankermaße")
-                )
-            with ui.row().classes("items-center gap-2"):
-                self.status_badge = ui.badge("", color="grey").props("rounded")
-                self.status_label = ui.label("—").classes("text-sm")
-                self.host_input = (
-                    ui.input(value=self.host)
-                    .props("dense outlined dark input-class=text-white")
-                    .classes("w-44")
-                )
+                with ui.row().classes("items-center gap-3 no-wrap"):
+                    with ui.element("div").classes("wp-status"):
+                        self.status_badge = ui.element("span").classes("wp-dot is-idle")
+                        self.status_label = ui.label("verbinde …").classes("text-white")
+                        self.status_detail = ui.label("").classes("text-white opacity-60")
+                    self.host_input = (
+                        ui.input(value=self.host)
+                        .props("dense borderless dark input-class=text-white")
+                        .classes("w-40 text-sm")
+                        .tooltip("Adresse des Boards")
+                    )
 
-        with ui.tabs().classes("w-full") as tabs:
-            tab_plot = ui.tab("Plotten", icon="brush")
-            tab_calibrate = ui.tab("Kalibrieren", icon="straighten")
-            tab_machine = ui.tab("Maschine", icon="tune")
+            with ui.tabs().props(
+                "no-caps align=left indicator-color=white inline-label"
+            ).classes("wp-tabs w-full") as tabs:
+                tab_plot = ui.tab("Plotten", icon="brush")
+                tab_calibrate = ui.tab("Kalibrieren", icon="straighten")
+                tab_machine = ui.tab("Maschine", icon="precision_manufacturing")
 
-        with ui.tab_panels(tabs, value=tab_plot).classes("w-full bg-transparent"):
-            with ui.tab_panel(tab_plot):
+        with ui.tab_panels(tabs, value=tab_plot).classes(
+            "w-full bg-transparent mx-auto max-w-[1500px]"
+        ):
+            with ui.tab_panel(tab_plot).classes("p-3 md:p-5"):
                 self._plot_panel()
-            with ui.tab_panel(tab_calibrate):
+            with ui.tab_panel(tab_calibrate).classes("p-3 md:p-5"):
                 self._calibration_panel()
-            with ui.tab_panel(tab_machine):
+            with ui.tab_panel(tab_machine).classes("p-3 md:p-5"):
                 self._machine_panel()
 
         ui.timer(2.0, self.poll_status)
+        # Einmal beim Öffnen nachsehen, was auf der Karte liegt — still, denn
+        # ein noch nicht eingeschaltetes Board ist beim Start der Normalfall
+        # und keine Fehlermeldung wert.
+        ui.timer(1.0, lambda: self.refresh_card(quiet=True), once=True)
 
     def _plot_panel(self) -> None:
         ui = self.ui
         with ui.row().classes("w-full gap-4 items-start no-wrap max-lg:flex-wrap"):
-            with ui.column().classes("gap-3 w-80 max-lg:w-full"):
-                with ui.card().classes("w-full"):
-                    ui.label("Vorlage").classes("text-sm text-grey-8")
-                    ui.upload(
-                        on_upload=self.load_upload,
-                        auto_upload=True,
-                        label="SVG oder Foto hierher",
-                    ).props('accept=".svg,.png,.jpg,.jpeg" flat').classes("w-full")
-                    with ui.row().classes("gap-1 flex-wrap"):
+            with ui.column().classes("gap-4 w-[21rem] max-lg:w-full shrink-0"):
+                with self._card("Vorlage"):
+                    with ui.element("div").classes("wp-drop w-full"):
+                        ui.upload(
+                            on_upload=self.load_upload,
+                            auto_upload=True,
+                            label="SVG oder Foto hierher ziehen",
+                        ).props('accept=".svg,.png,.jpg,.jpeg" flat').classes("w-full")
+                    ui.label("Testmuster").classes("wp-hint")
+                    with ui.row().classes("wp-chip gap-2 flex-wrap"):
                         for name in PATTERNS:
                             ui.button(
                                 name, on_click=lambda n=name: self.load_pattern(n)
-                            ).props("outline size=sm")
+                            ).props("flat no-caps dense")
+                    # Bewusst kein Tooltip an den Knöpfen: Auf einem Touchgerät
+                    # bleibt der nach dem Tippen stehen, bis man woanders
+                    # hintippt. Die Erklärung gehört ohnehin hierher — man liest
+                    # sie, *nachdem* man gewählt hat.
+                    self.pattern_hint = ui.label(PATTERN_INTRO).classes("wp-hint")
 
-                with ui.card().classes("w-full"):
-                    ui.label("Fläche").classes("text-sm text-grey-8")
-                    self.area_label = ui.label("—").classes("text-xs text-grey")
-                    self.width = ui.number("Breite mm", value=WALL_WIDTH_MM).props("dense outlined")
-                    self.height = ui.number("Höhe mm", value=WALL_HEIGHT_MM).props("dense outlined")
-                    self.margin = ui.number("Rand mm", value=50).props("dense outlined")
-                    self.use_calibration = ui.switch("Kalibrierte Fläche verwenden", value=True)
+                with self._card("Fläche"):
+                    self.area_label = ui.label("—").classes("wp-readout")
+                    with ui.row().classes("gap-2 w-full no-wrap"):
+                        self.width = (
+                            ui.number("Breite mm", value=WALL_WIDTH_MM)
+                            .props("dense outlined")
+                            .classes("flex-1 min-w-0")
+                        )
+                        self.height = (
+                            ui.number("Höhe mm", value=WALL_HEIGHT_MM)
+                            .props("dense outlined")
+                            .classes("flex-1 min-w-0")
+                        )
+                    self.margin = (
+                        ui.number("Rand mm", value=50).props("dense outlined").classes("w-full")
+                    )
+                    self.use_calibration = ui.switch(
+                        "Kalibrierte Fläche verwenden", value=True
+                    ).props("dense")
                     self.use_correction = (
                         ui.switch("Vorverzerrung verwenden", value=False)
+                        .props("dense")
                         .tooltip(
                             f"Rechnet gegen bekannte Maschinenfehler vor, aus {CORRECTION_PATH} "
                             "— erst nach einer Messreihe sinnvoll"
                         )
                     )
 
-                with ui.card().classes("w-full"):
-                    ui.label("Werkzeug").classes("text-sm text-grey-8")
+                with self._card("Werkzeug"):
                     self.head_select = (
                         ui.select(
                             {key: head.name for key, head in TOOLHEADS.items()},
@@ -697,32 +1082,59 @@ class WallplotterUI:
                         .classes("w-full")
                         .tooltip("Die Werte je Stift sind Startwerte — mit pen-test nachziehen")
                     )
-                    self.head_label = ui.label("").classes("text-xs text-grey whitespace-pre-line")
-                    self.laser_armed = ui.switch("Laser scharf", value=False).tooltip(
-                        "Das Gegenstück zu --laser-verstanden: ohne diesen Schalter "
-                        "entsteht kein Laser-GCode"
+                    self.head_label = ui.label("").classes("wp-readout whitespace-pre-line")
+                    self.laser_armed = (
+                        ui.switch("Laser scharf", value=False)
+                        .props("dense color=negative")
+                        .tooltip(
+                            "Das Gegenstück zu --laser-verstanden: ohne diesen Schalter "
+                            "entsteht kein Laser-GCode"
+                        )
                     )
                     self.laser_armed.on_value_change(lambda _: self.regenerate())
 
-                with ui.expansion("Stift und Tempo").classes("w-full bg-white rounded"):
-                    self.draw_feed = ui.number("Vorschub mm/min", value=1500).props("dense outlined")
-                    self.pen_down = ui.number("Pen unten (S)", value=30).props("dense outlined")
-                    self.pen_up = ui.number("Pen oben (S)", value=0).props("dense outlined")
-                    self.pen_dwell = ui.number("Servo-Wartezeit s", value=0.25, step=0.05).props(
-                        "dense outlined"
-                    )
+                with self._card("Feineinstellung", "Servo-Werte und Bildverfahren."):
+                    with ui.row().classes("gap-2 w-full no-wrap"):
+                        self.draw_feed = (
+                            ui.number("Vorschub mm/min", value=1500)
+                            .props("dense outlined")
+                            .classes("flex-1 min-w-0")
+                        )
+                        self.pen_dwell = (
+                            ui.number("Wartezeit s", value=0.25, step=0.05)
+                            .props("dense outlined")
+                            .classes("flex-1 min-w-0")
+                        )
+                    with ui.row().classes("gap-2 w-full no-wrap"):
+                        self.pen_down = (
+                            ui.number("Pen unten (S)", value=30)
+                            .props("dense outlined")
+                            .classes("flex-1 min-w-0")
+                        )
+                        self.pen_up = (
+                            ui.number("Pen oben (S)", value=0)
+                            .props("dense outlined")
+                            .classes("flex-1 min-w-0")
+                        )
+                    self._rule()
                     self.technique = (
                         ui.select(
-                            {name: f"{name} — {text.split(' — ')[0]}" for name, text in TECHNIQUES.items()},
+                            {
+                                name: f"{name} — {text.split(' — ')[0]}"
+                                for name, text in TECHNIQUES.items()
+                            },
                             value="spiral",
                             label="Verfahren für Fotos",
                             on_change=lambda _: self.render_upload(),
                         )
                         .props("dense outlined")
+                        .classes("w-full")
                         .tooltip("tsp und spiral zeichnen ohne Stiftheben")
                     )
-                    self.pitch = ui.number("Bahnabstand mm", value=25.0, step=1.0).props(
-                        "dense outlined"
+                    self.pitch = (
+                        ui.number("Bahnabstand mm", value=25.0, step=1.0)
+                        .props("dense outlined")
+                        .classes("w-full")
                     )
                     self.pitch.on_value_change(lambda _: self.render_upload())
 
@@ -739,88 +1151,120 @@ class WallplotterUI:
                 self.use_calibration.on_value_change(lambda _: self.regenerate())
                 self.use_correction.on_value_change(lambda _: self.regenerate())
 
-            with ui.column().classes("flex-grow gap-2 min-w-0"):
-                with ui.card().classes("w-full"):
-                    self.preview = ui.html(EMPTY_PREVIEW).classes("w-full")
-                    with ui.row().classes("items-center gap-3 text-xs text-grey-7"):
-                        ui.html('<span style="color:#1a4fd6">▬</span> Stift unten')
-                        ui.html('<span style="color:#d64545">┅</span> Leerweg')
-                self.layer_box = ui.column().classes("gap-1 w-full")
-                self.info = ui.label("Noch nichts geladen").classes("text-sm")
-                ui.button("Auf Wand plotten", icon="send", on_click=self.send_plot).classes(
-                    "w-full"
-                ).props("color=primary")
+            # Auf dem Handy zuerst die Vorschau und der Startknopf: Wer vor der
+            # Wand steht, will sehen und starten — die Einstellungen hat er
+            # vorher am Rechner gemacht.
+            with ui.column().classes("flex-grow gap-4 min-w-0 max-lg:order-first"):
+                with ui.element("div").classes("wp-stage w-full"):
+                    with ui.element("div").classes("wp-stage-body"):
+                        self.preview = ui.html(EMPTY_PREVIEW).classes("w-full")
+                    with ui.element("div").classes("wp-stage-foot"):
+                        # Die Legende führt die Farbe des gewählten Stifts, nicht
+                        # eine feste: Sonst steht dort Blau, während die Vorschau
+                        # schwarz zeichnet.
+                        self.key_draw = ui.html(_key_html(DRAW_COLOR, "solid", "Stift unten"))
+                        ui.html(_key_html(TRAVEL_COLOR, "dashed", "Leerweg"))
+                        ui.element("div").classes("flex-grow")
+                        self.info = ui.label("Noch nichts geladen")
+
+                self.layer_box = ui.column().classes("gap-2 w-full")
+                ui.button("Auf Wand plotten", icon="send", on_click=self.send_plot).props(
+                    "color=primary unelevated size=lg no-caps"
+                ).classes("w-full")
 
     def _calibration_panel(self) -> None:
         ui = self.ui
-        # Jog-Pad zuerst: auf dem Handy stapeln die Karten, und vor der Wand
+        # Jog-Feld zuerst: auf dem Handy stapeln die Karten, und vor der Wand
         # bewegt man die Gondel dauernd — Nullpunkt und Ecken sind Einzelschritte
         with ui.row().classes("w-full gap-4 items-start max-lg:flex-wrap"):
-            with ui.card().classes("w-80 max-lg:w-full"):
+            with self._card(
+                "Gondel bewegen", "Schrittweite wählen, dann fahren.", "w-[19rem] max-lg:w-full"
+            ):
                 self._jog_pad()
 
-            with ui.card().classes("w-80 max-lg:w-full"):
-                ui.label("1. Nullpunkt").classes("text-sm text-grey-8")
+            with self._card("Fläche einmessen", width="w-[21rem] max-lg:w-full"):
+                ui.label("1 · Nullpunkt").classes("text-sm font-semibold")
                 ui.label(
                     "Gondel an den oberen Anschlag fahren, dann Nullpunkt setzen."
-                ).classes("text-xs text-grey")
+                ).classes("wp-hint")
                 ui.button(
                     "Nullpunkt setzen (G92)",
                     icon="my_location",
                     on_click=lambda: self.machine_command("G92", self.client(5).set_zero),
-                ).props("outline").classes("w-full")
+                ).props("outline no-caps color=primary").classes("w-full")
 
-                ui.separator()
-                ui.label("2. Ecken anfahren").classes("text-sm text-grey-8")
+                self._rule()
+                ui.label("2 · Ecken anfahren und übernehmen").classes("text-sm font-semibold")
                 self.corner_badges = {}
                 for corner in CORNERS:
-                    with ui.row().classes("items-center gap-2 w-full no-wrap"):
-                        self.corner_badges[corner] = ui.label("–").classes("w-4 text-grey")
-                        ui.label(corner).classes("flex-grow text-sm")
+                    with ui.element("div").classes("wp-corner w-full"):
+                        self.corner_badges[corner] = ui.html(
+                            '<span class="wp-tick">–</span>'
+                        )
+                        ui.label(corner).classes("flex-grow")
                         ui.button(
                             icon="place", on_click=lambda c=corner: self.record_corner(c)
-                        ).props("flat dense").tooltip("Position übernehmen")
+                        ).props("flat dense round").tooltip("Position übernehmen")
                         ui.button(
                             icon="near_me", on_click=lambda c=corner: self.goto_corner(c)
-                        ).props("flat dense").tooltip("Ecke anfahren")
+                        ).props("flat dense round").tooltip("Ecke anfahren")
 
-                ui.separator()
-                self.calibration_label = ui.label("").classes("text-xs whitespace-pre-line")
-                with ui.row().classes("gap-2"):
-                    ui.button("Rahmen plotten", on_click=lambda: self.load_pattern("frame")).props(
-                        "outline size=sm"
-                    )
+                self._rule()
+                self.calibration_label = ui.label("").classes("wp-readout whitespace-pre-line")
+                with ui.row().classes("gap-2 w-full"):
+                    ui.button(
+                        "Rahmen plotten", icon="crop_free",
+                        on_click=lambda: self.load_pattern("frame"),
+                    ).props("outline no-caps dense color=primary").classes("flex-grow")
                     ui.button("Verwerfen", on_click=self.clear_calibration).props(
-                        "flat size=sm color=negative"
+                        "flat no-caps dense color=negative"
                     )
 
-            with ui.card().classes("w-80 max-lg:w-full"):
-                ui.label("Standort").classes("text-sm text-grey-8")
-                self.location_label = ui.label("").classes("text-xs text-grey")
-                self.geometry_label = ui.label("").classes(
-                    "text-xs whitespace-pre-line text-grey-8"
-                )
-                ui.separator()
-                ui.label("Neue Aufhängung eintragen").classes("text-sm text-grey-8")
-                ui.label(
-                    "Gondel am Referenzpunkt, Nullpunkt gesetzt, dann drei Maße "
-                    "mit dem Zollstock nehmen."
-                ).classes("text-xs text-grey")
-                self.new_name = ui.input("Name").props("dense outlined")
-                self.new_span = ui.number("Abstand der Umlenkpunkte mm").props("dense outlined")
-                self.new_left = ui.number("linker Riemen mm").props("dense outlined")
-                self.new_right = ui.number("rechter Riemen mm").props("dense outlined")
-                ui.button("Standort anlegen", icon="add_location_alt", on_click=self.add_location).props(
-                    "outline"
-                ).classes("w-full")
+            with ui.column().classes("gap-4 flex-grow min-w-[21rem] max-lg:w-full"):
+                with self._card("Standort"):
+                    self.location_label = ui.label("").classes("wp-readout")
+                    self.geometry_label = ui.label("").classes(
+                        "wp-readout whitespace-pre-line"
+                    )
+
+                with self._card(
+                    "Neue Aufhängung eintragen",
+                    "Gondel am Referenzpunkt, Nullpunkt gesetzt, dann drei Maße mit dem "
+                    "Zollstock nehmen.",
+                ):
+                    self.new_name = (
+                        ui.input("Name").props("dense outlined").classes("w-full")
+                    )
+                    self.new_span = (
+                        ui.number("Abstand der Umlenkpunkte mm")
+                        .props("dense outlined")
+                        .classes("w-full")
+                    )
+                    with ui.row().classes("gap-2 w-full"):
+                        self.new_left = (
+                            ui.number("linker Riemen mm")
+                            .props("dense outlined")
+                            .classes("flex-1 min-w-[8.5rem]")
+                        )
+                        self.new_right = (
+                            ui.number("rechter Riemen mm")
+                            .props("dense outlined")
+                            .classes("flex-1 min-w-[8.5rem]")
+                        )
+                    ui.button(
+                        "Standort anlegen", icon="add_location_alt", on_click=self.add_location
+                    ).props("outline no-caps color=primary").classes("w-full")
 
     def _jog_pad(self) -> None:
         ui = self.ui
-        ui.label("Gondel bewegen").classes("text-sm text-grey-8")
-        self.jog_step = ui.toggle(JOG_STEPS, value=10).props("dense")
-        ui.label("Schrittweite in mm").classes("text-xs text-grey")
+        self.jog_step = (
+            ui.toggle(JOG_STEPS, value=10)
+            .props("dense no-caps spread unelevated toggle-color=primary")
+            .classes("wp-steps w-full")
+        )
+        ui.label("Schrittweite in mm").classes("wp-hint")
 
-        with ui.grid(columns=3).classes("gap-1 w-44 my-2"):
+        with ui.element("div").classes("wp-jog w-full my-1"):
             layout = [
                 (None, ("keyboard_arrow_up", 0, 1), None),
                 (("keyboard_arrow_left", -1, 0), ("close", 0, 0), ("keyboard_arrow_right", 1, 0)),
@@ -829,49 +1273,109 @@ class WallplotterUI:
             for row in layout:
                 for cell in row:
                     if cell is None:
-                        ui.label("")
+                        ui.element("div")
                         continue
                     icon, dx, dy = cell
                     if (dx, dy) == (0, 0):
-                        ui.button(
-                            icon=icon,
-                            on_click=lambda: self.machine_command(
-                                "Jog-Stopp", self.client(5).jog_cancel
-                            ),
-                        ).props("outline color=negative").tooltip("Bewegung abbrechen")
+                        with ui.element("div").classes("wp-stop"):
+                            ui.button(
+                                icon=icon,
+                                on_click=lambda: self.machine_command(
+                                    "Jog-Stopp", self.client(5).jog_cancel
+                                ),
+                            ).props("flat").classes("w-full").tooltip("Bewegung abbrechen")
                     else:
                         ui.button(
                             icon=icon, on_click=lambda dx=dx, dy=dy: self.jog(dx, dy)
-                        ).props("outline")
+                        ).props("flat").classes("w-full")
 
-        self.jog_feed = ui.number("Jog-Vorschub mm/min", value=1000).props("dense outlined")
-        self.position_label = ui.label("").classes("text-xs text-grey font-mono")
+        self.jog_feed = (
+            ui.number("Jog-Vorschub mm/min", value=1000)
+            .props("dense outlined")
+            .classes("w-full")
+        )
+        self.position_label = ui.label("").classes("wp-readout font-mono")
 
     def _machine_panel(self) -> None:
         ui = self.ui
-        with ui.card().classes("w-96 max-lg:w-full"):
-            ui.label("Laufender Job").classes("text-sm text-grey-8")
-            self.progress = ui.linear_progress(value=0, show_value=False).classes("w-full")
-            with ui.row().classes("gap-2 mt-2"):
-                ui.button(
-                    "Pause", icon="pause", on_click=lambda: self.machine_command("Pause", self.client(5).pause)
-                ).props("outline")
-                ui.button(
-                    "Weiter", icon="play_arrow", on_click=lambda: self.machine_command("Resume", self.client(5).resume)
-                ).props("outline")
-                ui.button(
-                    "Stopp", icon="stop", on_click=lambda: self.machine_command("Stopp", self.client(5).stop)
-                ).props("outline color=negative")
-            ui.separator()
-            ui.label(
-                "Stopp sendet einen Soft-Reset (Ctrl-X) und bricht den SD-Job ab. "
-                "Danach ist der Nullpunkt neu zu setzen."
-            ).classes("text-xs text-grey")
+        with ui.row().classes("w-full gap-4 items-start max-lg:flex-wrap"):
+            with self._card("Laufender Job", width="w-[27rem] max-lg:w-full"):
+                with ui.row().classes("items-baseline gap-3 w-full no-wrap"):
+                    self.job_state = ui.label("—").classes("wp-job-state")
+                    ui.element("div").classes("flex-grow")
+                    self.job_percent = ui.label("").classes("wp-metric-value")
+                self.job_file = ui.label("kein Programm").classes("wp-job-file")
+                self.progress = (
+                    ui.linear_progress(value=0, show_value=False)
+                    .props("rounded size=8px")
+                    .classes("w-full")
+                )
+
+                with ui.row().classes("gap-6 w-full mt-1"):
+                    self.job_position = self._metric("Position")
+                    self.job_host = self._metric("Board", self.host)
+
+                self._rule()
+                with ui.row().classes("gap-2 w-full no-wrap"):
+                    ui.button(
+                        "Pause",
+                        icon="pause",
+                        on_click=lambda: self.machine_command("Pause", self.client(5).pause),
+                    ).props("outline no-caps color=primary").classes("flex-1")
+                    ui.button(
+                        "Weiter",
+                        icon="play_arrow",
+                        on_click=lambda: self.machine_command("Weiter", self.client(5).resume),
+                    ).props("outline no-caps color=primary").classes("flex-1")
+                    ui.button(
+                        "Stopp",
+                        icon="stop",
+                        on_click=lambda: self.machine_command("Stopp", self.client(5).stop),
+                    ).props("outline no-caps color=negative").classes("flex-1")
+
+            with self._card(
+                "Auf der Karte",
+                "Was schon oben liegt, lässt sich ohne Rechner wieder starten.",
+                width="w-[24rem] max-lg:w-full",
+            ):
+                self.card_list = ui.column().classes("gap-0 w-full")
+                with self.card_list:
+                    ui.label("noch nicht gelesen").classes("wp-hint")
+                ui.button("Karte lesen", icon="refresh", on_click=self.refresh_card).props(
+                    "outline no-caps dense color=primary"
+                ).classes("w-full")
+
+            with self._card(
+                "Was die drei Knöpfe tun", width="w-[24rem] max-lg:w-full"
+            ):
+                for title, text in (
+                    ("Pause", "Feed Hold — die Maschine bremst kontrolliert ab und bleibt "
+                              "auf der Bahn. Dasselbe passiert bei einer M0-Pause zum "
+                              "Stiftwechsel."),
+                    ("Weiter", "Cycle Start — fährt aus der Pause weiter, auf derselben Bahn."),
+                    ("Stopp", "Soft-Reset (Ctrl-X). Bricht den SD-Job ab und kostet die "
+                              "Maschinenposition: Danach steht ein Alarm, und der Nullpunkt "
+                              "ist neu zu setzen."),
+                ):
+                    with ui.column().classes("gap-0 w-full"):
+                        ui.label(title).classes("text-sm font-semibold")
+                        ui.label(text).classes("wp-hint")
+
+                self._rule()
+                ui.label(
+                    "Alle drei gehen über zwei Wege gleichzeitig zum Board — über den "
+                    "Kanal und über den Endpunkt der Firmware. Einer allein könnte "
+                    "unbemerkt verlorengehen."
+                ).classes("wp-hint")
 
 
 def create_app(host: str = "fluidnc.local", locations_path: str = str(LOCATIONS_PATH)):
     """UI aufbauen und das ``ui``-Modul zurückgeben (Start über :func:`main`)."""
     ui = _require_nicegui()
+    # Quasars Grundfarben auf die eigenen ziehen — sonst bleiben Schalter,
+    # Fortschrittsbalken und der Hauptknopf im Standardblau, und die Oberfläche
+    # hat zwei Akzentfarben, von denen eine nichts bedeutet.
+    ui.colors(primary=DRAW_COLOR, negative=TRAVEL_COLOR, dark="#14181c")
     app = WallplotterUI(ui, host, locations_path)
     app.build_ui()
     app.refresh_calibration()

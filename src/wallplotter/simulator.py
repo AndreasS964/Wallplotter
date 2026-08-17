@@ -811,8 +811,12 @@ class SimulatorServer(ThreadingHTTPServer):
                 self.board.tick(step)
 
     def server_close(self) -> None:
+        # `socketserver` ruft server_close() selbst auf, wenn das Binden
+        # fehlschlägt — also *bevor* __init__ die eigenen Felder gesetzt hat.
+        # Ohne getattr verdeckt hier ein AttributeError den eigentlichen Grund,
+        # und der ist meist banal: Der Port ist schon belegt.
         self._running = False
-        for channel in list(self.channels):
+        for channel in list(getattr(self, "channels", ())):
             channel.stop()
         super().server_close()
 

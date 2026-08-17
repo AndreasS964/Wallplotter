@@ -340,16 +340,26 @@ wie `[photo]`.
 ### Web-UI
 
 `python -m wallplotter.webapp`, dann `http://<pc-ip>:8080` — auch vom Handy an
-der Wand. Drei Reiter für die drei Situationen vor der Wand:
+der Wand. Oben steht dauerhaft die Kopfzeile mit Standort, Maschinenzustand
+(farbiger Punkt: grau Idle, blau Run, gelb Hold, rot Alarm) und Boardadresse.
+Darunter drei Reiter für die drei Situationen vor der Wand:
 
 - **Plotten** — Upload oder Testmuster, Verfahren für Fotos, Flächen- und
-  Stiftparameter, Vorschau (Zeichenwege blau, Leerwege rot gestrichelt),
-  Farbebenen einzeln startbar
+  Stiftparameter, Vorschau (Zeichenwege in der Stiftfarbe, Leerwege rot
+  gestrichelt), Farbebenen einzeln startbar
 - **Kalibrieren** — Jog-Pad, Nullpunkt, Ecken übernehmen und anfahren,
   Schiefstandswarnung, Standort anlegen samt Kinematik-Urteil
-- **Maschine** — SD-Fortschritt, Pause/Weiter/Stopp
+- **Maschine** — laufender Job mit Fortschritt, Position und Dateiname, Inhalt
+  der SD-Karte samt Startknopf je Datei, Pause/Weiter/Stopp
 
-Auf dem Handy stapeln sich die Karten, das Jog-Pad steht oben.
+Auf dem Handy stapeln sich die Karten; Vorschau und Startknopf stehen oben,
+die Eingabefelder darunter — man schaut vor der Wand aufs Bild, nicht auf
+Formulare.
+
+Die Bilder im README nimmt `python tools/ui_screenshots.py` neu auf: Simulator
+starten, Oberfläche anhängen, Testmuster laden, alle Reiter fotografieren, am
+Rechner und am Handy. Braucht `playwright` und einen Chromium — beides gehört
+bewusst nicht in die Abhängigkeiten des Projekts.
 
 ### Web-API des Boards
 

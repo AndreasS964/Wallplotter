@@ -140,6 +140,38 @@ Die Abbildung `docs/images/verfahren.png` zeigt endlich alle vier Verfahren
 mit `tools/technique_figure.py` reproduzieren — samt gerechneter Angaben unter
 den Bildern.
 
+### Die Oberfläche sieht jetzt nach Programm aus
+
+Bisher war die Web-UI eine Reihe gestapelter Bedienelemente — funktionsfähig,
+aber erkennbar Behelf. Sie hat jetzt eine eigene Gestalt:
+
+- **Kopfzeile, die immer sichtbar bleibt**: Standort, Maschinenzustand als
+  farbiger Punkt mit Klartext (grau Idle, blau Run, gelb Hold, rot Alarm) und
+  die Boardadresse. Vorher musste man in den Reiter *Maschine* wechseln, um zu
+  sehen, ob überhaupt jemand antwortet.
+- **Karten statt Kästen**: ein durchgehendes Farb- und Abstandsschema
+  (`--wp-*`-Variablen), eine Überschrift je Karte, dazu ein Satz, der sagt,
+  wofür sie da ist.
+- **Vorschau als Bühne** mit Legende („Stift unten" in der Stiftfarbe,
+  „Leerweg" rot gestrichelt) und einem gezeichneten Leerzustand statt eines
+  leeren Rechtecks. Die Striche werden in **Bildschirmpunkten** gezogen
+  (`screen_stroke_px`): Ein halber Millimeter auf zwei Metern Wand war vorher
+  ein Zehntel Pixel und damit unsichtbar.
+- **Am Handy** stehen Vorschau und Startknopf oben, die Eingabefelder darunter
+  — die Reihenfolge, in der man vor der Wand arbeitet.
+- **Reiter *Maschine*** zeigt den laufenden Job mit Zustand, Prozent,
+  Dateiname und Position, daneben neu den **Inhalt der SD-Karte** mit Größe
+  und Startknopf je Datei. Damit lässt sich ein Plot wiederholen, ohne ihn
+  noch einmal hochzuladen; gelesen wird beim Öffnen von selbst und still, denn
+  ein noch ausgeschaltetes Board ist beim Start der Normalfall.
+- **Tooltips an den Musterknöpfen entfernt.** Auf einem Touchgerät bleiben sie
+  nach dem Antippen stehen und verdecken genau das, was man gerade angetippt
+  hat — der erklärende Satz steht jetzt unter den Knöpfen.
+- **`tools/ui_screenshots.py`** nimmt die Bilder der Dokumentation neu auf:
+  Simulator starten, Oberfläche anhängen, Testmuster laden, alle Reiter
+  fotografieren, am Rechner und am Handy. Damit veraltet das README nicht
+  neben der Oberfläche.
+
 ### Dokumentation
 
 - **[`docs/inbetriebnahme.md`](docs/inbetriebnahme.md)** — was sich vorher
