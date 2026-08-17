@@ -211,9 +211,11 @@ wallplotter-correct anpassen              # → korrektur.json
 ### 11. Erst danach: der Laser
 
 Nicht am selben Tag. Der Laserpfad ist gegen die Dokumentation und den
-Quelltext gebaut, aber an keiner Hardware erprobt. Vor dem ersten scharfen
-Schuss gehört das erzeugte Programm **gelesen**, nicht geglaubt — und Stift
-und Laser können weder denselben Pin noch dieselbe Frequenz benutzen.
+Quelltext gebaut und läuft durch den Simulator, ohne dass der Strahl je auf
+einem Leerweg anstünde — an Hardware erprobt ist er trotzdem nicht. Vor dem
+ersten scharfen Schuss gehört das erzeugte Programm **gelesen**, nicht
+geglaubt — und Stift und Laser können weder denselben Pin noch dieselbe
+Frequenz benutzen.
 
 ---
 

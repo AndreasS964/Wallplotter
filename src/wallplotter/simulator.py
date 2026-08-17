@@ -20,6 +20,12 @@ sie finden soll. Deshalb hält er sich auch an die unbequemen Regeln:
 * Ein Soft-Reset mitten in der Fahrt hinterlässt einen **Alarm**, kein
   aufgeräumtes Idle — die Maschinenposition ist danach eben weg.
 
+Was er dagegen *mitschreibt*: den Spindelzustand. Mit ``laser_mode=True``
+merkt er sich modal, welcher Modus und welches ``S`` gelten, und hält fest,
+wo ein Leerweg oder eine Wartezeit mit eingeschaltetem Strahl angetreten
+wird — die eine Laserinvariante, die sich nicht am Text eines Programms
+ablesen lässt, sondern nur an seinem Ablauf.
+
 Was er *nicht* ist: ein Bewegungssimulator. Er fährt keine Rampen und rechnet
 keine Kinematik; die Position folgt schlicht den X/Y-Werten der abgespielten
 Zeilen. Für Laufzeiten ist :mod:`wallplotter.timing` zuständig, für Auflösung
@@ -116,6 +122,26 @@ class BoardSimulator:
     bytes_per_s: float = DEFAULT_BYTES_PER_S
     log: list[str] = field(default_factory=list)
     lock: threading.RLock = field(default_factory=threading.RLock)
+
+    # -- Spindel / Laser --------------------------------------------------
+
+    spindle_mode: str = "M5"
+    """``M3`` (konstante Leistung), ``M4`` (mit dem Vorschub geregelt), ``M5`` (aus)."""
+
+    spindle_s: float = 0.0
+
+    laser_mode: bool = False
+    """Entspricht ``laser_mode`` in der ``config.yaml``.
+
+    Nur damit werden Laserverstöße mitgeschrieben: Am Stift ist ein
+    stehendes ``S`` während eines Leerwegs völlig normal — es *hält* den Servo
+    in der oberen Stellung. Am Laser wäre genau dasselbe ein Brandloch quer
+    über die Wand. Dieselbe Zeile, entgegengesetzte Bedeutung; ohne diesen
+    Schalter könnte der Simulator die beiden Fälle nicht unterscheiden.
+    """
+
+    laser_violations: list[str] = field(default_factory=list)
+    """Was beim Abspielen aufgefallen ist — Strahl an, wo er aus sein müsste."""
 
     # -- Auskunft ---------------------------------------------------------
 
@@ -223,6 +249,7 @@ class BoardSimulator:
 
     def _gcode(self, line: str) -> str:
         upper = line.upper()
+        self._spindle(upper)
         if upper.startswith("G92"):
             target = self._xy(line, self.x, self.y)
             self.g92_offset = (self.x - target[0], self.y - target[1])
@@ -231,10 +258,47 @@ class BoardSimulator:
             target = self._xy(line, 0.0, 0.0)
             self.work_offset = target
             return ""
-        if upper.startswith(("G0", "G1")):
+        if upper.startswith("G4"):
+            if self.laser_mode and self.beam_on:
+                self.laser_violations.append(f"Warten mit eingeschaltetem Strahl: {line}")
+            return ""
+        if upper.startswith("G0"):
+            if self.laser_mode and self.beam_on:
+                self.laser_violations.append(f"Leerweg mit eingeschaltetem Strahl: {line}")
+            self.x, self.y = self._xy(line, self.x, self.y)
+            return ""
+        if upper.startswith("G1"):
             self.x, self.y = self._xy(line, self.x, self.y)
             return ""
         return ""
+
+    @property
+    def beam_on(self) -> bool:
+        """Gibt die Spindel gerade Leistung ab?
+
+        ``M4`` regelt die Leistung mit dem Vorschub und wäre im Stillstand
+        harmlos — für die Prüfung zählt trotzdem das gesetzte ``S``: Ein
+        Programm, das den Leerweg mit ``S>0`` antritt, verlässt sich darauf,
+        dass die Firmware im richtigen Modus steht. Das ist eine Zeile in
+        einer YAML-Datei, und Brandlöcher sind kein guter Ort für Vertrauen.
+        """
+        return self.spindle_mode in {"M3", "M4"} and self.spindle_s > 0
+
+    def _spindle(self, upper: str) -> None:
+        """``M3``/``M4``/``M5`` und ``S`` mitschreiben — modal, wie bei GRBL."""
+        for token in upper.replace(";", " ; ").split():
+            if token == ";":
+                break
+            if token in {"M3", "M03", "M4", "M04"}:
+                self.spindle_mode = "M3" if token in {"M3", "M03"} else "M4"
+            elif token in {"M5", "M05"}:
+                self.spindle_mode = "M5"
+                self.spindle_s = 0.0
+            elif token.startswith("S") and len(token) > 1:
+                try:
+                    self.spindle_s = float(token[1:])
+                except ValueError:
+                    pass
 
     def _jog(self, argument: str) -> str:
         """``$J=G91 …`` und ``$J=G90 …``. Bewegung ohne Zeit — siehe Modulkopf."""

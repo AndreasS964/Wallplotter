@@ -420,3 +420,65 @@ def test_a_second_plot_does_not_overwrite_a_running_one(api, board):
     laufend = api.status()
     assert laufend.sd_file == "/wand.gcode"
     assert laufend.state == "Run"
+
+
+# -- Laser -------------------------------------------------------------------
+
+
+def _laser_program() -> str:
+    from wallplotter.config import PlotConfig
+    from wallplotter.gcode import geometry_to_gcode, prepare_geometry
+    from wallplotter.patterns import build
+    from wallplotter.toolhead import toolhead_by_name
+
+    config = PlotConfig(
+        width_mm=1000, height_mm=1200, margin_mm=50, toolhead=toolhead_by_name("laser")
+    )
+    pattern = build("frame", 1000, 1200, 50)
+    geometry = prepare_geometry(pattern.lines, config, fit=False, invert_y=False)
+    return geometry_to_gcode(geometry, config, header="Lasertest")
+
+
+def test_the_laser_program_never_travels_with_the_beam_on():
+    """Die Laserinvariante am *abgespielten* Programm, nicht am Text.
+
+    Die Zeilenprüfungen in `test_gcode.py` lesen, was dasteht. Hier wird es
+    ausgeführt: modaler Spindelzustand über das ganze Programm hinweg, und bei
+    jedem Leerweg die Frage, ob der Strahl gerade Leistung abgibt. Ein `S0`,
+    das an der falschen Stelle steht, fällt nur so auf.
+    """
+    sim = BoardSimulator(laser_mode=True)
+    sim.store("/laser.gcode", _laser_program())
+    sim.start_job("/laser.gcode")
+    sim.tick(1000.0)
+
+    assert sim.state == "Idle"
+    assert sim.laser_violations == []
+    assert sim.spindle_mode == "M5"
+    assert sim.spindle_s == 0.0
+
+
+def test_a_wrong_laser_program_is_caught():
+    """Gegenprobe — sonst prüft die Prüfung nur sich selbst."""
+    sim = BoardSimulator(laser_mode=True)
+    sim.store("/bad.gcode", "M4 S500\nG1 X10 Y10 F600\nG0 X50 Y50\nG4 P0.5\nM5\n")
+    sim.start_job("/bad.gcode")
+    sim.tick(1000.0)
+
+    assert len(sim.laser_violations) == 2
+    assert "Leerweg" in sim.laser_violations[0]
+    assert "Warten" in sim.laser_violations[1]
+
+
+def test_the_same_lines_are_harmless_with_a_pen():
+    """Warum es den Schalter überhaupt gibt.
+
+    Am Stift *hält* ein stehendes `S` den Servo oben — während eines Leerwegs
+    ist das nicht nur erlaubt, sondern nötig. Dieselbe Zeile, entgegengesetzte
+    Bedeutung.
+    """
+    sim = BoardSimulator(laser_mode=False)
+    sim.store("/stift.gcode", "M3 S30\nG1 X10 Y10 F1500\nG0 X50 Y50\nG4 P0.25\nM5\n")
+    sim.start_job("/stift.gcode")
+    sim.tick(1000.0)
+    assert sim.laser_violations == []

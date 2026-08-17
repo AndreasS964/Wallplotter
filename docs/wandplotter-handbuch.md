@@ -3,7 +3,7 @@
 Alles zum Projekt an einer Stelle: was gebaut wird, warum es so gebaut wird,
 was gemessen und gerechnet wurde, und wie man es bedient.
 
-*Stand: August 2026 · Version 0.3.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 471 Tests, CI grün*
+*Stand: August 2026 · Version 0.3.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 474 Tests, CI grün*
 
 ---
 
@@ -138,6 +138,14 @@ brennt ein Seilplotter jede Ecke durch), rechnet die Leistung in Prozent von
 einem einstellbaren `s_max`, setzt `S0` vor jeden Leerweg, rollt mehrere
 Durchgänge aus und **verweigert** `--travel-as-g1`. Ohne
 `--laser-verstanden` entsteht kein Laser-GCode.
+
+Seit 0.3.0 wird das erzeugte Programm zusätzlich **abgespielt**: Der Simulator
+führt es mit `laser_mode` aus, schreibt den Spindelzustand modal mit und hält
+fest, wo ein Leerweg oder eine Wartezeit mit eingeschaltetem Strahl angetreten
+würde. Das ist der Unterschied zwischen „die richtigen Zeilen stehen da" und
+„an keiner Stelle des Ablaufs brennt es" — ein `S0` an der falschen Stelle
+fällt nur beim Ausführen auf. Eine Gegenprobe mit einem absichtlich falschen
+Programm steht daneben, damit die Prüfung nicht nur sich selbst prüft.
 
 ### Was bewusst fehlt
 
@@ -409,7 +417,7 @@ wichtiger als eine Versionsnummer:
 
 | | Zustand |
 | --- | --- |
-| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 471 Tests |
+| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 474 Tests |
 | Laufzeitschätzung, Fortsetzen, Vorverzerrung, Kalibrierlogik | **läuft**, gegen erzeugte Programme geprüft |
 | Web-UI, alle sieben CLIs | **läuft**, ohne Board bedienbar |
 | Upload, Jog, Status, Halt, `$SD/Run` | gegen den Firmware-**Quelltext** gebaut und gegen den mitgelieferten Simulator gefahren, **nie an einem Board** |
@@ -643,7 +651,9 @@ dunklen Stellen bedient. Die Statistik zeigt das vor jedem Plot an.
 - Servo-Pin: Der PWM-Header ist ausgeschieden (Abschnitt 5), `gpio.26` am
   OLED-Header ist die begründete Wahl — Pinfolge, Spannung und Pegelfestigkeit
   sind am Board zu messen
-- Der komplette Laserpfad
+- Der komplette Laserpfad an echter Hardware. Das erzeugte Programm läuft
+  inzwischen durch den Simulator, ohne dass der Strahl je auf einem Leerweg
+  oder in einer Wartezeit anstünde — aber ein Simulator brennt auch nichts an.
 
 **Seit der Nachprüfung geklärt:**
 

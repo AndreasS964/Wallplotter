@@ -70,6 +70,19 @@ Pfads, weshalb die Firmware ihre Größenprüfung nicht gefunden hätte.
   herausgeführten GPIO; die `config.yaml` nennt jetzt `gpio.26` am
   OLED-Header, mit dem, was am Board nachzumessen ist.
 
+### Der Laserpfad wird jetzt abgespielt, nicht nur gelesen
+
+Der Simulator schreibt den Spindelzustand modal mit und hält fest, wo ein
+Leerweg oder eine Wartezeit mit eingeschaltetem Strahl angetreten würde. Das
+ist der Unterschied zwischen „die richtigen Zeilen stehen da" und „an keiner
+Stelle des Ablaufs brennt es": Ein `S0` an der falschen Stelle fällt nur beim
+Ausführen auf. Das erzeugte Programm läuft sauber durch; ein absichtlich
+falsches wird an beiden Stellen gefasst.
+
+Dass am Stift dieselben Zeilen harmlos sind — ein stehendes `S` *hält* dort
+den Servo oben —, ist der Grund für den Schalter: Ohne ihn könnte der
+Simulator die beiden Fälle nicht unterscheiden.
+
 ### Zwei Plots übereinander gehen jetzt nicht mehr
 
 Es prüfte nichts, ob die Maschine überhaupt frei ist — und FluidNC wehrt sich
