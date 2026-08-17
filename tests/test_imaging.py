@@ -230,3 +230,20 @@ def test_darkness_outside_the_image_is_zero_on_both_sides():
     assert image.darkness(-0.4, 0.5) == 0.0
     assert image.darkness(0.5, -0.4) == 0.0
     assert image.darkness(2.5, 0.5) == 0.0
+
+
+def test_blur_keeps_a_flat_image_flat():
+    """Die härteste Probe für die Randbehandlung eines Kastenfilters.
+
+    Wird am Rand der falsche Wert fortgesetzt, wandert ein konstantes Bild —
+    und bei Bildern, die schmaler sind als der Radius, fällt genau das nicht
+    auf, weil sich beide Ränder überlagern.
+    """
+    from wallplotter.imaging import _box_blur
+
+    for size, radius in ((5, 2), (2, 4), (1, 3), (7, 1)):
+        image = GrayImage([[0.4] * size for _ in range(size)], size, size)
+        blurred = _box_blur(image, radius)
+        assert all(abs(value - 0.4) < 1e-12 for row in blurred.pixels for value in row), (
+            f"{size}×{size} mit Radius {radius} bleibt nicht konstant"
+        )

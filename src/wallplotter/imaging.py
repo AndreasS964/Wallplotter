@@ -365,30 +365,34 @@ def _box_blur(image: GrayImage, radius: int) -> GrayImage:
     width, height = image.width, image.height
     span = 2 * radius + 1
 
-    horizontal = []
-    for row in image.pixels:
-        # gleitende Summe statt Neuberechnung je Pixel: sonst wächst der
-        # Aufwand mit dem Radius statt mit der Bildgröße
-        total = sum(row[: min(radius + 1, width)]) + row[0] * max(0, radius + 1 - width)
-        total += row[0] * radius
-        out = []
-        for col in range(width):
-            out.append(total / span)
-            total -= row[max(0, col - radius)]
-            total += row[min(width - 1, col + radius + 1)]
-        horizontal.append(out)
-
+    horizontal = [_blur_row(row, radius, span) for row in image.pixels]
     result = [[0.0] * width for _ in range(height)]
     for col in range(width):
-        column = [horizontal[row][col] for row in range(height)]
-        total = sum(column[: min(radius + 1, height)]) + column[0] * max(0, radius + 1 - height)
-        total += column[0] * radius
+        column = _blur_row([horizontal[row][col] for row in range(height)], radius, span)
         for row in range(height):
-            result[row][col] = total / span
-            total -= column[max(0, row - radius)]
-            total += column[min(height - 1, row + radius + 1)]
+            result[row][col] = column[row]
 
     return GrayImage(result, width, height)
+
+
+def _blur_row(row: list[float], radius: int, span: int) -> list[float]:
+    """Eine Zeile mit gleitender Summe glätten, Ränder fortgesetzt.
+
+    Gleitende Summe statt Neuberechnung je Pixel: sonst wächst der Aufwand mit
+    dem Radius statt mit der Bildgröße. Am Rand wird der jeweils äußerste Wert
+    fortgesetzt — links der erste, **rechts der letzte**. Beide Seiten mit dem
+    ersten zu füllen wäre nur bei Bildern breiter als der Radius folgenlos, und
+    genau da fällt es nicht auf.
+    """
+    length = len(row)
+    total = sum(row[i] if i < length else row[-1] for i in range(radius + 1))
+    total += row[0] * radius
+    out = []
+    for index in range(length):
+        out.append(total / span)
+        total -= row[max(0, index - radius)]
+        total += row[min(length - 1, index + radius + 1)]
+    return out
 
 
 def _hatch_layer(
