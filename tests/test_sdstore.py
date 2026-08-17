@@ -12,25 +12,47 @@ from wallplotter.upload import FluidNCClient
 
 
 class FakeCard:
-    """Speichert, was hochgeladen wird, und gibt es beim Lesen zurück."""
+    """Speichert, was hochgeladen wird, und gibt es beim Lesen zurück.
+
+    Spielt beide Rollen zugleich: den HTTP-Teil (Schreiben geht über
+    ``POST /upload``) und den Kanal (Lesen geht über ``$SD/Show=…``, weil
+    FluidNC vor Version 4 keinen HTTP-Pfad zum Kartenspeicher hat).
+    """
 
     def __init__(self, content: str | None = None):
         self.files: dict[str, str] = {}
         if content is not None:
             self.files[f"/{REMOTE_LOCATIONS}"] = content
+        self._answer: list[str] = []
 
+    # -- HTTP ---------------------------------------------------------
     def post(self, url, params=None, data=None, files=None, timeout=None):
         (path, (_, payload, _)), = files.items()
         self.files[path] = payload.decode() if isinstance(payload, bytes) else payload
         return type("R", (), {"text": "ok", "status_code": 200})()
 
-    def get(self, url, params=None, timeout=None):
-        if "/sd/" in url:
-            path = "/" + url.split("/sd/", 1)[1]
-            if path not in self.files:
-                return type("R", (), {"text": "not found", "status_code": 404})()
-            return type("R", (), {"text": self.files[path], "status_code": 200})()
+    def get(self, url, params=None, timeout=None, allow_redirects=True):
         return type("R", (), {"text": "{}", "status_code": 200})()
+
+    # -- Kanal --------------------------------------------------------
+    connected = True
+
+    def connect(self):
+        pass
+
+    def close(self):
+        pass
+
+    def send_line(self, text):
+        if text.startswith("$SD/Show="):
+            path = text.split("=", 1)[1]
+            # Die Firmware meldet einen Lesefehler als error-Zeile, nicht als
+            # HTTP-Status — der Kanal kennt keine Statuscodes.
+            self._answer = [self.files.get(path, "error:60 (Bad file)")]
+
+    def poll(self, timeout_s=0.0):
+        answer, self._answer = self._answer, []
+        return answer
 
 
 def make_location(name="Keller", **kwargs) -> Location:
@@ -44,7 +66,7 @@ def make_location(name="Keller", **kwargs) -> Location:
 
 
 def client_for(card: FakeCard) -> FluidNCClient:
-    return FluidNCClient(FluidNCConfig(host="wandplotter.local"), card)
+    return FluidNCClient(FluidNCConfig(host="wandplotter.local"), card, card)
 
 
 def test_push_writes_a_readable_file():

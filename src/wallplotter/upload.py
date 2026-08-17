@@ -1,9 +1,30 @@
-"""HTTP-Anbindung an FluidNC: Datei-Upload, Job starten, Status pollen.
+"""Anbindung an FluidNC: Dateien über HTTP, alles Maschinennahe über den Kanal.
 
-Die Endpunkte entsprechen dem ESP3D-basierten Webserver von FluidNC
-(``/upload`` für Dateien, ``/command?plain=…`` für GRBL-Kommandos). Sie sind
-gegen die eigene Firmware-Version zu prüfen, sobald das Board läuft — deshalb
-sind Pfad und Endpunkt hier konfigurierbar statt fest verdrahtet.
+Die Endpunkte sind gegen den Quelltext der Firmware geprüft (v3.9.9, v4.0.4
+und der Stand von master — in diesen Punkten identisch), nicht gegen die
+allgemeine ESP3D-Dokumentation. Das ist ein Unterschied mit Folgen: FluidNC
+bringt einen **eigenen** Webserver mit, der nur einen Teil von ESP3D
+nachbildet und dabei andere Pfade benutzt.
+
+Die drei Dinge, die man wissen muss:
+
+* ``/upload`` ist die **SD-Karte**, ``/files`` ist der Flash des ESP32.
+  Ein ``/sdfiles`` gibt es in FluidNC nicht — dieser Pfad landet im
+  404-Handler. (In der ESP3D-Doku steht es andersherum; die beschreibt die
+  eigenständige ESP3D-Firmware, nicht den in FluidNC eingebauten Server.)
+* ``/command?plain=…`` taugt nur für ``$``-Kommandos. Der Handler ruft
+  ``settings_execute_line()`` auf, und die Funktion schneidet das erste
+  Zeichen ab. ``G92 X0 Y0`` wird dadurch zur Suche nach einer Einstellung
+  namens ``92 X0 Y0``, ``?`` zur Suche nach dem leeren Namen. Kein G-Code,
+  kein Statusreport, keine Realtime-Bytes.
+* ``/command`` antwortet mit **HTTP 503**, solange die Maschine fährt und
+  ``$HTTP/BlockDuringMotion`` steht — und das ist die Voreinstellung.
+
+Deshalb: Für Status, Jog, Nullpunkt und Realtime läuft alles über
+:class:`wallplotter.channel.BoardChannel`. Halt, Weiter und Not-Aus haben
+zusätzlich eigene HTTP-Endpunkte (``/feedhold_reload`` und Geschwister), die
+die Firmware auch während der Fahrt bedient — die bleiben damit auch dann
+erreichbar, wenn der Kanal gerade nicht steht.
 """
 
 from __future__ import annotations
@@ -13,6 +34,15 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from .channel import (
+    CYCLE_START,
+    FEED_HOLD,
+    JOG_CANCEL,
+    SOFT_RESET,
+    STATUS_REPORT,
+    BoardChannel,
+    ChannelError,
+)
 from .config import FluidNCConfig
 
 __all__ = [
@@ -20,6 +50,7 @@ __all__ = [
     "FEED_HOLD",
     "JOG_CANCEL",
     "SOFT_RESET",
+    "STATUS_REPORT",
     "FluidNCError",
     "FluidNCClient",
     "MachineStatus",
@@ -29,16 +60,29 @@ __all__ = [
 
 _STATUS_RE = re.compile(r"<([^>]*)>")
 
-# GRBL-Realtime-Bytes. Als Zahlen, nicht als Zeichen: sie gehen als
-# Prozent-Escape auf die Leitung, und ein Zeichen jenseits von ASCII würde
-# unterwegs zu UTF-8 werden (siehe FluidNCClient.send_realtime).
-FEED_HOLD = 0x21
-CYCLE_START = 0x7E
-SOFT_RESET = 0x18
-JOG_CANCEL = 0x85
+# -- Endpunkte, gegen den Firmware-Quelltext geprüft -------------------------
+
+SD_PATH = "/upload"
+"""Datei-Upload **und** Verzeichnis der µSD-Karte (``SDFileUpload`` /
+``handle_direct_SDFileList``)."""
+
+FLASH_PATH = "/files"
+"""Der Flash-Speicher des ESP32. Steht hier nur, damit klar ist, was er ist —
+benutzt wird er nicht: Ein Wandbild gehört auf die Karte."""
+
+COMMAND_PATH = "/command"
+FEED_HOLD_PATH = "/feedhold_reload"
+CYCLE_START_PATH = "/cyclestart_reload"
+RESET_PATH = "/restart_reload"
 
 REALTIME_TIMEOUT_S = 5.0
 """Ein Not-Halt darf nicht so lange warten dürfen wie ein Datei-Upload."""
+
+_BLOCKED_HINT = (
+    "Das Board blockiert HTTP-Kommandos während der Fahrt. "
+    "Einmalig `$HTTP/BlockDuringMotion=OFF` setzen — oder den Kanal benutzen, "
+    "den die Sperre nicht betrifft."
+)
 
 
 class FluidNCError(RuntimeError):
@@ -47,7 +91,7 @@ class FluidNCError(RuntimeError):
 
 @contextmanager
 def _as_fluidnc_error(message: str):
-    """Netzwerkfehler in FluidNCError übersetzen.
+    """Netzwerk- und Kanalfehler in FluidNCError übersetzen.
 
     Ein nicht erreichbares Board ist der Normalfall, nicht die Ausnahme — die
     Oberfläche soll das melden können, statt an einer requests-Ausnahme
@@ -63,7 +107,7 @@ def _as_fluidnc_error(message: str):
 
 @dataclass(frozen=True)
 class MachineStatus:
-    """Ausgewertete Antwort auf ein ``?``-Statusabfrage."""
+    """Ausgewertete Antwort auf eine ``?``-Statusabfrage."""
 
     state: str
     """z. B. ``Idle``, ``Run``, ``Hold``, ``Alarm``."""
@@ -121,15 +165,22 @@ def parse_status(raw: str) -> MachineStatus:
 
 
 class FluidNCClient:
-    """Dünner Client um die FluidNC-Web-API.
+    """Client um die beiden Wege ins Board.
 
-    ``session`` ist injizierbar (alles, was ``get``/``post`` wie ``requests``
-    anbietet) — das hält die Klasse testbar, ohne ein Board im Netz.
+    ``session`` (alles mit ``get``/``post`` wie bei ``requests``) und
+    ``channel`` (alles wie :class:`~wallplotter.channel.BoardChannel`) sind
+    injizierbar — das hält die Klasse testbar, ohne ein Board im Netz.
     """
 
-    def __init__(self, config: FluidNCConfig | None = None, session: Any = None) -> None:
+    def __init__(
+        self,
+        config: FluidNCConfig | None = None,
+        session: Any = None,
+        channel: Any = None,
+    ) -> None:
         self.config = config or FluidNCConfig()
         self._session = session
+        self._channel = channel
 
     @property
     def session(self) -> Any:
@@ -143,54 +194,103 @@ class FluidNCClient:
             self._session = requests.Session()
         return self._session
 
+    @property
+    def channel(self) -> Any:
+        """Der offene Kanal zum Board, bei Bedarf aufgebaut."""
+        if self._channel is None:
+            self._channel = BoardChannel(
+                self.config.host,
+                timeout_s=min(self.config.timeout_s, 5.0),
+                connect_timeout_s=min(self.config.timeout_s, 5.0),
+            )
+        if not self._channel.connected:
+            with _as_fluidnc_error("Kanal zum Board"):
+                self._channel.connect()
+        return self._channel
+
+    def close(self) -> None:
+        """Den Kanal schließen. Der HTTP-Teil braucht kein Aufräumen."""
+        if self._channel is not None:
+            self._channel.close()
+
+    def __enter__(self) -> FluidNCClient:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
     # -- Basisoperationen -------------------------------------------------
 
     def send_command(self, command: str) -> str:
-        """GRBL-/FluidNC-Kommando senden und die Antwort als Text liefern."""
+        """Eine Zeile an die Maschine schicken.
+
+        Bevorzugt den Kanal, weil dort auch G-Code ankommt und die
+        Bewegungssperre nicht greift. Steht der Kanal nicht, bleibt für
+        ``$``-Kommandos der HTTP-Weg; für G-Code gibt es keinen zweiten Weg,
+        und dann sagt die Meldung genau das.
+        """
+        try:
+            channel = self.channel
+        except FluidNCError as exc:
+            if not command.startswith(("$", "[")):
+                raise FluidNCError(
+                    f"{command!r} braucht den WebSocket-Kanal — über HTTP nimmt "
+                    f"FluidNC nur $-Kommandos an ({exc})"
+                ) from exc
+            return self.send_http_command(command)
+
+        with _as_fluidnc_error(f"Kommando {command!r} fehlgeschlagen"):
+            channel.send_line(command)
+            return "\n".join(channel.poll(0.3))
+
+    def send_http_command(self, command: str) -> str:
+        """Ein ``$``-Kommando über ``/command?plain=`` schicken.
+
+        Nur für ``$``- und ``[ESPxxx]``-Kommandos brauchbar (siehe Modulkopf).
+        Bleibt als Rückfallebene und für den Selbsttest erreichbar.
+        """
         with _as_fluidnc_error(f"Kommando {command!r} fehlgeschlagen"):
             response = self.session.get(
-                f"{self.config.base_url}/command",
+                f"{self.config.base_url}{COMMAND_PATH}",
                 params={"plain": command},
                 timeout=self.config.timeout_s,
             )
         return self._text_or_raise(response, f"Kommando {command!r} fehlgeschlagen")
 
     def send_realtime(self, byte: int) -> str:
-        """Ein Realtime-Byte schicken — Halt, Weiter, Reset, Jog-Abbruch.
+        """Ein Realtime-Byte schicken — Status, Halt, Weiter, Reset, Jog-Abbruch.
 
-        Realtime-Bytes sind keine Kommandos: GRBL wertet sie sofort aus, noch
-        bevor eine Zeile im Puffer steht. Zwei Gründe, warum sie hier einen
-        eigenen Weg brauchen statt über :meth:`send_command` zu laufen:
-
-        * **Kodierung.** ``requests`` kodiert Zeichen jenseits von ASCII als
-          UTF-8, wenn sie durch ``params=`` gehen. Aus dem Jog-Abbruch ``0x85``
-          würde ``0xC2 0x85``, also zwei Bytes — das Board sähe nie das Byte,
-          auf das es wartet. Die Escape-Sequenz wird deshalb selbst gebaut.
-        * **Zeit.** Ein Not-Halt darf nicht dieselbe Geduld haben wie ein
-          Datei-Upload; hier gilt ein kurzes, festes Zeitlimit.
+        Realtime-Bytes sind keine Kommandos: Die Firmware wertet sie aus,
+        bevor eine Zeile im Puffer steht. Über HTTP führt kein Weg dorthin
+        (``/command?plain=%21`` landet in der Kommandotabelle statt beim
+        Realtime-Zweig), über den Kanal schon.
         """
         if not 0 <= byte <= 0xFF:
             raise FluidNCError("Ein Realtime-Byte liegt zwischen 0 und 255")
-        timeout = min(self.config.timeout_s, REALTIME_TIMEOUT_S)
-        url = f"{self.config.base_url}/command?plain=%{byte:02X}"
         with _as_fluidnc_error(f"Realtime-Byte 0x{byte:02X} fehlgeschlagen"):
-            response = self.session.get(url, timeout=timeout)
-        return self._text_or_raise(response, f"Realtime-Byte 0x{byte:02X} fehlgeschlagen")
+            self.channel.send_realtime(byte)
+        return ""
 
     def upload(self, data: bytes | str, filename: str) -> str:
         """Datei auf die µSD-Karte des Boards laden.
 
-        Endpunkt ist ``/sdfiles`` — ``/upload`` schreibt in ESP3D v3 auf den
-        Flash-Speicher des ESP32, nicht auf die Karte.
+        Endpunkt ist ``/upload``. Das Feld im Multipart heißt wie der volle
+        Zielpfad, und daneben steht ein Parameter ``<pfad>S`` mit der
+        Bytegröße — die Firmware prüft damit vorher den freien Platz und
+        hinterher, ob alles angekommen ist.
         """
         payload = data.encode("utf-8") if isinstance(data, str) else data
-        remote_dir = self.config.remote_dir if self.config.remote_dir.endswith("/") else self.config.remote_dir + "/"
+        remote_dir = (
+            self.config.remote_dir
+            if self.config.remote_dir.endswith("/")
+            else self.config.remote_dir + "/"
+        )
         remote_path = f"{remote_dir}{filename}"
 
         with _as_fluidnc_error(f"Upload von {filename!r} fehlgeschlagen"):
             response = self.session.post(
-                f"{self.config.base_url}/sdfiles",
-                params={"path": remote_dir, "createPath": "yes"},
+                f"{self.config.base_url}{SD_PATH}",
+                params={"path": remote_dir},
                 data={f"{remote_path}S": str(len(payload))},
                 files={remote_path: (filename, payload, "text/plain")},
                 timeout=self.config.timeout_s,
@@ -199,40 +299,62 @@ class FluidNCClient:
         return remote_path
 
     def download(self, remote_path: str) -> str:
-        """Datei von der Karte lesen (``GET /sd/<pfad>``)."""
+        """Datei von der Karte lesen.
+
+        Über ``$SD/Show=<pfad>``, nicht über einen HTTP-Pfad: Der WebDAV-Mount
+        ``/sd`` gibt es erst ab FluidNC 4, ``$SD/Show`` in jeder Fassung. Die
+        Firmware verlangt dafür Idle oder Alarm — während eines laufenden
+        Plots liest hier niemand.
+        """
         path = remote_path if remote_path.startswith("/") else f"/{remote_path}"
-        with _as_fluidnc_error(f"Lesen von {path!r} fehlgeschlagen"):
-            response = self.session.get(
-                f"{self.config.base_url}/sd{path}", timeout=self.config.timeout_s
-            )
-        return self._text_or_raise(response, f"Lesen von {path!r} fehlgeschlagen")
+        text = self.send_command(f"$SD/Show={path}")
+        stripped = text.strip()
+        if stripped.startswith("error:") or "Bad file" in stripped or "No SD" in stripped:
+            raise FluidNCError(f"Lesen von {path!r} fehlgeschlagen: {stripped}")
+        return text
 
     def list_files(self, directory: str = "/") -> str:
-        """Verzeichnis der Karte auflisten (JSON-Antwort als Text)."""
+        """Verzeichnis der Karte auflisten (JSON-Antwort als Text).
+
+        Die Firmware listet immer, wenn nicht ``dontlist=yes`` danebensteht —
+        ein ``action=list`` kennt sie nicht; ``action`` ist dort für Löschen,
+        Anlegen und Umbenennen reserviert.
+        """
         with _as_fluidnc_error("Dateiliste fehlgeschlagen"):
             response = self.session.get(
-                f"{self.config.base_url}/sdfiles",
-                params={"path": directory, "action": "list"},
+                f"{self.config.base_url}{SD_PATH}",
+                params={"path": directory},
                 timeout=self.config.timeout_s,
             )
         return self._text_or_raise(response, "Dateiliste fehlgeschlagen")
 
     def run_file(self, remote_path: str) -> str:
-        """Datei von der SD-Karte abspielen lassen."""
+        """Datei von der SD-Karte abspielen lassen.
+
+        Bewusst über den Kanal: Die Firmware hängt den Job an den Kanal, der
+        ihn gestartet hat. Über HTTP wäre das ein Wegwerf-Kanal, der mit der
+        Antwort stirbt — die Ausgabe des Jobs ginge ins Leere.
+        """
         return self.send_command(f"$SD/Run={remote_path}")
 
-    # -- Jobsteuerung (Stufe 6) -------------------------------------------
+    # -- Jobsteuerung -----------------------------------------------------
 
     def status(self) -> MachineStatus:
-        return parse_status(self.send_command("?"))
+        """Statusreport holen (``?`` über den Kanal)."""
+        with _as_fluidnc_error("Statusabfrage fehlgeschlagen"):
+            return parse_status(self.channel.request_status(min(self.config.timeout_s, 3.0)))
 
     def pause(self) -> str:
         """Feed Hold (``!``) — die Maschine bremst kontrolliert ab."""
-        return self.send_realtime(FEED_HOLD)
+        return self._hold_command(FEED_HOLD, FEED_HOLD_PATH, "Halt")
 
     def resume(self) -> str:
-        """Cycle Start (``~``) — weiter nach einem Feed Hold."""
-        return self.send_realtime(CYCLE_START)
+        """Cycle Start (``~``) — weiter nach einem Feed Hold.
+
+        Auch der Weg zurück aus einer ``M0``-Pause: FluidNC setzt bei ``M0``
+        einen Feed Hold, und aus dem kommt man mit Cycle Start heraus.
+        """
+        return self._hold_command(CYCLE_START, CYCLE_START_PATH, "Weiter")
 
     def stop(self) -> str:
         """Soft-Reset (Ctrl-X) — bricht einen laufenden SD-Job ab.
@@ -241,7 +363,34 @@ class FluidNCClient:
         erst die kalibrierte Ecke anfahren, dann
         :func:`wallplotter.resume.resume_program`.
         """
-        return self.send_realtime(SOFT_RESET)
+        return self._hold_command(SOFT_RESET, RESET_PATH, "Stopp")
+
+    def _hold_command(self, byte: int, path: str, label: str) -> str:
+        """Erst über den Kanal, sonst über den eigenen HTTP-Endpunkt.
+
+        Halt, Weiter und Stopp sind die drei Griffe, die auch dann noch
+        funktionieren müssen, wenn sonst nichts mehr geht — deshalb zwei Wege.
+        Die ``…_reload``-Endpunkte lösen dasselbe Firmware-Ereignis aus und
+        werden von der Bewegungssperre nicht angefasst.
+        """
+        try:
+            self.channel.send_realtime(byte)
+            return label
+        except (FluidNCError, ChannelError):
+            pass
+        timeout = min(self.config.timeout_s, REALTIME_TIMEOUT_S)
+        with _as_fluidnc_error(f"{label} fehlgeschlagen"):
+            response = self.session.get(
+                f"{self.config.base_url}{path}",
+                timeout=timeout,
+                allow_redirects=False,
+            )
+        # Die Endpunkte antworten mit einer Umleitung auf die WebUI-Startseite;
+        # dass sie überhaupt antworten, ist die Quittung.
+        status_code = getattr(response, "status_code", 200)
+        if status_code >= 400:
+            raise FluidNCError(f"{label} fehlgeschlagen (HTTP {status_code})")
+        return label
 
     # -- Jog & Kalibrierung -----------------------------------------------
 
@@ -314,6 +463,8 @@ class FluidNCClient:
     @staticmethod
     def _text_or_raise(response: Any, message: str) -> str:
         status_code = getattr(response, "status_code", 200)
+        if status_code == 503:
+            raise FluidNCError(f"{message} (HTTP 503). {_BLOCKED_HINT}")
         if status_code >= 400:
             raise FluidNCError(f"{message} (HTTP {status_code})")
         return getattr(response, "text", "")

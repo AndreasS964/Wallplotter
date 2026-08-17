@@ -157,15 +157,30 @@ class WallplotterUI:
 
         Die Statusabfrage läuft alle zwei Sekunden. Jedes Mal einen neuen
         Client zu bauen hieße jedes Mal eine neue ``requests.Session`` und
-        damit eine neue TCP-Verbindung zum ESP32 — der hat davon nicht viele.
+        einen neuen WebSocket-Kanal zum ESP32 — von beidem hat er nicht viele,
+        und FluidNC schließt beim Verbinden ältere Kanäle derselben Sitzung.
+
+        Deshalb wird pro Zeitlimit **einer** gehalten (Statusabfrage und
+        Plotstart haben verschiedene Geduld) und beim Wechsel des Hosts alles
+        sauber geschlossen, statt die Verbindungen liegenzulassen.
         """
         host = self.host_input.value
-        key = (host, timeout)
-        if self._clients.get("key") != key:
-            self._clients = {"key": key, "client": FluidNCClient(
-                FluidNCConfig(host=host, timeout_s=timeout)
-            )}
-        return self._clients["client"]
+        if self._clients.get("host") != host:
+            self.close_clients()
+            self._clients = {"host": host, "by_timeout": {}}
+        clients = self._clients["by_timeout"]
+        if timeout not in clients:
+            clients[timeout] = FluidNCClient(FluidNCConfig(host=host, timeout_s=timeout))
+        return clients[timeout]
+
+    def close_clients(self) -> None:
+        """Offene Kanäle zumachen — beim Hostwechsel und beim Beenden."""
+        for existing in self._clients.get("by_timeout", {}).values():
+            try:
+                existing.close()
+            except Exception:  # noqa: BLE001 - beim Aufräumen ist alles verzeihlich
+                pass
+        self._clients = {}
 
     def correction(self):
         """Vorverzerrung, falls eine Datei danebenliegt und sie gewollt ist.

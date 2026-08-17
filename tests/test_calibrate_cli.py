@@ -1,29 +1,26 @@
-"""Die CLI gegen einen simulierten Client — ohne Board im Netz."""
+"""Die CLI gegen einen simulierten Client — ohne Board im Netz.
+
+Jog, Nullpunkt und Positionsabfrage laufen über den WebSocket-Kanal, nicht
+über HTTP: G-Code und Realtime-Zeichen kommen auf dem HTTP-Weg gar nicht beim
+Parser an (siehe ``wallplotter.channel``). Die Attrappe ist deshalb ein Kanal.
+"""
 
 import pytest
 
+from conftest import FakeChannel
 from wallplotter import calibrate_cli
 from wallplotter.calibration import AreaCalibration
 from wallplotter.upload import FluidNCClient
 
 
-class FakeSession:
-    def __init__(self, text="<Idle|MPos:120.000,340.000,0.000>"):
-        self.text = text
-        self.commands = []
-
-    def get(self, url, params=None, timeout=None):
-        self.commands.append(params["plain"])
-        return type("R", (), {"text": self.text, "status_code": 200})()
-
-
 @pytest.fixture
 def board(monkeypatch):
-    session = FakeSession()
+    channel = FakeChannel(status="<Idle|MPos:120.000,340.000,0.000>")
+    channel.commands = channel.sent  # sprechender Name in den Tests
     monkeypatch.setattr(
-        calibrate_cli, "FluidNCClient", lambda config: FluidNCClient(config, session)
+        calibrate_cli, "FluidNCClient", lambda config: FluidNCClient(config, None, channel)
     )
-    return session
+    return channel
 
 
 def test_zero_sends_g92(board, capsys):
