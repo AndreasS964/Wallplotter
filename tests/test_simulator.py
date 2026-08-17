@@ -310,3 +310,17 @@ def test_simulator_state_is_self_contained():
     sim.tick(10.0)
     assert sim.state == "Idle"
     assert (sim.x, sim.y) == (5.0, 5.0)
+
+
+def test_doctor_warns_about_the_motion_block(board):
+    """Die Sperre steht ab Werk an — und sieht später aus wie ein kaputtes Board."""
+    from wallplotter.config import FluidNCConfig
+    from wallplotter.doctor import OK, WARN, check_motion_block
+    from wallplotter.upload import FluidNCClient
+
+    api = FluidNCClient(FluidNCConfig(host=board.host, timeout_s=5.0))
+    assert check_motion_block(api).status == WARN
+
+    api.send_command("$HTTP/BlockDuringMotion=OFF")
+    assert check_motion_block(api).status == OK
+    api.close()

@@ -209,7 +209,7 @@ Laser:
 # Zwei Dinge gehen dabei NICHT:
 #
 #   1. Beide Köpfe am selben GPIO. FluidNC belegt einen Pin exklusiv; zwei
-#      Spindeln auf gpio.25 lassen sich nicht einmal parsen. Der Laser braucht
+#      Spindeln auf gpio.26 lassen sich nicht einmal parsen. Der Laser braucht
 #      also einen eigenen Ausgang.
 #   2. Beide Köpfe an derselben Frequenz. Ein RC-Servo will 50 Hz, ein Laser
 #      braucht Kilohertz — FluidNC begrenzt `pwm_hz` einer Laser-Spindel auf

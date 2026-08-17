@@ -310,7 +310,8 @@ def check_board(host: str, timeout: float = 4.0) -> list[Check]:
                 "Board erreichbar",
                 SKIP,
                 f"{host}: {exc}",
-                "Solange nichts an der Wand hängt, ist das in Ordnung. "
+                "Solange nichts an der Wand hängt, ist das in Ordnung — üben lässt "
+                "sich der ganze Ablauf gegen `wallplotter-sim`. "
                 "Sonst: IP prüfen, --host angeben",
             )
         ]
@@ -342,7 +343,38 @@ def check_board(host: str, timeout: float = 4.0) -> list[Check]:
         )
     else:
         checks.append(Check("SD-Karte", OK, f"lesbar, {len(listing)} Zeichen Antwort"))
+
+    checks.append(check_motion_block(client))
     return checks
+
+
+def check_motion_block(client) -> Check:
+    """Blockiert das Board HTTP-Kommandos, sobald sich etwas bewegt?
+
+    ``$HTTP/BlockDuringMotion`` steht ab Werk an. Diese Software geht für
+    alles Maschinennahe über den WebSocket-Kanal und merkt davon nichts —
+    aber jede Diagnose mit ``curl`` oder im Browser läuft dann während eines
+    Plots in ein HTTP 503, und das sieht aus wie ein kaputtes Board.
+    """
+    from .upload import FluidNCError  # noqa: PLC0415
+
+    try:
+        answer = client.send_command("$HTTP/BlockDuringMotion").strip()
+    except FluidNCError as exc:
+        return Check("Bewegungssperre", SKIP, str(exc))
+
+    value = answer.rpartition("=")[2].strip().upper()
+    if value in {"OFF", "0", "FALSE"}:
+        return Check("Bewegungssperre", OK, "$HTTP/BlockDuringMotion=OFF")
+    if value in {"ON", "1", "TRUE"}:
+        return Check(
+            "Bewegungssperre",
+            WARN,
+            "$HTTP/BlockDuringMotion=ON",
+            "Während der Fahrt antwortet /command mit HTTP 503. "
+            "Einmalig `$HTTP/BlockDuringMotion=OFF` setzen",
+        )
+    return Check("Bewegungssperre", SKIP, f"unerwartete Antwort: {answer!r}")
 
 
 # ---------------------------------------------------------------------------

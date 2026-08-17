@@ -204,7 +204,8 @@ class BoardSimulator:
             if value:
                 self.settings[key] = value
                 return ""
-            return f"$/{key}={self.settings.get(key, '')}"
+            # Format wie `show_setting()`: ein Dollar, Name, Gleichheitszeichen.
+            return f"${key}={self.settings.get(key, '')}"
         return f"error: Invalid statement ({key})"
 
     def execute_line(self, line: str) -> str:
