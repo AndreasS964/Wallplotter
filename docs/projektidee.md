@@ -69,6 +69,8 @@ Entscheidung: Keine direkte Nutzung der Makelangelo-Software für den GCode-Expo
   - SVG einlesen → vpype-Pipeline → GCode-Export im FluidNC-eigenen, sauberen Dialekt (`G0`/`G1` + `M3`/`M5` fürs Pen-Lift)
   - Ggf. direkter Upload per HTTP an FluidNC-Web-API statt manuellem Hochladen im Browser
 - Für Bildvorlagen (Fotos, Halftone/Dithering): später ergänzende vpype-Plugins (`hatched` o.ä.) statt Eigenentwicklung
+  *(so kam es nicht: alle vier Bildverfahren rechnen selbst — `hatched` ist seit
+  Shapely 2 nicht mehr zusammen mit vpype installierbar. Siehe Handbuch §9.)*
 - **Wird gemeinsam abends nach und nach entwickelt**, sobald das Board getestet ist
 
 ---
