@@ -3,7 +3,7 @@
 Alles zum Projekt an einer Stelle: was gebaut wird, warum es so gebaut wird,
 was gemessen und gerechnet wurde, und wie man es bedient.
 
-*Stand: August 2026 · Version 0.3.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 464 Tests, CI grün*
+*Stand: August 2026 · Version 0.3.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 471 Tests, CI grün*
 
 ---
 
@@ -409,7 +409,7 @@ wichtiger als eine Versionsnummer:
 
 | | Zustand |
 | --- | --- |
-| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 464 Tests |
+| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 471 Tests |
 | Laufzeitschätzung, Fortsetzen, Vorverzerrung, Kalibrierlogik | **läuft**, gegen erzeugte Programme geprüft |
 | Web-UI, alle sieben CLIs | **läuft**, ohne Board bedienbar |
 | Upload, Jog, Status, Halt, `$SD/Run` | gegen den Firmware-**Quelltext** gebaut und gegen den mitgelieferten Simulator gefahren, **nie an einem Board** |
@@ -462,6 +462,12 @@ plot bild.svg --location --upload --run          # Fläche vom aktiven Standort
 plot foto.jpg --technique tsp --location --run
 plot --pattern frame --location --run
 ```
+
+Gestartet wird nur, wenn die Maschine frei ist. Läuft schon ein Programm,
+lehnt der Start ab und nennt, was gerade läuft — FluidNC selbst würde das neue
+Programm in das laufende hineinschachteln (`Job::nest`) und beide Zeichnungen
+übereinanderlegen. Hochladen bleibt dabei erlaubt: Eine zusätzliche Datei auf
+der Karte stört keinen laufenden Plot. `--trotzdem` überspringt die Prüfung.
 
 ### Mehrfarbig
 

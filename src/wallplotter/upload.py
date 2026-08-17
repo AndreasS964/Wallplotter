@@ -330,14 +330,44 @@ class FluidNCClient:
             )
         return self._text_or_raise(response, "Dateiliste fehlgeschlagen")
 
-    def run_file(self, remote_path: str) -> str:
+    def run_file(self, remote_path: str, *, force: bool = False) -> str:
         """Datei von der SD-Karte abspielen lassen.
 
         Bewusst über den Kanal: Die Firmware hängt den Job an den Kanal, der
         ihn gestartet hat. Über HTTP wäre das ein Wegwerf-Kanal, der mit der
         Antwort stirbt — die Ausgabe des Jobs ginge ins Leere.
+
+        Läuft schon ein Programm, wird **nicht** gestartet. FluidNC würde das
+        neue in das laufende hineinschachteln (``Job::nest``) — auf einer Wand
+        heißt das: zwei Zeichnungen übereinander und Stunden verloren. Die
+        Firmware wehrt sich dagegen nicht, also tun wir es. Mit ``force`` geht
+        es trotzdem, für den Fall, dass die Statusabfrage lügt.
         """
+        if not force:
+            self._refuse_if_busy(remote_path)
         return self.send_command(f"$SD/Run={remote_path}")
+
+    def _refuse_if_busy(self, remote_path: str) -> None:
+        """Nur ablehnen, wenn die Maschine nachweislich beschäftigt ist.
+
+        Lässt sich der Zustand nicht lesen, wird nicht geraten: Der Start läuft
+        ohnehin über denselben Kanal und scheitert dann von selbst. Ein Plot,
+        der wegen eines Aussetzers in der Statusabfrage nicht anläuft, wäre
+        die schlechtere Antwort.
+        """
+        try:
+            machine = self.status()
+        except FluidNCError:
+            return
+        if not machine.is_running:
+            return
+        running = f" ({machine.sd_file}, {machine.sd_percent:.0f} %)" if machine.sd_file else ""
+        raise FluidNCError(
+            f"Die Maschine ist beschäftigt: {machine.state}{running}. "
+            f"{remote_path} wurde nicht gestartet — FluidNC würde das neue "
+            "Programm in das laufende hineinschachteln. Erst abwarten oder "
+            "stoppen."
+        )
 
     # -- Jobsteuerung -----------------------------------------------------
 
@@ -497,11 +527,17 @@ def upload_and_run(
     config: FluidNCConfig | None = None,
     *,
     run: bool = True,
+    force: bool = False,
     client: FluidNCClient | None = None,
 ) -> str:
-    """GCode hochladen und optional direkt starten. Gibt den Remote-Pfad zurück."""
+    """GCode hochladen und optional direkt starten. Gibt den Remote-Pfad zurück.
+
+    Das Hochladen ist immer erlaubt — eine zusätzliche Datei auf der Karte
+    stört keinen laufenden Plot. Gestartet wird nur, wenn die Maschine frei
+    ist; siehe :meth:`FluidNCClient.run_file`.
+    """
     active = client or FluidNCClient(config)
     remote_path = active.upload(gcode, filename)
     if run:
-        active.run_file(remote_path)
+        active.run_file(remote_path, force=force)
     return remote_path

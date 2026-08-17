@@ -325,3 +325,62 @@ def test_network_failures_become_fluidnc_errors():
         api.status()
     with pytest.raises(FluidNCError, match="Netzwerk weg"):
         api.upload("G21", "x.gcode")
+
+
+# -- Zwei Plots übereinander ------------------------------------------------
+
+
+def test_starting_a_plot_over_a_running_one_is_refused():
+    """FluidNC schachtelt das neue Programm in das laufende (``Job::nest``).
+
+    Die Firmware wehrt sich dagegen nicht. Auf einer Wand heißt das: zwei
+    Zeichnungen übereinander und Stunden verloren.
+    """
+    board = FakeChannel(status="<Run|MPos:0.000,0.000,0.000|SD:42.30,/wand.gcode>")
+    api, _, _ = client(channel=board)
+    with pytest.raises(FluidNCError, match="beschäftigt"):
+        api.run_file("/neu.gcode")
+    assert board.sent == []
+
+
+def test_the_refusal_names_what_is_running():
+    board = FakeChannel(status="<Run|MPos:0.000,0.000,0.000|SD:42.30,/wand.gcode>")
+    api, _, _ = client(channel=board)
+    with pytest.raises(FluidNCError, match=r"/wand\.gcode, 42 %"):
+        api.run_file("/neu.gcode")
+
+
+def test_a_hold_counts_as_busy_too():
+    """Hold heißt: Der Plot läuft noch, er wartet nur — etwa auf den Stiftwechsel."""
+    board = FakeChannel(status="<Hold:0|MPos:0.000,0.000,0.000|SD:42.30,/wand.gcode>")
+    api, _, _ = client(channel=board)
+    with pytest.raises(FluidNCError, match="beschäftigt"):
+        api.run_file("/neu.gcode")
+
+
+def test_force_starts_anyway():
+    board = FakeChannel(status="<Run|MPos:0.000,0.000,0.000|SD:42.30,/wand.gcode>")
+    api, _, _ = client(channel=board)
+    api.run_file("/neu.gcode", force=True)
+    assert board.sent == ["$SD/Run=/neu.gcode"]
+
+
+def test_an_unreadable_status_does_not_block_the_start():
+    """Nicht raten: Der Start läuft ohnehin über denselben Kanal.
+
+    Ein Plot, der wegen eines Aussetzers in der Statusabfrage nicht anläuft,
+    wäre die schlechtere Antwort — scheitert der Kanal wirklich, scheitert
+    auch das Startkommando, und zwar mit der Meldung, die dazu passt.
+    """
+    board = FakeChannel(status="unlesbar")
+    api, _, _ = client(channel=board)
+    api.run_file("/neu.gcode")
+    assert board.sent == ["$SD/Run=/neu.gcode"]
+
+
+def test_uploading_during_a_plot_is_still_allowed():
+    """Eine zusätzliche Datei auf der Karte stört keinen laufenden Plot."""
+    board = FakeChannel(status="<Run|MPos:0.000,0.000,0.000|SD:42.30,/wand.gcode>")
+    api, session, _ = client(channel=board)
+    upload_and_run("G21\n", "neu.gcode", client=api, run=False)
+    assert session.calls[0][0] == "post"

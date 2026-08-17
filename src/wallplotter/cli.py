@@ -208,6 +208,11 @@ def build_parser() -> argparse.ArgumentParser:
     net.add_argument(
         "--run", action="store_true", help="nach dem Upload direkt starten (impliziert --upload)"
     )
+    net.add_argument(
+        "--trotzdem",
+        action="store_true",
+        help="auch starten, wenn die Maschine als beschäftigt gemeldet wird",
+    )
     net.add_argument("--remote-name", help="Dateiname auf der SD-Karte")
 
     return parser
@@ -589,6 +594,7 @@ def _run(args) -> int:
                 remote_name,
                 FluidNCConfig(host=args.host),
                 run=args.run,
+                force=args.trotzdem,
             )
         except FluidNCError as exc:
             print(str(exc), file=sys.stderr)

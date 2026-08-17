@@ -10,7 +10,7 @@
   <a href="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-464-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-471-brightgreen">
   <img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-lightgrey">
 </p>
 
@@ -106,6 +106,11 @@ wallplotter-calibrate --host 192.168.1.42 record bottom-left
 wallplotter-calibrate show
 plot bild.svg --location --upload --run
 ```
+
+Ein Plot startet nur, wenn die Maschine frei ist. Läuft schon einer, wird
+abgelehnt statt gestartet: FluidNC würde das neue Programm in das laufende
+hineinschachteln (`Job::nest`) — auf einer Wand heißt das zwei Zeichnungen
+übereinander. Mit `--trotzdem` geht es dennoch, falls die Statusabfrage lügt.
 
 Die Ecken landen im aktiven Standort. Vier sind ideal (dann warnt das Tool auch
 bei schiefer Aufhängung), zwei diagonale reichen. Das Ergebnis ist bewusst das

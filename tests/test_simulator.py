@@ -404,3 +404,19 @@ def test_halt_still_works_when_only_http_is_left(board):
     api.pause()
     assert wait_until(lambda: board.board.state == "Hold", timeout_s=3.0)
     api.close()
+
+
+def test_a_second_plot_does_not_overwrite_a_running_one(api, board):
+    """Die Probe aufs Exempel: Der laufende Job bleibt unangetastet."""
+    board.board.bytes_per_s = 300
+    api.upload(PROGRAM, "wand.gcode")
+    api.upload("G21\nG1 X1 Y1 F100\n", "zweit.gcode")
+    api.run_file("/wand.gcode")
+    assert wait_until(lambda: api.status().state == "Run")
+
+    with pytest.raises(FluidNCError, match="beschäftigt"):
+        api.run_file("/zweit.gcode")
+
+    laufend = api.status()
+    assert laufend.sd_file == "/wand.gcode"
+    assert laufend.state == "Run"

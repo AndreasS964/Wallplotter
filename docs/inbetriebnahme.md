@@ -227,6 +227,7 @@ und Laser können weder denselben Pin noch dieselbe Frequenz benutzen.
 | Kein Statusreport | dasselbe — `?` über HTTP liefert die Hilfeseite, nicht `<Idle\|…>` |
 | Nach dem Stopp steht Alarm | so gehört es: Ein Soft-Reset in der Fahrt kostet die Maschinenposition. `$X`, dann Ecke anfahren und Nullpunkt herstellen |
 | Nullpunkt nach dem Farbwechsel weg | `G92` ist flüchtig. `wallplotter-calibrate zero --persistent`, aber erst zusammen mit Homing (Schritt 8) |
+| „Die Maschine ist beschäftigt“ beim Start | so gehört es: Es läuft schon ein Programm. Abwarten, stoppen — oder `--trotzdem`, wenn die Statusabfrage lügt |
 | Wellige Linien bei Schraffur | Pendelresonanz — `wallplotter.motion` warnt vorher und nennt zwei Auswege |
 | Riemen springt bei Leerwegen | `--travel-as-g1`, oder `feed-ramp` neu auswerten |
 

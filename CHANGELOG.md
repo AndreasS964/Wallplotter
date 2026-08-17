@@ -70,6 +70,18 @@ Pfads, weshalb die Firmware ihre Größenprüfung nicht gefunden hätte.
   herausgeführten GPIO; die `config.yaml` nennt jetzt `gpio.26` am
   OLED-Header, mit dem, was am Board nachzumessen ist.
 
+### Zwei Plots übereinander gehen jetzt nicht mehr
+
+Es prüfte nichts, ob die Maschine überhaupt frei ist — und FluidNC wehrt sich
+nicht: `$SD/Run` während eines laufenden Jobs schachtelt das neue Programm in
+das alte (`Job::nest`). Auf einer Wand heißt das zwei Zeichnungen übereinander
+und Stunden verloren. Der Start lehnt jetzt ab und nennt, was gerade läuft;
+`--trotzdem` überspringt die Prüfung. Hochladen bleibt erlaubt — eine
+zusätzliche Datei auf der Karte stört keinen laufenden Plot.
+
+Lässt sich der Zustand nicht lesen, wird nicht geraten: Der Start läuft ohnehin
+über denselben Kanal und scheitert dann von selbst.
+
 ### Schraffur rechnet selbst
 
 Aufgefallen ist es beim Aufräumen der CI: Das Verfahren `hatch` war

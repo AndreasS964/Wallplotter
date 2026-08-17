@@ -1,0 +1,1 @@
+Die Maschine ist beschäftigt: Run (/a.gcode, 2 %). /b.gcode wurde nicht gestartet — FluidNC würde das neue Programm in das laufende hineinschachteln. Erst abwarten oder stoppen.
