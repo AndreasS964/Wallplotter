@@ -2,7 +2,7 @@
 
 Für Fotos entscheidet das Verfahren mehr über das Ergebnis als jede Mechanik:
 
-* ``hatch`` — Schraffur nach Helligkeitsstufen (Plugin ``hatched``). Grafisch,
+* ``hatch`` — Schraffur nach Helligkeitsstufen. Grafisch,
   technisch, viele kurze Linien und entsprechend viele Stifthübe.
 * ``stipple`` — Punktraster, Dichte nach Helligkeit. Weich und fotografisch,
   aber ein Hub pro Punkt: für große Bilder unpraktisch.
@@ -52,9 +52,17 @@ class GrayImage:
     height: int
 
     def darkness(self, x: float, y: float) -> float:
-        """Dunkelheit (0…1) an einer Bildposition, außerhalb 0."""
+        """Dunkelheit (0…1) an einer Bildposition, außerhalb 0.
+
+        Die Vorzeichenprüfung steht **vor** dem Abschneiden: ``int()`` rundet
+        Richtung Null, aus -0,4 wird also 0 — der Streifen zwischen -1 und 0
+        läge sonst scheinbar noch im Bild, und eine Zeichnung ragte um bis zu
+        ein Pixel über den Rand hinaus.
+        """
+        if x < 0 or y < 0:
+            return 0.0
         ix, iy = int(x), int(y)
-        if not (0 <= ix < self.width and 0 <= iy < self.height):
+        if not (ix < self.width and iy < self.height):
             return 0.0
         return 1.0 - self.pixels[iy][ix]
 
@@ -289,66 +297,146 @@ def spiral(
 
 
 def hatch(
-    source: bytes | str | os.PathLike,
+    image: GrayImage,
     width_mm: float,
     height_mm: float,
     pitch_mm: float = 3.0,
     levels: tuple[int, int, int] = (64, 128, 192),
     blur: int = 4,
-    image_suffix: str = ".png",
+    angle_deg: float = 45.0,
 ) -> Lines:
-    """Schraffur über das Paket ``hatched``.
+    """Schraffur nach Helligkeitsstufen — je dunkler, desto mehr Lagen.
 
-    Angesprochen wird bewusst dessen Python-API und nicht das vpype-Kommando:
-    das Plugin registriert je nach Version gar keines.
+    Für jede Stufe wird ein Satz paralleler Linien über das Bild gelegt und
+    dort behalten, wo das Bild dunkler ist als die Stufe. Die Richtung wechselt
+    von Lage zu Lage, damit sich die Linien kreuzen statt zu verdichten: Aus
+    drei Stufen werden bis zu drei übereinanderliegende Schraffuren.
+
+    Gerechnet wird auf dem heruntergerechneten Graubild — das ist keine
+    Sparmaßnahme, sondern der Punkt: Ein Wandplotter zeichnet Dichten, keine
+    Details, und der Abtastschritt entlang einer Linie liegt ohnehin bei einem
+    Pixel.
+
+    Bis 0.3.0 lief das über das Paket ``hatched``. Dessen letzte Fassung (0.2.0)
+    setzt Shapely 1.x voraus, vpype verlangt Shapely 2.x — beides zusammen
+    lässt sich nicht installieren, und die Schraffur brach mit einer Meldung
+    aus dem Innersten von Shapely ab. Selbst gerechnet kostet das hier
+    weniger Zeilen als die Fehlerbehandlung drumherum und nimmt dem Projekt
+    seine schwerste optionale Abhängigkeit (``hatched`` zog vpype[all],
+    OpenCV, scikit-image und matplotlib nach).
     """
-    try:
-        import hatched as hatched_module  # noqa: PLC0415
-    except ImportError as exc:
-        raise ImagingError("Paket `hatched` fehlt — `pip install -e .[hatch]`") from exc
+    if pitch_mm <= 0:
+        raise ImagingError("pitch_mm muss größer als 0 sein")
+    if not levels:
+        raise ImagingError("Ohne Helligkeitsstufen gibt es nichts zu schraffieren")
 
-    import tempfile
-    from pathlib import Path
-
-    if isinstance(source, bytes):
-        handle = tempfile.NamedTemporaryFile(suffix=image_suffix, delete=False)
-        handle.write(source)
-        handle.close()
-        path, temporary = Path(handle.name), True
-    else:
-        path, temporary = Path(source), False
-
-    try:
-        multiline = hatched_module.hatch(
-            str(path),
-            hatch_pitch=pitch_mm,
-            levels=levels,
-            blur_radius=blur,
-            show_plot=False,
-            save_svg=False,
-        )
-    except Exception as exc:
-        raise ImagingError(f"Schraffur fehlgeschlagen: {exc}") from exc
-    finally:
-        if temporary:
-            path.unlink(missing_ok=True)
-
-    lines = [[(float(x), float(y)) for x, y in geom.coords] for geom in multiline.geoms]
-    return _scale_into(lines, width_mm, height_mm)
-
-
-def _scale_into(lines: Lines, width_mm: float, height_mm: float) -> Lines:
-    xs = [x for line in lines for x, _ in line]
-    ys = [y for line in lines for _, y in line]
-    if not xs:
+    scale, offset_x, offset_y = _fit_box(image, width_mm, height_mm)
+    if scale <= 0:
         return []
-    span_x, span_y = max(xs) - min(xs), max(ys) - min(ys)
-    if span_x <= 0 or span_y <= 0:
-        return lines
-    scale = min(width_mm / span_x, height_mm / span_y)
-    dx = (width_mm - span_x * scale) / 2 - min(xs) * scale
-    dy = (height_mm - span_y * scale) / 2 - min(ys) * scale
-    return [[(x * scale + dx, y * scale + dy) for x, y in line] for line in lines]
+    pitch_px = pitch_mm / scale
+    blurred = _box_blur(image, blur)
+
+    lines: Lines = []
+    for index, level in enumerate(sorted(levels)):
+        # levels sind Grauwerte (0…255); dunkler als die Stufe heißt
+        # mitschraffieren. Die dunkelste Stufe kommt zuerst, damit die
+        # Richtungen unabhängig von der Reihenfolge im Aufruf gleich fallen.
+        threshold = 1.0 - level / 255.0
+        if threshold <= 0.0:
+            continue
+        angle = angle_deg + 90.0 * index
+        lines.extend(_hatch_layer(blurred, threshold, angle, pitch_px))
+
+    return [
+        [(offset_x + x * scale, offset_y + y * scale) for x, y in line]
+        for line in lines
+    ]
+
+
+def _box_blur(image: GrayImage, radius: int) -> GrayImage:
+    """Separierbarer Kastenfilter.
+
+    Ohne Weichzeichnen zerfasert jede Stufe an ihrem Rand in einzelne
+    Ein-Pixel-Striche — das sind hunderte zusätzliche Stifthübe für nichts.
+    """
+    if radius <= 0:
+        return image
+
+    width, height = image.width, image.height
+    span = 2 * radius + 1
+
+    horizontal = []
+    for row in image.pixels:
+        # gleitende Summe statt Neuberechnung je Pixel: sonst wächst der
+        # Aufwand mit dem Radius statt mit der Bildgröße
+        total = sum(row[: min(radius + 1, width)]) + row[0] * max(0, radius + 1 - width)
+        total += row[0] * radius
+        out = []
+        for col in range(width):
+            out.append(total / span)
+            total -= row[max(0, col - radius)]
+            total += row[min(width - 1, col + radius + 1)]
+        horizontal.append(out)
+
+    result = [[0.0] * width for _ in range(height)]
+    for col in range(width):
+        column = [horizontal[row][col] for row in range(height)]
+        total = sum(column[: min(radius + 1, height)]) + column[0] * max(0, radius + 1 - height)
+        total += column[0] * radius
+        for row in range(height):
+            result[row][col] = total / span
+            total -= column[max(0, row - radius)]
+            total += column[min(height - 1, row + radius + 1)]
+
+    return GrayImage(result, width, height)
+
+
+def _hatch_layer(
+    image: GrayImage,
+    threshold: float,
+    angle_deg: float,
+    pitch_px: float,
+    step_px: float = 1.0,
+) -> Lines:
+    """Eine Lage paralleler Linien, beschnitten auf die dunklen Bereiche.
+
+    Beschnitten wird durch Abtasten statt durch Polygonverschneidung: Eine
+    Linie wird in Schritten von einem Pixel abgegangen, und jede
+    zusammenhängende Strecke im dunklen Bereich wird ein Strich. Das braucht
+    keine Geometriebibliothek und liefert bei einer Bildauflösung, die
+    ohnehin bei 200 Pixel gedeckelt ist, dasselbe Ergebnis.
+    """
+    direction_x, direction_y = math.cos(math.radians(angle_deg)), math.sin(math.radians(angle_deg))
+    normal_x, normal_y = -direction_y, direction_x
+
+    corners = ((0.0, 0.0), (image.width, 0.0), (0.0, image.height), (image.width, image.height))
+    normals = [x * normal_x + y * normal_y for x, y in corners]
+    alongs = [x * direction_x + y * direction_y for x, y in corners]
+    first, last = min(normals), max(normals)
+    start, end = min(alongs), max(alongs)
+
+    lines: Lines = []
+    offset = first
+    while offset <= last:
+        run_start: Point | None = None
+        previous: Point | None = None
+        along = start
+        while along <= end:
+            point = (offset * normal_x + along * direction_x, offset * normal_y + along * direction_y)
+            if image.darkness(*point) >= threshold:
+                if run_start is None:
+                    run_start = point
+                previous = point
+            else:
+                if run_start is not None and previous is not None and run_start != previous:
+                    lines.append([run_start, previous])
+                run_start = previous = None
+            along += step_px
+        if run_start is not None and previous is not None and run_start != previous:
+            lines.append([run_start, previous])
+        offset += pitch_px
+    return lines
+
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +508,7 @@ def _two_opt(route: list[Point], rounds: int = 2, window: int = 30) -> list[Poin
 # ---------------------------------------------------------------------------
 
 TECHNIQUES = {
-    "hatch": "Schraffur nach Helligkeitsstufen — grafisch, viele Stifthübe (Paket hatched)",
+    "hatch": "Schraffur nach Helligkeitsstufen — grafisch, viele Stifthübe",
     "stipple": "Punktraster nach Dichte — fotografisch, ein Stifthub je Punkt",
     "tsp": "dieselben Punkte als eine durchgehende Linie — kein einziger Stifthub",
     "spiral": "Spirale mit dunkelheitsabhängiger Auslenkung — eine Linie, sehr ruhig zu plotten",
@@ -452,10 +540,10 @@ def image_to_lines(
     if inner_width <= 0 or inner_height <= 0:
         raise ImagingError("Rand ist größer als die Fläche")
 
+    image = load_gray(source, max_size)
     if technique == "hatch":
-        lines = hatch(source, inner_width, inner_height, image_suffix=image_suffix, **options)
+        lines = hatch(image, inner_width, inner_height, **options)
     else:
-        image = load_gray(source, max_size)
         if technique == "stipple":
             lines = stipple(image, inner_width, inner_height, **options)
         elif technique == "tsp":

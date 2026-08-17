@@ -10,7 +10,7 @@
   <a href="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-452-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-457-brightgreen">
   <img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-lightgrey">
 </p>
 
@@ -63,12 +63,14 @@ cd Wallplotter
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[geometry,dev]"      # Kern + vpype + Tests
 pip install -e ".[web]"               # zusätzlich für die Web-UI
-pip install -e ".[photo]"             # zusätzlich für Fotos (nur Pillow)
-pip install -e ".[hatch]"             # zusätzlich für Schraffur (zieht vpype, OpenCV & Co. nach)
+pip install -e ".[photo]"             # zusätzlich für alle vier Bildverfahren (nur Pillow)
 ```
 
 Ohne die Extras funktionieren GCode-Export, Statistik, Vorschau und Upload —
-nur das Einlesen von SVG/Bildern braucht vpype.
+Bilder brauchen Pillow, SVG-Vorlagen brauchen vpype.
+
+(`[hatch]` gibt es noch, damit alte Befehle laufen; seit 0.3.0 ist es dasselbe
+wie `[photo]` — die Schraffur rechnet selbst.)
 
 ## Benutzung
 

@@ -160,9 +160,6 @@ def test_every_technique_is_described():
 
 
 def test_hatch_fills_the_area(photo):
-    """Das vierte Verfahren war bisher nirgends geprüft — es hängt als
-    einziges an einem Fremdpaket, bricht also am ehesten weg."""
-    pytest.importorskip("hatched", reason="Paket `hatched` ist optional (Extra: hatch)")
     lines = image_to_lines(photo, *AREA, "hatch", margin_mm=100.0, pitch_mm=8.0)
     assert lines
     xmin, ymin, xmax, ymax = bounds(lines)
@@ -172,8 +169,14 @@ def test_hatch_fills_the_area(photo):
     assert ymax <= AREA[1] - 100.0 + 1e-6
 
 
-def test_missing_hatched_package_points_at_the_right_extra(photo, monkeypatch):
-    """Wer schraffieren will, soll den Namen des Extras lesen, nicht raten."""
+def test_hatch_needs_no_foreign_package(photo, monkeypatch):
+    """Bis 0.3.0 lief die Schraffur über das Paket ``hatched``.
+
+    Dessen letzte Fassung setzt Shapely 1.x voraus, vpype verlangt Shapely 2.x
+    — zusammen installierbar ist das nicht, und die Schraffur brach mit einer
+    Meldung aus dem Innersten von Shapely ab. Jetzt rechnet das Verfahren
+    selbst, wie die drei anderen auch.
+    """
     import builtins
 
     real_import = builtins.__import__
@@ -184,5 +187,46 @@ def test_missing_hatched_package_points_at_the_right_extra(photo, monkeypatch):
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", without_hatched)
-    with pytest.raises(ImagingError, match=r"\.\[hatch\]"):
-        image_to_lines(photo, *AREA, "hatch")
+    assert image_to_lines(photo, *AREA, "hatch", pitch_mm=20.0)
+
+
+def test_hatch_draws_more_where_the_image_is_darker():
+    """Der Sinn der Stufen: Dunkles bekommt mehr Lagen, Helles keine."""
+    from wallplotter.imaging import hatch
+
+    def block(value: int) -> GrayImage:
+        level = value / 255.0
+        return GrayImage([[level] * 60 for _ in range(60)], 60, 60)
+
+    white = draw_length(hatch(block(255), 500, 500, pitch_mm=20.0, blur=0))
+    mid = draw_length(hatch(block(140), 500, 500, pitch_mm=20.0, blur=0))
+    dark = draw_length(hatch(block(10), 500, 500, pitch_mm=20.0, blur=0))
+
+    assert white == 0.0
+    assert mid > 0.0
+    assert dark > mid * 1.5
+
+
+def test_hatch_pitch_controls_the_density():
+    from wallplotter.imaging import hatch
+
+    image = GrayImage([[0.0] * 60 for _ in range(60)], 60, 60)
+    dense = draw_length(hatch(image, 500, 500, pitch_mm=10.0, blur=0))
+    sparse = draw_length(hatch(image, 500, 500, pitch_mm=40.0, blur=0))
+    assert dense > sparse * 2
+
+
+def test_hatch_rejects_a_pitch_of_zero():
+    from wallplotter.imaging import hatch
+
+    with pytest.raises(ImagingError, match="pitch_mm"):
+        hatch(GrayImage([[0.0]], 1, 1), 100, 100, pitch_mm=0.0)
+
+
+def test_darkness_outside_the_image_is_zero_on_both_sides():
+    """``int()`` rundet Richtung Null — ohne Vorzeichenprüfung läge -0,4 im Bild."""
+    image = GrayImage([[0.0, 0.0], [0.0, 0.0]], 2, 2)
+    assert image.darkness(0.5, 0.5) == 1.0
+    assert image.darkness(-0.4, 0.5) == 0.0
+    assert image.darkness(0.5, -0.4) == 0.0
+    assert image.darkness(2.5, 0.5) == 0.0

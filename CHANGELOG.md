@@ -68,6 +68,33 @@ Pfads, weshalb die Firmware ihre Größenprüfung nicht gefunden hätte.
   herausgeführten GPIO; die `config.yaml` nennt jetzt `gpio.26` am
   OLED-Header, mit dem, was am Board nachzumessen ist.
 
+### Schraffur rechnet selbst
+
+Aufgefallen ist es beim Aufräumen der CI: Das Verfahren `hatch` war
+**kaputt**, und zwar nicht bei uns. Das Paket `hatched` (letzte Fassung 0.2.0)
+setzt Shapely 1.x voraus, vpype verlangt Shapely 2.x — beides zusammen lässt
+sich nicht installieren, und die Schraffur brach mit einer Meldung aus dem
+Innersten von Shapely ab.
+
+`wallplotter.imaging.hatch` rechnet jetzt selbst, wie die drei anderen
+Verfahren auch: je Helligkeitsstufe ein Satz paralleler Linien, abgetastet und
+auf die dunklen Bereiche beschnitten, Richtung von Lage zu Lage gewechselt.
+Das kostet weniger Zeilen als die Fehlerbehandlung drumherum und nimmt dem
+Projekt seine schwerste optionale Abhängigkeit — `hatched` zog vpype[all],
+OpenCV, scikit-image und matplotlib nach. Der Extra-Name `[hatch]` bleibt,
+damit alte Installationsbefehle laufen; er ist jetzt dasselbe wie `[photo]`.
+
+Dabei fiel ein zweiter, älterer Fehler auf: `GrayImage.darkness()` prüfte die
+Bildgrenzen erst nach `int()`. Das rundet Richtung Null, aus -0,4 wurde also 0
+— der Streifen zwischen -1 und 0 galt als im Bild, und eine Zeichnung konnte
+um bis zu ein Pixel über den Rand hinausragen. Bei 15 mm je Pixel sind das
+15 mm neben der Fläche.
+
+Die Abbildung `docs/images/verfahren.png` zeigt endlich alle vier Verfahren
+(vorher fehlte `hatch` darin, weil es beim Erzeugen nicht lief) und lässt sich
+mit `tools/technique_figure.py` reproduzieren — samt gerechneter Angaben unter
+den Bildern.
+
 ### Dokumentation
 
 - **[`docs/inbetriebnahme.md`](docs/inbetriebnahme.md)** — was sich vorher

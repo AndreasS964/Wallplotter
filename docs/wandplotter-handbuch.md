@@ -3,7 +3,7 @@
 Alles zum Projekt an einer Stelle: was gebaut wird, warum es so gebaut wird,
 was gemessen und gerechnet wurde, und wie man es bedient.
 
-*Stand: August 2026 · Version 0.3.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 452 Tests, CI grün*
+*Stand: August 2026 · Version 0.3.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 457 Tests, CI grün*
 
 ---
 
@@ -321,12 +321,13 @@ cd Wallplotter
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[geometry,dev]"   # Kern + vpype + Tests
 pip install -e ".[web]"            # Web-UI
-pip install -e ".[photo]"          # Foto-Zweig: stipple, tsp, spiral (nur Pillow)
-pip install -e ".[hatch]"          # zusätzlich Schraffur — `hatched` zieht vpype[all],
-                                   # OpenCV, scikit-image und matplotlib nach
+pip install -e ".[photo]"          # alle vier Bildverfahren (nur Pillow)
 ```
 
 Ohne Extras funktionieren GCode-Export, Kalibrierlogik, Testmuster und Upload.
+
+`[hatch]` gibt es noch, damit alte Befehle laufen; seit 0.3.0 ist es dasselbe
+wie `[photo]`.
 
 ### Web-UI
 
@@ -403,7 +404,7 @@ wichtiger als eine Versionsnummer:
 
 | | Zustand |
 | --- | --- |
-| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 452 Tests |
+| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 457 Tests |
 | Laufzeitschätzung, Fortsetzen, Vorverzerrung, Kalibrierlogik | **läuft**, gegen erzeugte Programme geprüft |
 | Web-UI, alle sieben CLIs | **läuft**, ohne Board bedienbar |
 | Upload, Jog, Status, Halt, `$SD/Run` | gegen den Firmware-**Quelltext** gebaut und gegen den mitgelieferten Simulator gefahren, **nie an einem Board** |
@@ -609,6 +610,7 @@ dunklen Stellen bedient. Die Statistik zeigt das vor jedem Plot an.
 | Browser-only via Pyodide/WASM | zig MB Bundle, vpype-Plugins ungetestet |
 | Streamlit | führt bei jeder Interaktion das Skript neu aus |
 | Kalibrierung als reine Polynom-Messung | Modell schlägt Polynom um Faktor 10 |
+| Paket `hatched` für die Schraffur | setzt Shapely 1.x voraus, vpype verlangt 2.x — zusammen nicht installierbar |
 
 ---
 

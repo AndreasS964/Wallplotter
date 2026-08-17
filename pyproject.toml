@@ -21,12 +21,12 @@ dependencies = [
 
 [project.optional-dependencies]
 geometry = ["vpype>=1.14"]
-# Nur Pillow: stipple, tsp und spiral rechnen selbst. `hatched` steht bewusst
-# daneben statt hier drin — es zieht vpype[all], OpenCV, scikit-image und
-# matplotlib nach, und dafür soll sich entscheiden, wer wirklich schraffieren
-# will.
 photo = ["pillow>=10.0"]
-hatch = ["pillow>=10.0", "hatched>=0.2"]
+# Alle vier Bildverfahren rechnen inzwischen selbst, `hatch` seit 0.3.0 auch:
+# das Paket `hatched` (letzte Fassung 0.2.0) setzt Shapely 1.x voraus, vpype
+# verlangt Shapely 2.x — zusammen installierbar ist das nicht. Der Extra-Name
+# bleibt, damit alte Installationsbefehle weiter laufen.
+hatch = ["pillow>=10.0"]
 web = ["nicegui>=2.0"]
 dev = ["pytest>=8.0", "ruff>=0.6", "pyyaml>=6.0"]
 

@@ -81,7 +81,6 @@ def check_extras() -> list[Check]:
     wanted = [
         ("SVG einlesen", "vpype_cli", "geometry", "SVG-Vorlagen und die vpype-Optimierung"),
         ("Fotos", "PIL", "photo", "stipple, tsp und spiral"),
-        ("Schraffur", "hatched", "hatch", "das Verfahren hatch"),
         ("Web-UI", "nicegui", "web", "die Oberfläche im Browser"),
         ("Upload", "requests", "", "alles, was mit dem Board redet"),
     ]
