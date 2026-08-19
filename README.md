@@ -10,7 +10,7 @@
   <a href="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-424-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-426-brightgreen">
   <img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-lightgrey">
 </p>
 
@@ -41,7 +41,9 @@ wallplotter-location show              # Auflösung, Riemenkräfte, Riemenlänge
 
 | Dokument | Inhalt |
 | --- | --- |
-| **[Projekthandbuch](docs/wandplotter-handbuch.md)** | **Alles an einer Stelle** — Hardware, Kinematik, Firmware, Abläufe, Qualität, offene Punkte |
+| **[Bauanleitung](docs/bauanleitung.md)** | **Vom Karton bis zum ersten Strich** — Stückliste, Mechanik, Verkabelung, Erstinbetriebnahme, Fehlersuche |
+| [Gegenprüfung](docs/firmware-gegenpruefung.md) | was der FluidNC-Quelltext sagt und wo das Repo danebenliegt |
+| [Projekthandbuch](docs/wandplotter-handbuch.md) | Alles an einer Stelle — Hardware, Kinematik, Firmware, Abläufe, Qualität, offene Punkte |
 | [Projektidee](docs/projektidee.md) | Hardware, Mechanik, Entscheidungen |
 | [Software-Roadmap](docs/software-roadmap.md) | Stufenplan und UI-Architektur |
 | [Kinematik-Auswertung](docs/kinematik.md) | gerechnete Zahlen für eine Beispielaufhängung |
@@ -170,7 +172,8 @@ wallplotter-resume wand.gcode --percent 42        # oder von Hand geschätzt
 ```
 
 Angesetzt wird am Anfang des angefangenen Strichs, nicht exakt an der
-Abbruchstelle: FluidNC meldet den Fortschritt in gelesenen Bytes, und der
+Abbruchstelle: FluidNC meldet den Fortschritt als Prozent der gelesenen
+Bytes (`SD:<prozent>,<pfad>`, zwei Nachkommastellen), und der
 Planer liest der Mechanik voraus — lieber einen Strich doppelt als einen gar
 nicht. Vor dem Start muss der Nullpunkt wieder stehen.
 
@@ -217,7 +220,13 @@ wallplotter-calibrate zero --persistent
 Der G54-Weg trägt allerdings nur zusammen mit einer *reproduzierbaren*
 Referenzfahrt — ohne Homing ist die Maschinenposition nach dem Einschalten
 willkürlich, und ein gespeicherter Versatz zeigt dann ins Leere. Das Rodent
-kann sensorloses StallGuard-Homing; die `config.yaml` erklärt beide Varianten.
+Richtigstellung dazu: Die früher hier empfohlene Referenzfahrt per StallGuard
+gibt es nicht. `WallPlotter::canHome()` in FluidNC gibt `false` zurück — `$H`
+endet mit „This kinematic system cannot home", mit Endschalter wie ohne.
+Reproduzierbar wird die Referenz nur mechanisch: Gondel an den Anschlag und
+**das Board dort neu starten**, denn FluidNC friert die Riemenlängen für
+kartesisch (0,0) beim Booten ein. Erst danach trägt ein G54-Versatz. Alles
+dazu in der [Bauanleitung](docs/bauanleitung.md), Abschnitt 9.4.
 
 In der Web-UI erscheinen die Farbebenen mit Farbfeld unter der Vorschau, jede
 einzeln startbar.
@@ -390,16 +399,26 @@ das Paket fehlt — der Rest läuft immer.
 
 ## Stand
 
-Board unterwegs, Mechanik noch nicht gedruckt. Was das heißt:
+Board unterwegs, Mechanik noch nicht gedruckt — und seit der
+[Gegenprüfung gegen den FluidNC-Quelltext](docs/firmware-gegenpruefung.md)
+wissen wir, dass „nach Dokumentation gebaut" für die Board-Anbindung nicht
+gereicht hat.
 
 * **Verifiziert ohne Hardware:** Geometrie, GCode-Export, Kalibrierlogik,
   Testmuster, Kinematikrechnung, UI-Verdrahtung — alles unter Test.
-* **Noch offen bis das Board da ist:** die ESP3D-Endpunkte (`/sdfiles`,
-  `/sd/`, `/command`) sind nach Dokumentation gebaut, aber nie gegen echte
-  Firmware gelaufen; die Servo-S-Werte für Pen-Up/Down sind Platzhalter; und der
-  PWM-Pin für den Servo in der `config.yaml` ist der einzige geratene Wert
-  (siehe Kommentar dort — der 3–10-V-Ausgang des Rodent passt womöglich nicht
-  zu einem MG90S).
+* **Nachgewiesen kaputt:** `--upload` postet nach `/sdfiles`, das es in FluidNC
+  nicht gibt (die Karte hängt an `/upload`, der Flash an `/files`).
+  `/command?plain=` führt nur `$`-Kommandos aus — Statusabfrage, `G92`,
+  `G10 L20` und vor allem **Pause, Weiter und Stopp gehen ins Leere**; die
+  Realtime-Bytes melden dabei sogar Erfolg. Und `python -m wallplotter.webapp`
+  liefert mit NiceGUI ab 3.0 auf jede Anfrage HTTP 500.
+* **Behoben:** Die `config.yaml` hätte das Board mit `Laser: laser_mode` in
+  ConfigAlarm gesetzt; die `speed_map` hätte den Servo in den Anschlag gefahren;
+  der Servo-Pin ist jetzt belegt statt geraten (gpio.25 = `Sp-Enable`, CN51),
+  und ein `control:`-Block gibt der Maschine Taster für Halt, Pause und Weiter.
+* **Bis die Software nachgezogen ist** läuft der Weg zum Board über FluidNCs
+  eigenes WebUI im Browser. Was das praktisch heißt, steht in der
+  [Bauanleitung](docs/bauanleitung.md), Abschnitt 10.
 
 ## Lizenz
 
