@@ -3,7 +3,12 @@
 Alles zum Projekt an einer Stelle: was gebaut wird, warum es so gebaut wird,
 was gemessen und gerechnet wurde, und wie man es bedient.
 
-*Stand: August 2026 · Version 0.2.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 424 Tests, CI grün*
+*Stand: August 2026 · Version 0.2.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 426 Tests*
+
+> **Seit der [Gegenprüfung gegen den FluidNC-Quelltext](firmware-gegenpruefung.md)
+> sind mehrere Aussagen in diesem Handbuch überholt.** Sie sind unten
+> richtiggestellt; wo eine Passage ganz falsch war, steht das dabei. Für den
+> Aufbau ist die [Bauanleitung](bauanleitung.md) maßgeblich.
 
 ---
 
@@ -27,10 +32,12 @@ Aufhängung im Code.
 | --- | --- |
 | Software (Geometrie, GCode, Kalibrierung, Bildverfahren, UI, Werkzeugköpfe) | fertig und unter Test |
 | Kinematik durchgerechnet | fertig, siehe Abschnitt 4 |
-| FluidNC-Konfiguration | entworfen, ein Pin offen (Servo-PWM) |
+| FluidNC-Konfiguration | gegen den Quelltext geprüft und korrigiert, Servo-Pin geklärt |
 | Board | bestellt, noch nicht da |
 | Mechanik | noch nicht gedruckt |
-| Alles Board-nahe (Upload, Jog, Status, Laser) | nach Doku gebaut, nie an einem Board |
+| Board-nah: `$SD/Run`, `$J=` | gegen den Quelltext geprüft, tragfähig |
+| Board-nah: Upload, Status, Pause/Stopp, `G92` | **nachgewiesen falscher Weg**, siehe [Gegenprüfung](firmware-gegenpruefung.md) |
+| Laser | nach Doku gebaut, nie an Hardware |
 
 ---
 
@@ -81,8 +88,11 @@ Betrieb am Board.
   Beschränkung des klassischen Polargraph-Designs entfällt, 2,5 m Deckenhöhe reichen.
 - **Federgespannte Motorhalterung** statt schraubfixiert → gleicht Riemendehnung
   über Stunden aus, wichtig bei unbeaufsichtigten Plots.
-- **Kein mechanischer Endschalter** — Referenz über physischen Anschlag oder
-  sensorloses StallGuard-Homing (siehe Abschnitt 5).
+- **Kein mechanischer Endschalter** — referenziert wird über den physischen
+  Anschlag plus Neustart des Boards an dieser Stelle (siehe Abschnitt 5; die
+  früher hier genannte StallGuard-Variante geht mit dieser Kinematik nicht).
+  Die fünf Endstop-Eingänge bleiben damit frei — und tragen jetzt die Taster
+  für Halt, Pause und Weiter.
 
 ---
 
@@ -206,7 +216,8 @@ Pinbelegung stammt aus [BTTs eigener rodent.yaml](https://github.com/bigtreetech
 | `idle_ms` | 255 | Motoren gehalten lassen — die Gondel hängt am Riemen |
 | Treibertyp | `tmc_5160` | so konfiguriert BTT die TMC2160 des Rodent, Register identisch |
 | `segment_length` | 1–2 mm | 2 mm kosten nur 1 µm Bahntreue, siehe Abschnitt 8 |
-| `laser_mode` | false | M4 würde die Leistung mit dem Tempo skalieren — für einen Servo Unsinn |
+| ~~`laser_mode`~~ | — | **Gibt es nicht.** Der Schlüssel existiert in FluidNC nicht und hätte das Board in ConfigAlarm gesetzt; er ist aus der `config.yaml` entfernt. Lasermodus ist die Klasse der aktiven Spindel, keine Einstellung — `pwm:` ist bereits nicht rate-adjusted. |
+| `control:` | drei Taster | Halt, Pause und Weiter über die freien Endstop-Eingänge — über HTTP geht keines davon (Abschnitt 6) |
 
 ### Pen-Lift
 
@@ -215,30 +226,53 @@ Servo am PWM-Ausgang, angesteuert per **`M3 S<wert>` / `M5`** — bewusst *nicht
 
 **Offener Punkt:** Der PWM-Pin ist der einzige geratene Wert in der Konfiguration.
 BTTs eigene Datei nutzt einen VFD über RS485 und belegt gar keinen PWM-Port. Zwei
-Dinge am Board prüfen: welcher GPIO am PWM-Header hängt, und ob dessen 3–10 V
-für einen MG90S taugen (Servo will sauberes 5-V-Signal bei 50 Hz). Freie
-GPIO-Kandidaten laut rodent.yaml: 2, 4, 12, 13, 25.
+**Erledigt.** Das Rodent-Handbuch V1.03 (Pinbild S. 6/7, Schaltplan S. 12) klärt
+es: `gpio.25` liegt als `Sp-Enable` auf dem 3-poligen Stecker CN51 heraus, über
+100 Ω und auf 3,3 V geklemmt — genau richtig für einen Servo-Signaleingang. Der
+Stecker mit der Aufschrift „PWM" ist dagegen ein analoger 3–10-V-Ausgang mit
+Trimmpoti und wäre falsch gewesen. Die Versorgung des Servos darf **nicht** vom
++5-V-Pin desselben Steckers kommen (dort liegen ebenfalls 100 Ω); dafür braucht
+es ein eigenes Netzteil. Auch richtiggestellt: gpio.2, 4, 12 und 13 sind am
+Rodent gar nicht herausgeführt. Verdrahtung in der
+[Bauanleitung](bauanleitung.md), Abschnitt 7.4.
 
 ### Nullpunkt und Homing — die wichtigste Firmware-Entscheidung
 
-Ohne Endschalter gibt es zwei Wege, und die Wahl entscheidet, ob der Nullpunkt
-ein Ausschalten übersteht:
+Dieser Abschnitt stand hier falsch. Er bot zwei Wege an, und der empfohlene
+existiert nicht.
 
-**a) Von Hand:** Gondel an den oberen Anschlag, dann `G92`.
-Einfach, aber `G92` ist laut GRBL-Konvention flüchtig — es wird beim
-Programmende (`M2`) verworfen. Bei mehrfarbigen Plots heißt das: nach jeder
-Farbebene ist der Nullpunkt weg.
+**Es gibt kein `$H`.** Die WallPlotter-Kinematik nimmt keine Referenzfahrt an:
 
-**b) Sensorlos per StallGuard:** Die TMC2160 können das. Mit `cycle: 1` und
-passender StallGuard-Empfindlichkeit liefert `$H` reproduzierbare
-Maschinenkoordinaten. Dann lässt sich der Flächenversatz als **G54 dauerhaft**
-im NVS des ESP32 ablegen (`G10 L20`, in unserer CLI
-`wallplotter-calibrate zero --persistent`).
+```cpp
+bool WallPlotter::canHome(AxisMask axisMask) {
+    log_error("This kinematic system cannot home");
+    return false;
+}
+```
 
-**Empfehlung:** Variante b früh einrichten. Mehrfarbige Plots über mehrere Tage
-hängen daran. Ein gespeicherter Versatz allein reicht nicht — ohne
-reproduzierbare Referenzfahrt ist die Maschinenposition nach dem Einschalten
-willkürlich, und der Versatz zeigt ins Leere.
+Das gilt mit Endschalter wie ohne und auch mit sensorlosem StallGuard. Die
+TMC2160 *können* StallGuard, und das Rodent führt die DIAG-Ausgänge sogar per
+Steckbrücke auf die Endstop-GPIOs — nur nützt das dieser Kinematik nichts.
+
+**Und `M2` verwirft `G92` nicht.** `GCode.cpp` setzt beim Programmende motion,
+plane, distance, feed, `coord_select` (auf G54), Spindel und Kühlung zurück;
+`gc_state.coord_offset` bleibt stehen. Flüchtig ist `G92` trotzdem — aber erst
+beim Ausschalten oder Soft-Reset (`SettingsDefinitions.cpp`: G54–G59 werden im
+NVS gesichert, G92 nicht).
+
+**Was tatsächlich trägt:** Der Nullpunkt entsteht mechanisch. FluidNC friert die
+Riemenlängen für kartesisch (0,0) **beim Booten** ein
+(`WallPlotter::init` → `xy_to_lengths(0, 0, …)`), der Maschinennullpunkt ist
+also exakt die Gondelposition in diesem Augenblick. Daraus folgt der Ablauf:
+
+1. Gondel an den Anschlag / Referenzpunkt bringen,
+2. **das Board dort neu starten**,
+3. erst dann messen, kalibrieren und plotten.
+
+Wer nach dem Booten erst joggt und dann `G92` setzt, bekommt Ankermaße, die um
+die Jog-Strecke daneben liegen — ohne Fehlermeldung. Ein dauerhafter Versatz per
+`G10 L20 P1` (G54, liegt im NVS) trägt erst zusammen mit dieser
+reproduzierbaren mechanischen Referenz.
 
 ### WLAN
 
@@ -317,17 +351,30 @@ Auf dem Handy stapeln sich die Karten, das Jog-Pad steht oben.
 
 ### Web-API des Boards
 
-Geprüft gegen die [ESP3D-v3-Dokumentation](https://esp3d.io/esp3d/version-3x/documentation/api/webhandlers/):
+Diese Tabelle stand hier falsch. Sie war gegen die allgemeine ESP3D-v3-Doku
+geschrieben; FluidNCs Webserver ist eine eigene Implementierung. Was
+`WebUI/WebUIServer.cpp` tatsächlich registriert:
 
-| Zweck | Aufruf |
-| --- | --- |
-| Kommando senden | `GET /command?plain=<befehl>` |
-| Datei auf SD schreiben | `POST /sdfiles?path=/&createPath=yes` |
-| Datei von SD lesen | `GET /sd/<datei>` |
-| SD auflisten | `GET /sdfiles?path=/&action=list` |
+| Zweck | Aufruf | Status |
+| --- | --- | --- |
+| Datei auf **SD** schreiben | `POST /upload` (multipart) | `/sdfiles` gibt es nicht |
+| Datei von SD lesen | `GET /sd/<datei>` (WebDAV) | funktioniert |
+| SD auflisten | `GET /upload?path=/` | `action=list` gibt es nicht |
+| Datei in den **Flash** | `POST /files` | |
+| `$`-Kommando senden | `GET /command?plain=$SD/Run=/x.gcode` | nur `$…` und `[ESP…]` |
+| GCode / Realtime senden | `GET /command?cmd=<x>` | braucht einen offenen WebSocket |
+| Pause | `GET /feedhold_reload` | |
+| Weiter | `GET /cyclestart_reload` | |
+| Soft-Reset | `GET /restart_reload` | |
 
-Achtung: `/upload` schreibt in ESP3D v3 auf den **Flash** des ESP32, nicht auf
-die Karte. (Das hatten wir zuerst falsch.)
+Es ist also genau umgekehrt zu dem, was oben stand: **`/files` ist der Flash,
+`/upload` ist die Karte.** Und `?plain=` reicht die Zeile an
+`settings_execute_line()` weiter, das nur `$name=wert` versteht — `?`, `G92`,
+`G10 L20` und die Realtime-Bytes kommen darüber nicht durch. Details:
+[Gegenprüfung](firmware-gegenpruefung.md), Abschnitt 2.3.
+
+Dazu: Solange `$HTTP/BlockDuringMotion` an ist (Werkszustand), antwortet
+`/command` während jeder Bewegung nur mit HTTP 503.
 
 ---
 
@@ -341,7 +388,7 @@ wichtiger als eine Versionsnummer:
 
 | | Zustand |
 | --- | --- |
-| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 424 Tests |
+| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 426 Tests |
 | Laufzeitschätzung, Fortsetzen, Vorverzerrung, Kalibrierlogik | **läuft**, gegen erzeugte Programme geprüft |
 | Web-UI, alle sechs CLIs | **läuft**, ohne Board bedienbar |
 | Upload, Jog, Status, `$SD/Run` | nach ESP3D-Doku gebaut, **nie an einem Board** |
@@ -553,23 +600,29 @@ dunklen Stellen bedient. Die Statistik zeigt das vor jedem Plot an.
 
 **Bis das Board da ist — nichts davon ist an echter Hardware verifiziert:**
 
-- ESP3D-Endpunkte (`/sdfiles`, `/sd/`, `/command`) — nach Dokumentation gebaut,
-  gegen Simulator getestet
-- Realtime-Bytes (`!`, `~`, `0x18`, `0x85`) gehen jetzt als Prozent-Escape
-  hinaus statt durch die URL-Aufbereitung von `requests`. Dass das Board sie so
-  annimmt, ist begründet, aber nicht nachgemessen — der Not-Halt gehört als
-  Erstes ausprobiert.
-- Servo-S-Werte für Pen-Up/Down sind Platzhalter, ebenso alle Werte im
-  Stiftkatalog
-- PWM-Pin für den Servo in der `config.yaml` (siehe Abschnitt 5)
-- Ob FluidNC `M0` als Pause versteht (für `--layers --one-file`)
+**Nicht mehr offen, sondern widerlegt** (Belege in der
+[Gegenprüfung](firmware-gegenpruefung.md)):
+
+- Die Endpunkte stimmen nicht: `/sdfiles` gibt es nicht, `/upload` ist die
+  Karte, `/files` der Flash.
+- Die Realtime-Bytes über `?plain=` sind wirkungslos — schlimmer noch, sie
+  melden HTTP 200. Es gibt derzeit **keinen wirksamen Not-Halt über das
+  Netzwerk**; deshalb steht jetzt ein `control:`-Block mit drei Tastern in der
+  `config.yaml`.
+- Der PWM-Pin ist geklärt: `gpio.25` = `Sp-Enable` (CN51), siehe Abschnitt 5.
+- `M0` versteht FluidNC als Pause (`ProgramFlow::Paused`). `M1` dagegen ist im
+  Quelltext ausdrücklich nicht implementiert und hält nicht an.
+
+**Weiterhin offen:**
+
+- Servo-S-Werte für Pen-Up/Down und alle Werte im Stiftkatalog sind Platzhalter
 - Der komplette Laserpfad
 
 **Danach zu bestimmen:**
 
 - Riemensteifigkeit aus einem gemessenen Raster → Dehnungskorrektur scharf
   stellen (`wallplotter-correct anpassen --model dehnung`)
-- StallGuard-Empfindlichkeit fürs sensorlose Homing
+- ~~StallGuard-Empfindlichkeit fürs sensorlose Homing~~ — entfällt, siehe Abschnitt 5
 - Brauchbare Höchstgeschwindigkeit über `--pattern feed-ramp`
 - Ob die Laufzeitschätzung stimmt: `--pattern grid` plotten, Uhr mitlaufen
   lassen, mit der Angabe im GCode-Kopf vergleichen. Weicht sie ab, sind

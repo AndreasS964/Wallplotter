@@ -1,5 +1,78 @@
 # Änderungen
 
+## Unveröffentlicht — Gegenprüfung gegen den FluidNC-Quelltext, Bauanleitung
+
+Bisher war alles Board-nahe „nach Dokumentation gebaut". Diese Runde hat den
+Quelltext gelesen statt die Doku — FluidNC `main` sowie v4.0.4, v3.9.8 und
+v3.8.0, dazu BTTs `rodent.yaml` und das Rodent-Handbuch V1.03. Ergebnis: 39
+belegte Funde, davon fünf, die das Board blockiert hätten.
+
+### Neu
+
+- **[Bauanleitung](docs/bauanleitung.md)** — vom Karton bis zum ersten Strich:
+  Stückliste, Riemen- und Ankerentscheidung mit den gerechneten Zahlen, Druck,
+  Montage, Verkabelung am Rodent, Firmware, Erstinbetriebnahme in prüfbaren
+  Etappen, Einmessen, Testmusterreihenfolge, Fehlersuche.
+- **[Gegenprüfung](docs/firmware-gegenpruefung.md)** — alle Funde mit Beleg aus
+  dem Firmware-Quelltext, plus eine Liste dessen, was geprüft und in Ordnung ist.
+
+### Behoben in der `config.yaml`
+
+- **`Laser: laser_mode: false` gestrichen.** Der Schlüssel existiert in FluidNC
+  nicht, und ein unbekannter Schlüssel setzt die Firmware in **ConfigAlarm** —
+  das Board wäre gar nicht gefahren. Lasermodus ist die Klasse der aktiven
+  Spindel, keine Einstellung; `$32` ist ein reiner Lese-Proxy auf
+  `isRateAdjusted()`. Der Block hätte zusätzlich eine zweite Spindel angelegt,
+  ebenfalls mit `tool_num: 0`.
+- **`speed_map` auf das Servofenster gelegt** (`0=5.000% 100=10.000%`). Die
+  Werte bilden das *Tastverhältnis* ab, nicht einen Winkel: bei 50 Hz sind
+  1,0–2,0 ms Impuls gleich 5–10 %. Vorher lag der ganze Servoweg zwischen S5
+  und S10, und der Stiftkatalog (26 bis 40) fuhr in den Anschlag.
+- **Servo-Pin geklärt statt geraten.** `gpio.25` liegt als `Sp-Enable` auf dem
+  3-poligen Stecker CN51 heraus, über 100 Ω und auf 3,3 V geklemmt. Der Stecker
+  mit der Aufschrift „PWM" ist ein analoger 3–10-V-Ausgang mit Trimmpoti und
+  wäre falsch gewesen. Die Servoversorgung darf nicht vom +5-V-Pin desselben
+  Steckers kommen — dort liegen ebenfalls 100 Ω.
+- **`control:`-Block ergänzt**: Taster für Halt, Pause und Weiter an den freien
+  Endstop-Eingängen. Kein Komfort, sondern Ersatz — über HTTP lässt sich die
+  Maschine derzeit nicht anhalten (siehe unten). `cycle_start_pin` ist außerdem
+  der einzige heute funktionierende Weg, die `M0`-Stiftwechselpause aufzulösen.
+- **Homing-Kommentar richtiggestellt.** `WallPlotter::canHome()` gibt `false`
+  zurück — `$H` geht mit dieser Kinematik nicht, auch nicht mit StallGuard. Und
+  FluidNC friert die Riemenlängen für kartesisch (0,0) beim *Booten* ein: Der
+  Nullpunkt entsteht dadurch, dass man das Board am Referenzpunkt neu startet,
+  nicht durch ein späteres `G92`.
+
+### Richtiggestellt in der Dokumentation
+
+- Die Web-API-Tabelle im Handbuch war umgekehrt: **`/files` ist der Flash,
+  `/upload` ist die SD-Karte**, und `/sdfiles` gibt es in keiner Version.
+- `/command?plain=` führt nur `$`-Kommandos aus. `?`, `G92`, `G10 L20` und die
+  Realtime-Bytes kommen darüber nicht durch — letztere melden dabei sogar
+  HTTP 200. Für Pause, Weiter und Reset gibt es `/feedhold_reload`,
+  `/cyclestart_reload` und `/restart_reload`.
+- `M2` verwirft den `G92`-Versatz **nicht**; flüchtig ist er erst beim
+  Ausschalten. `M1` hält nicht an (im Quelltext ausdrücklich nicht
+  implementiert), `M0` schon.
+- Der SD-Fortschritt kommt als Prozent, nicht in Bytes: `SD:<prozent>,<pfad>`.
+- StallGuard-Homing ist auch aus Projektidee und Roadmap gestrichen, der
+  `plain=?`-Poll aus Stufe 6 ebenfalls — sonst baut die nächste Runde beides
+  wieder ein.
+
+### Tests
+
+- `test_firmware_config.py` prüfte die `config.yaml` gegen sich selbst und
+  zementierte dabei den ConfigAlarm-Schlüssel. Jetzt prüft es, dass **kein**
+  `Laser`-Abschnitt da ist, dass die `speed_map` im RC-Servofenster landet und
+  dass es überhaupt einen Weg gibt, die Maschine anzuhalten. 426 Tests.
+
+### Nicht behoben — der Code kommt als Nächstes dran
+
+`upload.py`, `webapp.py`, `calibrate_cli.py` und `location.py` tragen die
+falschen Annahmen weiter; die Reihenfolge fürs Aufräumen steht am Ende der
+[Gegenprüfung](docs/firmware-gegenpruefung.md). Bis dahin läuft der Weg zum
+Board über FluidNCs eigenes WebUI im Browser.
+
 ## 0.2.0 — Werkzeugköpfe, ehrliche Zahlen, Fortsetzen
 
 Der Schwerpunkt: Was unten an der Gondel hängt, ist keine Konstante mehr.

@@ -32,7 +32,7 @@ Eine fertige Web-Oberfläche speziell für vpype gibt es nicht — vpype selbst 
 
 ## Roadmap: Software-Stufen
 
-Baut auf Etappe 0 aus dem Hardware-Fahrplan auf (Board/Servo/Laser-Mode fertig konfiguriert). Die folgenden Stufen verfeinern die Software-Etappen aus dem Toolchain-Plan mit Fokus auf die UI-Architektur.
+Baut auf Etappe 0 aus dem Hardware-Fahrplan auf (Board und Servo fertig konfiguriert; einen „Laser-Mode" zum Konfigurieren gibt es in FluidNC nicht — das ist die Klasse der aktiven Spindel, keine Einstellung). Die folgenden Stufen verfeinern die Software-Etappen aus dem Toolchain-Plan mit Fokus auf die UI-Architektur.
 
 ### 1. Core-Bibliothek (kein UI)
 
@@ -84,7 +84,9 @@ Optimierten Pfad direkt im Browser anzeigen (Pen-Up-Wege z. B. rot gestrichelt, 
 
 ### 6. Live-Status & Jobsteuerung
 
-FluidNC-Status (Position, SD-Fortschritt) per periodischem `/command?plain=?`-Poll in die eigene Oberfläche holen: Fortschrittsbalken, Pause/Resume/Stop. Damit bleibt für den ganzen Ablauf nur noch ein Browser-Tab statt Wechsel zwischen eigenem Tool und separatem FluidNC-WebUI.
+FluidNC-Status (Position, SD-Fortschritt) in die eigene Oberfläche holen: Fortschrittsbalken, Pause/Resume/Stop.
+
+*Richtigstellung (Aug. 2026):* Der hier ursprünglich vorgesehene `/command?plain=?`-Poll funktioniert nicht — `plain=` führt nur `$`-Kommandos aus, `?` liefert eine Hilfezeile. Der Status geht über den WebSocket unter `/`; für Pause, Weiter und Reset gibt es die HTTP-Endpunkte `/feedhold_reload`, `/cyclestart_reload` und `/restart_reload`. Belege in der [Gegenprüfung](firmware-gegenpruefung.md). Damit bleibt für den ganzen Ablauf nur noch ein Browser-Tab statt Wechsel zwischen eigenem Tool und separatem FluidNC-WebUI.
 
 ### 7. Komfort (optional, später)
 

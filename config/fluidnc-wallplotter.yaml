@@ -2,12 +2,17 @@
 #
 # Pinbelegung (Stepper, SPI, I2S, SD, Endstops) stammt aus BTTs eigener
 # rodent.yaml: https://github.com/bigtreetech/Rodent/blob/master/rodent.yaml
-# Alles, was dort NICHT drinsteht, ist unten mit PRÜFEN markiert.
+# Servo- und Tasterpins aus dem Rodent User Manual V1.03 (Pinbild S. 6/7,
+# Spindel-Schaltplan S. 12). Jeder Schlüssel dieser Datei ist gegen den
+# FluidNC-Quelltext geprüft — siehe docs/firmware-gegenpruefung.md.
 #
 # Vor dem ersten Einschalten durchgehen:
 #   1. Anker-Koordinaten aus der echten Aufhängung eintragen (siehe unten)
-#   2. Servo-PWM-Pin gegen das Board prüfen — der einzige echte Unbekannte
-#   3. run_amps auf 1.2 lassen (17HS4412P1-3), nicht höher
+#   2. run_amps auf 1.2 lassen (17HS4412P1-3), nicht höher
+#   3. Bei einem V1.1-Board r_sense_ohms nachprüfen: BTTs rodent.yaml gilt für
+#      V1.0 (0.022), im V1.1-Pinbild steht "RSENSE 75MR"
+#   4. Nach dem Start ins Log sehen — ein einziges "[MSG:ERR: Ignored key …]"
+#      bedeutet ConfigAlarm, und dann fährt gar nichts
 #
 # Prüfen lässt sich die Geometrie vorab mit:
 #   wallplotter-kinematics --width 2000 --height 2500 --overhang 150 --above 150
@@ -26,7 +31,8 @@ kinematics:
     # jeweiligen Aufhängung. Der Plotter soll an verschiedenen Wänden hängen,
     # und damit ändern sich Ankerabstand und -höhe jedes Mal.
     #
-    # Nach dem Aufhängen drei Maße nehmen (Gondel am Referenzpunkt, G92 gesetzt):
+    # Gondel an den Referenzpunkt hängen, DORT das Board neu starten (siehe
+    # den Homing-Block unten), dann drei Maße nehmen:
     # Abstand der Umlenkpunkte, linke Riemenlänge, rechte Riemenlänge. Dann:
     #
     #   wallplotter-location new <Name> --span 2300 --left 1450 --right 1470
@@ -63,20 +69,30 @@ axes:
     max_travel_mm: 4000.000
     soft_limits: false
     homing:
-      # Kein Endschalter. Zwei Wege, und die Wahl entscheidet mehr als sie
-      # aussieht — sie bestimmt, ob der Nullpunkt ein Ausschalten übersteht:
+      # Referenziert wird NICHT. Das ist keine Sparmaßnahme, sondern eine
+      # Eigenschaft der Kinematik:
       #
-      # a) Von Hand: Gondel an den oberen Anschlag fahren, dann G92 setzen
-      #    (wallplotter-calibrate zero). Einfach, aber nach jedem Aus- und
-      #    Einschalten neu nötig, und ein M2 am Programmende verwirft es laut
-      #    GRBL-Konvention ebenfalls.
+      #   bool WallPlotter::canHome(AxisMask) {
+      #       log_error("This kinematic system cannot home");
+      #       return false;
+      #   }
       #
-      # b) Sensorlos per StallGuard: cycle auf 1 setzen, homing_mode auf
-      #    CoolStep (siehe unten) und die Empfindlichkeit über stallguard
-      #    einstellen. Dann liefert $H reproduzierbare Maschinenkoordinaten,
-      #    und der Flächenversatz lässt sich als G54 dauerhaft ablegen
-      #    (wallplotter-calibrate zero --persistent). Das ist die Variante,
-      #    die mehrfarbige Plots über mehrere Tage trägt.
+      # $H endet also in einer Fehlermeldung — mit Endschalter wie ohne, und
+      # auch mit sensorlosem StallGuard. (Frühere Fassungen dieser Datei haben
+      # StallGuard-Homing empfohlen; das war falsch.)
+      #
+      # Der Nullpunkt entsteht stattdessen mechanisch, und zwar so:
+      # Gondel an den Anschlag, dann das BOARD DORT NEU STARTEN. FluidNC friert
+      # beim Start die Riemenlängen für kartesisch (0,0) ein
+      # (WallPlotter::init -> xy_to_lengths(0,0,zero_left,zero_right)) — der
+      # Maschinennullpunkt ist exakt die Gondelposition in diesem Moment.
+      # Ein späteres G92 verschiebt nur das Werkstücksystem, nicht die
+      # Kinematik. Wer nach dem Booten erst joggt und dann nullt, bekommt
+      # Ankermaße, die um die Jog-Strecke daneben liegen.
+      #
+      # Was ein Ausschalten übersteht: G54 (G10 L20 P1), das liegt im NVS.
+      # G92 nicht — das ist flüchtig. Ein M2 verwirft G92 übrigens NICHT;
+      # es setzt nur coord_select auf G54 zurück.
       cycle: 0
     motor0:
       limit_neg_pin: NO_PIN
@@ -99,7 +115,7 @@ axes:
         toff_disable: 0
         toff_stealthchop: 5
         use_enable: false
-        run_mode: StealthChop # leise; für StallGuard-Homing auf CoolStep wechseln
+        run_mode: StealthChop # leise — und Homing gibt es hier ohnehin nicht
         homing_mode: CoolStep
         stallguard: 16
         stallguard_debug: false
@@ -145,36 +161,91 @@ axes:
   # Die beiden freien Treiber (I2SO.10/9/8 und I2SO.13/12/15, spi_index 3 und 4)
   # sind damit Reserve.
 
-# Pen-Lift über Servo am PWM-Ausgang, angesteuert per M3 S<wert> / M5.
+# Pen-Lift über Servo an der PWM-fähigen Spindel, angesteuert per M3 S<wert> / M5.
+# (Gemeint ist die FluidNC-Sektion `pwm:`, NICHT der Stecker mit der Aufschrift
+# "PWM" auf dem Board — siehe weiter unten.)
 # Bewusst NICHT M280 — das ist Marlin/Makelangelo-Konvention und existiert
 # in FluidNC nicht.
 #
-# PRÜFEN — der einzige geratene Pin in dieser Datei: BTTs rodent.yaml nutzt
-# einen Huanyang-VFD über RS485 und belegt gar keinen PWM-Ausgang, deshalb
-# steht dort kein GPIO für den PWM-Port. Zwei Dinge am Board gegenprüfen:
-#   a) welcher GPIO am PWM-Header hängt (Schaltplan/Silkscreen), und
-#   b) ob der Ausgang für einen MG90S taugt: das Datenblatt nennt 3-10 V für
-#      den PWM-Port, ein Servo will aber ein sauberes 5-V-Signal bei 50 Hz.
-#      Wenn das nicht passt, den Servo an einen freien GPIO hängen (Kandidaten
-#      laut rodent.yaml unbelegt: gpio.2, gpio.4, gpio.12, gpio.13, gpio.25)
-#      und die Nummer hier eintragen.
+# Der Pin ist geklärt (Rodent User Manual V1.03, Pinbild S. 6/7 und
+# Spindel-Schaltplan S. 12): gpio.25 liegt als "Sp-Enable" auf dem 3-poligen
+# Stecker CN51 heraus — VCC / GND / Signal, Raster 2,54 mm. Beschaltung dort:
+#
+#   CN51 Pin 1 --[R25 100R]-- +5V
+#   CN51 Pin 2 --------------- GND
+#   CN51 Pin 3 --[R24 100R]-- gpio.25, ESD-Klemmdiode 3,3 V gegen GND
+#
+# Also: Signal an Pin 3, Masse an Pin 2 — aber die SERVOVERSORGUNG NICHT vom
+# +5-V-Pin abgreifen. Da liegen ebenfalls 100 Ohm in Reihe, an denen ein MG90S
+# (mehrere hundert mA im Anlauf) die Spannung vollständig zusammenbrechen
+# lässt. Eigenes 5-V-Netzteil, Masse mit dem Board zusammenlegen.
+#
+# Der Stecker mit der Aufschrift "PWM" ist NICHT der richtige: das ist ein
+# analoger 3-10-V-Drehzahlausgang mit Trimmpoti (VR-10K), für einen VFD
+# gedacht. Ebenfalls richtiggestellt: gpio.2, gpio.4, gpio.12 und gpio.13 sind
+# keine brauchbaren Alternativen — sie sind am Rodent nirgends herausgeführt,
+# und 2/12/13 sind ESP32-Strapping- bzw. JTAG-Pins.
 pwm:
   pwm_hz: 50 # Servo-Takt
-  output_pin: gpio.25 # PRÜFEN, siehe oben
+  output_pin: gpio.25 # Sp-Enable, CN51 Pin 3
   enable_pin: NO_PIN
   direction_pin: NO_PIN
   disable_with_s0: false
   s0_with_disable: false
-  # Der S-Wert wird zur Impulsbreite: speed_map bildet 0..100 auf den
-  # nutzbaren Servoweg ab. Die Endwerte am montierten Stift feinjustieren,
-  # dann in PenConfig(down_value=..., up_value=...) übernehmen.
-  speed_map: 0=0.000% 100=100.000%
+  # speed_map bildet S-Werte auf das TASTVERHÄLTNIS ab, nicht auf einen Winkel.
+  # Bei 50 Hz ist die Periode 20 ms; ein RC-Servo will 1,0 bis 2,0 ms Impuls,
+  # also 5 % bis 10 %. Damit entspricht S<wert> direkt Prozent des Servowegs:
+  # S0 = 1,0 ms, S50 = 1,5 ms, S100 = 2,0 ms.
+  #
+  # Hier stand vorher `0=0.000% 100=100.000%`. Das bildete S0..S100 auf 0..20 ms
+  # ab — der gesamte nutzbare Servoweg lag zwischen S5 und S10, und die Werte
+  # aus dem Stiftkatalog (26 bis 40) fuhren den Servo in den Anschlag.
+  speed_map: 0=5.000% 100=10.000%
   tool_num: 0
 
-# Kein Laser-Modus: M4 skaliert die Leistung mit der Geschwindigkeit, was für
-# einen Servo Unsinn wäre. M3 setzt konstant — genau das, was wir wollen.
-Laser:
-  laser_mode: false
+# Hier stand ein Block `Laser:` mit `laser_mode: false`. Beides war falsch:
+# `laser_mode` ist überhaupt kein Konfigschlüssel (Lasermodus ist die Klasse
+# der aktiven Spindel; $32 ist ein reiner Lese-Proxy auf isRateAdjusted()),
+# und ein unbekannter Schlüssel setzt FluidNC in ConfigAlarm — das Board wäre
+# gar nicht erst gefahren. Zusätzlich hätte `Laser:` eine zweite Spindel
+# angelegt, ebenfalls mit tool_num 0.
+#
+# Die Spindel oben ist Klasse PWM, und die ist nicht rate-adjusted. Genau das
+# ist gewollt: M3 S<wert> setzt konstant, ohne mit dem Vorschub zu skalieren.
+
+# ---------------------------------------------------------------------------
+# Halt, Pause und Weiter als Taster
+# ---------------------------------------------------------------------------
+#
+# Nicht optional. Über HTTP lässt sich die Maschine derzeit nicht anhalten:
+# `/command?plain=` führt nur $-Kommandos aus, ein Realtime-Byte landet dort
+# beim leeren Kommandonamen ("Help") und meldet HTTP 200, ohne etwas zu tun.
+# Und während der Fahrt antwortet der Endpunkt ohnehin nur mit 503, solange
+# $HTTP/BlockDuringMotion an ist.
+#
+# Die Eingänge sind frei: weil die WallPlotter-Kinematik nicht referenzieren
+# kann, wird kein einziger der fünf optogekoppelten Endstop-Eingänge gebraucht.
+# Taster gegen GND, Spannungswahl über die SW_VCC-Brücke (5 V bei 24-V-Board).
+#
+# `cycle_start_pin` ist zusätzlich der einzige heute funktionierende Weg, die
+# M0-Pause beim Stiftwechsel aufzulösen.
+#
+# Alle Control-Eingänge müssen beim Start INAKTIV lesen — ein klemmender Taster
+# löst sonst gleich beim Einschalten Alarm aus. Das ist gewollt.
+#
+# Das `:low` unten unterstellt, dass der Eingang im Ruhezustand HIGH liegt und
+# der gedrückte Taster ihn nach GND zieht. Die Eingänge des Rodent sind
+# optogekoppelt, die Ruhelage hängt damit an der Beschaltung — vor dem ersten
+# Lauf mit `?` gegenprüfen: im Statusbericht listet das Feld `Pn:` genau die
+# Control-Eingänge, die FluidNC gerade als AKTIV sieht. Steht dort schon im
+# Ruhezustand ein R, H oder S, gehört das `:low` weg.
+#
+# Wer die Taster (noch) nicht verdrahtet hat, kommentiert den Block aus;
+# NO_PIN wäre auch in Ordnung, aber dann fehlt der Halt ersatzlos.
+control:
+  reset_pin: gpio.35:low # X-MAX-Stecker — Not-Halt, entspricht Ctrl-X
+  feed_hold_pin: gpio.34:low # Y-MAX-Stecker — Pause, entspricht !
+  cycle_start_pin: gpio.33:low # Z-MAX-Stecker — Weiter, entspricht ~
 
 # ---------------------------------------------------------------------------
 # Zweiter Werkzeugkopf (Laser) — bewusst auskommentiert
@@ -207,9 +278,8 @@ Laser:
 # rechnet mit 1000, kommt viermal zu wenig Leistung heraus — oder umgekehrt.
 #
 # Laser:
-#   laser_mode: true
-#   pwm_hz: 5000
-#   output_pin: gpio.2        # PRÜFEN, eigener Ausgang, nicht der Servo-Pin
+#   pwm_hz: 5000              # Klasse Laser erlaubt nur 1000..100000
+#   output_pin: gpio.15       # Sp-Direction, CN52 Pin 3 — schließt RS485 aus
 #   enable_pin: NO_PIN        # Freigabe der Laser-PSU, falls vorhanden
 #   disable_with_s0: true     # S0 zieht auch die Freigabe — sicherer
 #   s0_with_disable: true

@@ -28,7 +28,8 @@ Elektronik-Board bestellt, Motoren vorhanden. Nächster Schritt: Board testen, d
 ### Mechanik-Design-Entscheidungen
 - **Selbstgewichtete Gondel** statt separatem fallendem Gegengewicht am Kabelende → macht die 1,4×-Breite-Fallweg-Beschränkung (aus dem klassischen Polargraph-Design) irrelevant, 2,5m Deckenhöhe reicht problemlos
 - **Federgespannte Motorhalterung** statt schraubfixierter Variante → gleicht Riemendehnung über die Zeit automatisch aus, wichtig bei mehrstündigen unbeaufsichtigten Plots und mehreren Metern Riemenlänge
-- **Homing ohne mechanische Endstop-Schalter**: physischer Anschlag oben am Motorhalter + `G92`/„Set Home" beim Referenzieren, alternativ sensorloses StallGuard-Homing (TMC2160 kann das)
+- **Homing ohne mechanische Endstop-Schalter**: physischer Anschlag oben am Motorhalter, dort das Board neu starten, dann `G92`/„Set Home".
+  *Richtigstellung (Aug. 2026):* Die hier ursprünglich als Alternative genannte StallGuard-Referenzfahrt geht nicht — `WallPlotter::canHome()` in FluidNC gibt `false` zurück, `$H` endet in einer Fehlermeldung. Die TMC2160 können StallGuard, die Kinematik nimmt es nur nicht an. Siehe [Bauanleitung](bauanleitung.md), Abschnitt 7.3.
 
 ### Ausgewählte STL-Dateien
 - **Gondel/Pen-Holder**: „Makelangelo plotter head July 2026" von i-make-robots (Dan Royer/Marginally Clever) — https://www.thingiverse.com/thing:7388981
@@ -52,9 +53,9 @@ Elektronik-Board bestellt, Motoren vorhanden. Nächster Schritt: Board testen, d
 ### Firmware: FluidNC
 - Läuft auf dem ESP32 des Rodent-Boards, Konfiguration über `config.yaml` (kein Neukompilieren nötig)
 - Kinematik: `WallPlotter` (Ankerpunkte, Segmentlänge)
-- TMC2160-Treiber: Strom exakt auf 1,2A der Motoren einstellen, StallGuard optional für sensorloses Homing
+- TMC2160-Treiber: Strom exakt auf 1,2A der Motoren einstellen (StallGuard bringt hier nichts, siehe oben)
 - **WLAN dauerhaft aktiv** (Station-Modus, verbindet sich mit Heimnetz), erreichbar über Hostname/IP
-- Pen-Lift über Servo, angesteuert per `M3`/`M5` (GRBL-Konvention) — **nicht** `M280` (das ist Marlin-spezifisch)
+- Pen-Lift über Servo, angesteuert per `M3`/`M5` (GRBL-Konvention) — **nicht** `M280` (das ist Marlin-spezifisch). Der Servo hängt an `gpio.25` (`Sp-Enable`, Stecker CN51), nicht am Stecker mit der Aufschrift „PWM" — der ist ein analoger 3–10-V-Ausgang.
 
 ### Steuerung/Bedienung
 - FluidNC-eingebautes **Web-UI** (ESP3D-basiert): Datei-Upload auf µSD-Karte am Board, Jog-Controls, Terminal, Live-Status — von jedem Gerät im Heimnetz per Browser erreichbar
