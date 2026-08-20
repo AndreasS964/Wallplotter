@@ -106,6 +106,12 @@ def build_parser() -> argparse.ArgumentParser:
     tools.add_argument("--pen-down", type=int, help="S-Wert Stift unten, überschreibt den Katalog")
     tools.add_argument("--pen-up", type=int, help="S-Wert Stift oben, überschreibt den Katalog")
     tools.add_argument("--pen-dwell", type=float, help="Servo-Wartezeit in s, überschreibt den Katalog")
+    tools.add_argument(
+        "--pen-tool",
+        type=int,
+        help="Spindelnummer des Stifts für M6 T<n>; -1 schaltet die Anwahl ab "
+        "(richtig, solange nur eine Spindel in der config.yaml steht)",
+    )
 
     laser = parser.add_argument_group("Laser")
     laser.add_argument("--laser-power", type=float, help="Leistung in Prozent von s_max")
@@ -115,6 +121,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="S-Wert für volle Leistung — steht in der speed_map der config.yaml",
     )
     laser.add_argument("--laser-passes", type=int, help="Anzahl der Durchgänge")
+    laser.add_argument(
+        "--laser-tool",
+        type=int,
+        help="Spindelnummer des Lasers für M6 T<n> (Vorgabe 100, wie im "
+        "auskommentierten Block der config.yaml); -1 schaltet die Anwahl ab",
+    )
     laser.add_argument(
         "--laser-constant",
         action="store_true",
@@ -230,6 +242,8 @@ def _toolhead_from_args(args) -> Toolhead:
         changes["up_value"] = args.pen_up
     if args.pen_dwell is not None:
         changes["dwell_s"] = args.pen_dwell
+    if getattr(args, "pen_tool", None) is not None:
+        changes["tool_number"] = None if args.pen_tool < 0 else args.pen_tool
     return replace(head, **changes) if changes else head
 
 
@@ -250,6 +264,8 @@ def tune_laser(head: LaserToolhead, args) -> LaserToolhead:
         changes["passes"] = args.laser_passes
     if args.laser_constant:
         changes["dynamic"] = False
+    if getattr(args, "laser_tool", None) is not None:
+        changes["tool_number"] = None if args.laser_tool < 0 else args.laser_tool
     return replace(head, **changes) if changes else head
 
 
@@ -421,6 +437,20 @@ def _run(args) -> int:
             print(f"  {layer.color}  {len(layer.lines):>5} Linien  "
                   f"→ {head_for(layer, tools, plot_config.toolhead).name}")
 
+        # Statistik und Resonanzprüfung galten bisher nur für den einfarbigen
+        # Zweig. Mehrfarbig bekam man also gerade dort keine Laufzeit, wo sie am
+        # meisten zählt — bei einer Zeichnung, die über mehrere Abende läuft.
+        from .motion import resonance_warning  # noqa: PLC0415
+
+        raw = [line for layer in layer_list for line in layer.lines if len(line) >= 2]
+        combined_geometry = prepare_geometry(
+            raw, plot_config, fit=not args.no_fit, correction=correction
+        )
+        print(f"Zusammen: {stats_for(combined_geometry, plot_config)}")
+        warning = resonance_warning(combined_geometry, plot_config.draw_feed)
+        if warning is not None and warning.critical:
+            print(str(warning), file=sys.stderr)
+
         if args.one_file:
             write_text(base, result, what="GCode")
             print(f"{len(layer_list)} Ebenen mit Stiftwechsel-Pausen: {base}")
@@ -439,6 +469,7 @@ def _run(args) -> int:
                 ("--preview", args.preview),
                 ("--upload", args.upload),
                 ("--run", args.run),
+                ("--adaptive-feed", getattr(args, "adaptive_feed", False)),
             )
             if used
         ]

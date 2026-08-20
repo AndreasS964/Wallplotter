@@ -126,3 +126,70 @@ def test_travel_is_counted_for_every_pass():
     einmal = stats_for(lines, PlotConfig(toolhead=LaserToolhead()))
     dreimal = stats_for(lines, PlotConfig(toolhead=LaserToolhead(passes=3)))
     assert dreimal.travel_mm == pytest.approx(3 * einmal.travel_mm)
+
+
+def test_no_line_exceeds_what_fluidnc_accepts():
+    """FluidNC liest in einen ``char line[128]`` und lehnt alles Längere ab.
+
+    ``gc_execute_line()`` prüft ``strlen(input_line) > 127`` **vor** dem
+    Entfernen der Kommentare — ein langes ``;``-Kommentar zählt also mit. Die
+    Folge ist kein Alarm, sondern ``Job::abort()``: der Lauf stirbt mitten im
+    Bild mit ``error:14``. Betroffen war der Laserkopf, dessen Warnungen 168
+    und 186 Byte lang waren.
+    """
+    from wallplotter.gcode import MAX_LINE_BYTES
+    from wallplotter.toolhead import LaserToolhead, PenToolhead
+
+    lines = [[(0.0, 0.0), (100.0, 100.0)], [(10.0, 10.0), (90.0, 10.0)]]
+    heads = [
+        PenToolhead(name="Ein sehr langer Stiftname " * 6, note="und eine Notiz " * 8),
+        LaserToolhead(note="ungetestet " * 12, passes=3, dynamic=False),
+    ]
+    for head in heads:
+        program = lines_to_gcode(
+            lines,
+            PlotConfig(toolhead=head),
+            header_comment="Ein Kopfzeilentext, der weit über die Grenze hinausgeht " * 4,
+        )
+        for line in program.splitlines():
+            assert len(line.encode("utf-8")) <= MAX_LINE_BYTES, line
+
+
+def test_comment_lines_wrap_without_losing_words():
+    from wallplotter.gcode import MAX_LINE_BYTES, comment_lines
+
+    text = "Ähnlich lange Wörter mit Umlauten " * 12
+    wrapped = comment_lines(text)
+    assert all(len(line.encode("utf-8")) <= MAX_LINE_BYTES for line in wrapped)
+    assert " ".join(line.removeprefix("; ") for line in wrapped) == text.strip()
+
+
+def test_a_single_endless_word_is_broken_hard():
+    from wallplotter.gcode import MAX_LINE_BYTES, comment_lines
+
+    wrapped = comment_lines("ü" * 400)
+    assert all(len(line.encode("utf-8")) <= MAX_LINE_BYTES for line in wrapped)
+    assert "".join(line.removeprefix("; ") for line in wrapped) == "ü" * 400
+
+
+def test_the_pen_change_message_reaches_the_wall():
+    """`;`-Kommentare verschwinden beim Einlesen, `(MSG,…)` nicht.
+
+    ``collapseGCode()`` wirft alles hinter einem Semikolon weg, bevor
+    irgendjemand es sieht. Klammerkommentare mit MSG gehen dagegen durch
+    ``gcode_comment_msg()`` und landen als ``[MSG:INFO: MSG,…]`` im Log —
+    also in der Konsole des WebUI, wo der Mensch vor der Wand hinsieht.
+    """
+    from wallplotter.gcode import layers_to_gcode
+    from wallplotter.pipeline import Layer
+
+    layers = [
+        Layer(1, "#000000", [[(0.0, 0.0), (10.0, 10.0)]]),
+        Layer(2, "#e02020", [[(0.0, 10.0), (10.0, 0.0)]]),
+    ]
+    program = layers_to_gcode(layers, PlotConfig(), separate=False)
+    pause = next(line for line in program.splitlines() if line.startswith("M0"))
+    assert pause.startswith("M0 (MSG,")
+    assert pause.endswith(")")
+    assert "#e02020" in pause
+    assert "Cycle Start" in pause

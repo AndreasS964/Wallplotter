@@ -1,29 +1,41 @@
 """Die CLI gegen einen simulierten Client — ohne Board im Netz."""
 
+import sys
+from pathlib import Path
+
 import pytest
 
 from wallplotter import calibrate_cli
 from wallplotter.calibration import AreaCalibration
-from wallplotter.upload import FluidNCClient
+from wallplotter.upload import FluidNCClient, TelnetChannel
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from fluidnc_fake import FakeFluidNCSocket, FakeSession, opener_for  # noqa: E402
 
 
-class FakeSession:
-    def __init__(self, text="<Idle|MPos:120.000,340.000,0.000>"):
-        self.text = text
-        self.commands = []
+class Board:
+    """Gegenstelle mit beiden Kanälen: HTTP für Dateien, TCP für Kommandos."""
 
-    def get(self, url, params=None, timeout=None):
-        self.commands.append(params["plain"])
-        return type("R", (), {"text": self.text, "status_code": 200})()
+    def __init__(self, status="<Idle|MPos:120.000,340.000,0.000>"):
+        self.session = FakeSession()
+        self.socket = FakeFluidNCSocket(status=status)
+
+    @property
+    def commands(self) -> list[str]:
+        """Alle GCode-/$-Zeilen, die tatsächlich am Board angekommen sind."""
+        return self.socket.lines
+
+    def client(self, config) -> FluidNCClient:
+        channel = TelnetChannel(config.hostname, config.telnet_port, 5.0, opener_for(self.socket))
+        return FluidNCClient(config, self.session, channel)
 
 
 @pytest.fixture
 def board(monkeypatch):
-    session = FakeSession()
-    monkeypatch.setattr(
-        calibrate_cli, "FluidNCClient", lambda config: FluidNCClient(config, session)
-    )
-    return session
+    fake = Board()
+    monkeypatch.setattr(calibrate_cli, "FluidNCClient", fake.client)
+    return fake
 
 
 def test_zero_sends_g92(board, capsys):

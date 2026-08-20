@@ -117,3 +117,31 @@ def test_higher_anchors_improve_the_worst_case():
     high = analyze_area(default_kinematics(anchor_above_mm=400), samples=11)
     assert high.worst_resolution_mm < low.worst_resolution_mm
     assert high.max_tension_n < low.max_tension_n
+
+
+def test_resolution_matches_the_closed_form():
+    """Auflösung = Schrittweite / |sin(Riemenwinkel)| — an jeder Stelle.
+
+    Beide Spalten der inversen Jacobi-Matrix haben dieselbe Länge, weil die
+    Richtungsvektoren zu den Ankern Einheitsvektoren sind. Die frühere
+    Fassung mischte Komponenten aus beiden Spalten; das ergab plausible, aber
+    falsche Zahlen — und damit die falsche Problemzone.
+    """
+    kin = WallPlotterKinematics(Anchors(left_x=-150.0, right_x=2150.0, y=2650.0))
+    for x, y in [(0.0, 0.0), (300.0, 1700.0), (1000.0, 1250.0), (1990.0, 2490.0)]:
+        angle = math.radians(kin.belt_angle_deg(x, y))
+        assert kin.resolution_mm(x, y) == pytest.approx(
+            kin.motor.step_mm / abs(math.sin(angle)), rel=1e-9
+        )
+
+
+def test_resolution_is_the_same_for_both_motors():
+    """Ein Schritt links verschiebt den Stift genauso weit wie ein Schritt rechts."""
+    kin = WallPlotterKinematics(Anchors(left_x=-400.0, right_x=1800.0, y=2200.0))
+    x, y = 300.0, 900.0
+    (lx, ly), (rx, ry) = kin._unit_vectors(x, y)
+    det = lx * ry - ly * rx
+    left_column = math.hypot(-ry, rx) / abs(det)
+    right_column = math.hypot(ly, -lx) / abs(det)
+    assert left_column == pytest.approx(right_column, rel=1e-12)
+    assert kin.resolution_mm(x, y) == pytest.approx(left_column * kin.motor.step_mm, rel=1e-12)

@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .config import FluidNCConfig
 from .output import OutputError, write_text
-from .resume import ResumeError, resume_file, scan_program
+from .resume import ResumeError, read_program, resume_file, scan_program
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -88,8 +88,13 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    done = scan_program(args.gcode.read_text(encoding="utf-8"))[-1].draw_count
+    # Dieselbe nachsichtige Kodierung wie beim Erzeugen. Vorher stand hier ein
+    # zweites, striktes `read_text(encoding="utf-8")` — ein einziges krummes
+    # Byte im Kommentar ließ das Programm hier abstürzen, und zwar erst,
+    # nachdem das Restprogramm längst geschrieben war. Die Datei war da, die
+    # Meldung dazu nicht.
     left = scan_program(rest)[-1].draw_count
+    done = scan_program(read_program(args.gcode))[-1].draw_count
     print(f"Restprogramm geschrieben: {out_path}")
     print(f"Noch zu zeichnen: {left} von {done} Bewegungen")
     print(

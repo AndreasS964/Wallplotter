@@ -26,6 +26,7 @@ __all__ = [
     "pendulum_frequency_hz",
     "reversal_frequency_hz",
     "dominant_spacing_mm",
+    "dominant_run_length_mm",
     "resonance_warning",
     "conditioning_feeds",
 ]
@@ -42,23 +43,31 @@ def pendulum_frequency_hz(pen_below_pivot_mm: float = 100.0) -> float:
     return math.sqrt(9810.0 / pen_below_pivot_mm) / (2 * math.pi)
 
 
-def reversal_frequency_hz(spacing_mm: float, feed_mm_per_min: float) -> float:
-    """Wie oft pro Sekunde die Richtung wechselt.
+def reversal_frequency_hz(run_length_mm: float, feed_mm_per_min: float) -> float:
+    """Grundfrequenz der Anregung: eine Bahn hin, eine Bahn zurück.
 
-    Bei einer Schraffur mit ``spacing_mm`` Bahnabstand liegen zwei Umkehrungen
-    pro Doppelbahn — daher der Faktor zwei.
+    ``run_length_mm`` ist die Länge einer Bahn zwischen zwei Richtungsumkehren
+    — bei einer Schraffur also die Strichlänge, **nicht** der Bahnabstand.
+    Eine volle Schwingung der Gondel ist „hin und wieder zurück", dauert also
+    zweimal die Bahnzeit; daher der Faktor zwei.
+
+    Hier stand früher der Bahnabstand. Das war der falsche Weg: wie oft die
+    Gondel umkehrt, hängt daran, wie lang eine Bahn ist, nicht daran, wie eng
+    die Bahnen liegen. Bei einer Schraffur über 500 mm mit 3 mm Abstand lagen
+    zwischen beiden Zahlen mehr als zwei Größenordnungen.
     """
-    if spacing_mm <= 0 or feed_mm_per_min <= 0:
-        raise ValueError("Abstand und Vorschub müssen größer als 0 sein")
-    return (feed_mm_per_min / 60.0) / (2 * spacing_mm)
+    if run_length_mm <= 0 or feed_mm_per_min <= 0:
+        raise ValueError("Bahnlänge und Vorschub müssen größer als 0 sein")
+    return (feed_mm_per_min / 60.0) / (2 * run_length_mm)
 
 
 def dominant_spacing_mm(lines: Sequence[Line]) -> float | None:
-    """Typischen Bahnabstand einer Zeichnung schätzen.
+    """Typischen Bahn*abstand* schätzen — für die Meldung, nicht für die Physik.
 
     Genommen wird der Median des Abstands zwischen aufeinanderfolgenden
-    Linienanfängen — bei einer Schraffur ist das genau der Bahnabstand, bei
-    freier Geometrie ein grober, aber brauchbarer Anhaltspunkt.
+    Linienanfängen. Bei einer Schraffur ist das der Bahnabstand; er bestimmt,
+    wie fein das Bild wird, aber nicht, wie oft die Gondel umkehrt. Dafür ist
+    :func:`dominant_run_length_mm` zuständig.
     """
     starts = [line[0] for line in lines if len(line) >= 2]
     if len(starts) < 3:
@@ -73,6 +82,50 @@ def dominant_spacing_mm(lines: Sequence[Line]) -> float | None:
     return gaps[len(gaps) // 2]
 
 
+def dominant_run_length_mm(lines: Sequence[Line]) -> float | None:
+    """Typische Länge einer Bahn zwischen zwei Richtungsumkehren.
+
+    Das ist die Größe, die die Anregung bestimmt. Gemessen wird innerhalb der
+    Linien: eine Polylinie kann selbst schon zickzacken (ein Mäander ist eine
+    einzige Linie), und dann liegen die Umkehrpunkte mitten darin. Als
+    Umkehr gilt ein Richtungswechsel um mehr als 90°.
+
+    Zurück kommt der Median über alle so gefundenen Abschnitte — der Median,
+    weil ein paar lange Anfahrten das Mittel sonst verziehen.
+    """
+    runs: list[float] = []
+    for line in lines:
+        if len(line) < 2:
+            continue
+        run = 0.0
+        heading: tuple[float, float] | None = None
+        for start, end in zip(line, line[1:], strict=False):
+            dx, dy = end[0] - start[0], end[1] - start[1]
+            length = math.hypot(dx, dy)
+            if length <= 1e-9:
+                continue
+            direction = (dx / length, dy / length)
+            # Verglichen wird mit der Richtung, in der dieser Abschnitt
+            # begonnen hat, nicht mit dem Vorgängersegment. Ein Mäander biegt
+            # zweimal um 90° ab: gegen den Vorgänger wäre das nie eine Umkehr,
+            # gegen die Anfangsrichtung schon — und genau dort kippt die
+            # Gondel.
+            if heading is not None and heading[0] * direction[0] + heading[1] * direction[1] < 0.0:
+                if run > 0:
+                    runs.append(run)
+                run = 0.0
+                heading = direction
+            elif heading is None:
+                heading = direction
+            run += length
+        if run > 0:
+            runs.append(run)
+    runs = sorted(value for value in runs if value > 0.01)
+    if not runs:
+        return None
+    return runs[len(runs) // 2]
+
+
 @dataclass(frozen=True)
 class ResonanceWarning:
     """Ergebnis der Resonanzprüfung."""
@@ -80,7 +133,12 @@ class ResonanceWarning:
     critical: bool
     reversal_hz: float
     pendulum_hz: float
+    run_length_mm: float
+    """Länge einer Bahn zwischen zwei Umkehren — das ist, was anregt."""
+
     spacing_mm: float
+    """Bahnabstand, nur zur Einordnung in der Meldung."""
+
     feed_mm_per_min: float
     message: str
 
@@ -102,36 +160,42 @@ def resonance_warning(
 
     Gibt ``None`` zurück, wenn sich kein Bahnabstand bestimmen lässt.
     """
-    spacing = dominant_spacing_mm(lines)
-    if spacing is None:
+    run_length = dominant_run_length_mm(lines)
+    if run_length is None:
         return None
+    spacing = dominant_spacing_mm(lines)
 
     pendulum = pendulum_frequency_hz(pen_below_pivot_mm)
-    reversal = reversal_frequency_hz(spacing, feed_mm_per_min)
+    reversal = reversal_frequency_hz(run_length, feed_mm_per_min)
     ratio = reversal / pendulum
     critical = abs(ratio - 1.0) <= tolerance
 
+    wo = f"{run_length:.0f} mm Bahnlänge"
+    if spacing is not None:
+        wo += f", {spacing:.1f} mm Bahnabstand"
+
     if not critical:
         message = (
-            f"Umkehrfrequenz {reversal:.1f} Hz bei {spacing:.1f} mm Bahnabstand, "
+            f"Umkehrfrequenz {reversal:.1f} Hz bei {wo}, "
             f"Gondel schwingt mit {pendulum:.1f} Hz — unkritisch."
         )
     else:
         # zwei Auswege: langsamer unter die Resonanz oder schneller darüber
-        slower = pendulum * (1 - tolerance - 0.05) * 2 * spacing * 60
-        faster = pendulum * (1 + tolerance + 0.05) * 2 * spacing * 60
+        slower = pendulum * (1 - tolerance - 0.05) * 2 * run_length * 60
+        faster = pendulum * (1 + tolerance + 0.05) * 2 * run_length * 60
         message = (
             f"Achtung: Umkehrfrequenz {reversal:.1f} Hz trifft die Pendelfrequenz "
             f"der Gondel ({pendulum:.1f} Hz) — das gibt wellige Linien. "
             f"Ausweg: Vorschub unter {slower:.0f} oder über {faster:.0f} mm/min, "
-            f"oder den Bahnabstand ändern."
+            f"oder die Bahnen anders legen ({wo})."
         )
 
     return ResonanceWarning(
         critical=critical,
         reversal_hz=reversal,
         pendulum_hz=pendulum,
-        spacing_mm=spacing,
+        run_length_mm=run_length,
+        spacing_mm=spacing if spacing is not None else 0.0,
         feed_mm_per_min=feed_mm_per_min,
         message=message,
     )

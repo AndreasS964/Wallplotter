@@ -1,6 +1,8 @@
 """Projektdaten auf der SD-Karte — gegen einen simulierten Kartenspeicher."""
 
 import json
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -10,27 +12,24 @@ from wallplotter.location import Location, LocationBook, LocationError
 from wallplotter.sdstore import REMOTE_LOCATIONS, pull_locations, push_locations, sync_locations
 from wallplotter.upload import FluidNCClient
 
+sys.path.insert(0, str(Path(__file__).parent))
 
-class FakeCard:
-    """Speichert, was hochgeladen wird, und gibt es beim Lesen zurück."""
+from fluidnc_fake import FakeSession  # noqa: E402
+
+
+class FakeCard(FakeSession):
+    """Simulierte Karte — kennt nur die Endpunkte, die FluidNC registriert.
+
+    Erbt von :class:`tests.fluidnc_fake.FakeSession`, damit ein Rückfall auf
+    einen erfundenen Endpunkt hier genauso 404 gibt wie am echten Board.
+    """
 
     def __init__(self, content: str | None = None):
-        self.files: dict[str, str] = {}
-        if content is not None:
-            self.files[f"/{REMOTE_LOCATIONS}"] = content
+        super().__init__(files={f"/{REMOTE_LOCATIONS}": content} if content is not None else None)
 
-    def post(self, url, params=None, data=None, files=None, timeout=None):
-        (path, (_, payload, _)), = files.items()
-        self.files[path] = payload.decode() if isinstance(payload, bytes) else payload
-        return type("R", (), {"text": "ok", "status_code": 200})()
-
-    def get(self, url, params=None, timeout=None):
-        if "/sd/" in url:
-            path = "/" + url.split("/sd/", 1)[1]
-            if path not in self.files:
-                return type("R", (), {"text": "not found", "status_code": 404})()
-            return type("R", (), {"text": self.files[path], "status_code": 200})()
-        return type("R", (), {"text": "{}", "status_code": 200})()
+    @property
+    def files(self) -> dict[str, str]:
+        return self.card
 
 
 def make_location(name="Keller", **kwargs) -> Location:

@@ -1,14 +1,37 @@
-"""HTTP-Anbindung an FluidNC: Datei-Upload, Job starten, Status pollen.
+"""Anbindung an FluidNC: Dateien über HTTP, Kommandos über den TCP-Kanal.
 
-Die Endpunkte entsprechen dem ESP3D-basierten Webserver von FluidNC
-(``/upload`` für Dateien, ``/command?plain=…`` für GRBL-Kommandos). Sie sind
-gegen die eigene Firmware-Version zu prüfen, sobald das Board läuft — deshalb
-sind Pfad und Endpunkt hier konfigurierbar statt fest verdrahtet.
+Diese Aufteilung ist nicht willkürlich, sondern folgt dem, was die Firmware
+tatsächlich anbietet (geprüft gegen ``FluidNC/src/WebUI/WebUIServer.cpp`` und
+``ProcessSettings.cpp``, siehe ``docs/firmware-gegenpruefung.md``):
+
+* **Dateien** liegen auf HTTP. ``POST /upload`` schreibt auf die SD-Karte,
+  ``GET /upload?path=/`` listet sie, ``GET /sd/<datei>`` liest zurück. (Und
+  ``/files`` ist der *Flash*, nicht die Karte — das war hier lange umgekehrt
+  eingetragen. Ein ``/sdfiles`` gibt es überhaupt nicht.)
+* **Kommandos** gehen über den Telnet-Kanal auf Port 23. Der ist bei FluidNC
+  ab Werk an (``DEFAULT_TELNET_STATE = 1``) und ein vollwertiger ``Channel``:
+  dort wirken Realtime-Zeichen, ``?`` liefert einen Statusbericht, und GCode
+  wird ausgeführt.
+
+  Über HTTP geht davon nichts. ``/command?plain=`` reicht die Zeile an
+  ``settings_execute_line()`` weiter, das das erste Zeichen wegwirft und nur
+  ``$name=wert`` versteht. Ein ``?`` oder ein Realtime-Byte landet dort beim
+  namenlosen Hilfe-Kommando und wird mit **HTTP 200 quittiert, ohne dass
+  irgendetwas passiert** — der Not-Halt meldete so jahrelang Erfolg. Für
+  ``$``-Kommandos bleibt der Weg gangbar und dient hier als Rückfallebene,
+  falls Telnet abgeschaltet wurde.
+
+* **Pause, Weiter und Reset** haben eigene HTTP-Endpunkte
+  (``/feedhold_reload``, ``/cyclestart_reload``, ``/restart_reload``). Die
+  lösen direkt das Firmware-Ereignis aus, brauchen keinen Kanal und werden
+  auch nicht von ``$HTTP/BlockDuringMotion`` blockiert — also genau das, was
+  ein Halt können muss.
 """
 
 from __future__ import annotations
 
 import re
+import socket
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -23,15 +46,15 @@ __all__ = [
     "FluidNCError",
     "FluidNCClient",
     "MachineStatus",
+    "TelnetChannel",
     "parse_status",
     "upload_and_run",
 ]
 
 _STATUS_RE = re.compile(r"<([^>]*)>")
 
-# GRBL-Realtime-Bytes. Als Zahlen, nicht als Zeichen: sie gehen als
-# Prozent-Escape auf die Leitung, und ein Zeichen jenseits von ASCII würde
-# unterwegs zu UTF-8 werden (siehe FluidNCClient.send_realtime).
+# GRBL-Realtime-Bytes. Sie gehen als einzelnes Byte über den TCP-Kanal hinaus;
+# über HTTP wären sie wirkungslos (siehe Modul-Docstring).
 FEED_HOLD = 0x21
 CYCLE_START = 0x7E
 SOFT_RESET = 0x18
@@ -39,6 +62,9 @@ JOG_CANCEL = 0x85
 
 REALTIME_TIMEOUT_S = 5.0
 """Ein Not-Halt darf nicht so lange warten dürfen wie ein Datei-Upload."""
+
+_OK_RE = re.compile(r"^ok$", re.IGNORECASE)
+_ERROR_RE = re.compile(r"^(error:.*|ALARM:.*)$", re.IGNORECASE)
 
 
 class FluidNCError(RuntimeError):
@@ -63,14 +89,25 @@ def _as_fluidnc_error(message: str):
 
 @dataclass(frozen=True)
 class MachineStatus:
-    """Ausgewertete Antwort auf ein ``?``-Statusabfrage."""
+    """Ausgewertete Antwort auf eine ``?``-Statusabfrage."""
 
     state: str
-    """z. B. ``Idle``, ``Run``, ``Hold``, ``Alarm``."""
+    """z. B. ``Idle``, ``Run``, ``Hold:0``, ``Alarm``."""
 
     position: tuple[float, float, float] | None = None
+    """Position in **Werkstückkoordinaten**, siehe :func:`parse_status`."""
+
+    machine_position: tuple[float, float, float] | None = None
+    """Position in Maschinenkoordinaten, falls bestimmbar."""
+
+    work_offset: tuple[float, float, float] | None = None
+    """``WCO`` aus dem Bericht: Maschinen- minus Werkstückkoordinaten."""
+
     sd_percent: float | None = None
     sd_file: str | None = None
+    sd_done: bool = False
+    """``True``, wenn das Board das Programmende gemeldet hat (``SD: …: Sent``)."""
+
     raw: str = ""
 
     @property
@@ -81,7 +118,20 @@ class MachineStatus:
 def parse_status(raw: str) -> MachineStatus:
     """FluidNC-Statuszeile parsen.
 
-    Beispiel: ``<Run|MPos:12.000,3.000,0.000|FS:1500,0|SD:42.30,/wand.gcode>``
+    Beispiel: ``<Run|MPos:12.000,3.000,0.000|FS:1500,0|WCO:5.000,0.000,0.000|SD:42.30,/wand.gcode>``
+
+    Zwei Dinge, die hier früher zusammenfielen und es nicht dürfen:
+
+    * **``MPos`` und ``WPos`` sind nicht dasselbe.** Welches von beiden das
+      Board schickt, hängt an ``$10`` (Vorgabe 1 = ``MPos``). Der erzeugte
+      GCode läuft aber immer in *Werkstück*-Koordinaten. Sobald ein ``G92``-
+      oder ``G54``-Versatz gesetzt ist, liegen beide auseinander — und eine
+      Kalibrierung, die das eine aufnimmt und das andere anfährt, verschiebt
+      die ganze Zeichnung. :attr:`MachineStatus.position` ist deshalb immer
+      die Werkstückkoordinate, umgerechnet über ``WCO``, wenn nötig.
+    * **Der Fortschritt hat zwei Formate.** Während des Laufs
+      ``SD:<prozent>,<pfad>``, am Ende ``SD: <name>: Sent``. Letzteres ist
+      nicht „kein Fortschritt", sondern „fertig".
     """
     match = _STATUS_RE.search(raw)
     if not match:
@@ -89,21 +139,38 @@ def parse_status(raw: str) -> MachineStatus:
 
     fields = match.group(1).split("|")
     state = fields[0]
-    position: tuple[float, float, float] | None = None
+    machine_position: tuple[float, float, float] | None = None
+    work_position: tuple[float, float, float] | None = None
+    work_offset: tuple[float, float, float] | None = None
     sd_percent: float | None = None
     sd_file: str | None = None
+    sd_done = False
+
+    def triple(value: str) -> tuple[float, float, float] | None:
+        try:
+            numbers = [float(part) for part in value.split(",")[:3]]
+        except ValueError:
+            return None
+        while len(numbers) < 3:
+            numbers.append(0.0)
+        return (numbers[0], numbers[1], numbers[2])
 
     for field in fields[1:]:
         key, _, value = field.partition(":")
-        if key in {"MPos", "WPos"} and position is None:
-            try:
-                numbers = [float(part) for part in value.split(",")[:3]]
-            except ValueError:
-                continue
-            while len(numbers) < 3:
-                numbers.append(0.0)
-            position = (numbers[0], numbers[1], numbers[2])
+        if key == "MPos" and machine_position is None:
+            machine_position = triple(value)
+        elif key == "WPos" and work_position is None:
+            work_position = triple(value)
+        elif key == "WCO" and work_offset is None:
+            work_offset = triple(value)
         elif key == "SD":
+            # "SD:42.30,/wand.gcode" während des Laufs, "SD: wand.gcode: Sent" am Ende
+            if value.rstrip().endswith("Sent"):
+                sd_done = True
+                sd_percent = 100.0
+                name = value.split(":")[0].strip()
+                sd_file = name or None
+                continue
             percent, _, name = value.partition(",")
             try:
                 sd_percent = float(percent)
@@ -111,25 +178,166 @@ def parse_status(raw: str) -> MachineStatus:
                 sd_percent = None
             sd_file = name or None
 
+    if work_position is None and machine_position is not None and work_offset is not None:
+        work_position = tuple(m - o for m, o in zip(machine_position, work_offset, strict=True))
+    if machine_position is None and work_position is not None and work_offset is not None:
+        machine_position = tuple(w + o for w, o in zip(work_position, work_offset, strict=True))
+
     return MachineStatus(
         state=state,
-        position=position,
+        position=work_position if work_position is not None else machine_position,
+        machine_position=machine_position,
+        work_offset=work_offset,
         sd_percent=sd_percent,
         sd_file=sd_file,
+        sd_done=sd_done,
         raw=match.group(0),
     )
 
 
-class FluidNCClient:
-    """Dünner Client um die FluidNC-Web-API.
+class TelnetChannel:
+    """Roher TCP-Kanal zu FluidNC — der einzige Weg für GCode und Realtime.
 
-    ``session`` ist injizierbar (alles, was ``get``/``post`` wie ``requests``
-    anbietet) — das hält die Klasse testbar, ohne ein Board im Netz.
+    FluidNC meldet einen Telnet-Client als vollwertigen ``Channel`` an
+    (``TelnetServer::poll`` → ``allChannels.registration``), ohne
+    Telnet-Optionsverhandlung: es ist ein reiner Bytestrom. Deshalb reicht ein
+    Socket aus der Standardbibliothek, und es kommt keine Abhängigkeit dazu.
+
+    ``opener`` ist injizierbar (Signatur wie :func:`socket.create_connection`),
+    damit sich das ohne Board testen lässt.
     """
 
-    def __init__(self, config: FluidNCConfig | None = None, session: Any = None) -> None:
+    def __init__(
+        self,
+        host: str,
+        port: int = 23,
+        timeout_s: float = 5.0,
+        opener: Any = None,
+    ) -> None:
+        self.host = host
+        self.port = port
+        self.timeout_s = timeout_s
+        self._opener = opener or socket.create_connection
+        self._socket: Any = None
+
+    # -- Verbindung -------------------------------------------------------
+
+    def connect(self) -> Any:
+        if self._socket is None:
+            with _as_fluidnc_error(f"Kein TCP-Kanal zu {self.host}:{self.port}"):
+                self._socket = self._opener((self.host, self.port), self.timeout_s)
+            self._buffer = b""
+        return self._socket
+
+    def close(self) -> None:
+        if self._socket is not None:
+            try:
+                self._socket.close()
+            except OSError:
+                pass
+            self._socket = None
+
+    def __enter__(self) -> TelnetChannel:
+        self.connect()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+    # -- Lesen und Schreiben ----------------------------------------------
+
+    def _read_line(self, deadline_s: float) -> str | None:
+        """Eine Zeile lesen; ``None``, wenn innerhalb der Frist keine kam."""
+        sock = self.connect()
+        buffer = getattr(self, "_buffer", b"")
+        while b"\n" not in buffer:
+            sock.settimeout(deadline_s)
+            try:
+                chunk = sock.recv(4096)
+            except TimeoutError:
+                self._buffer = buffer
+                return None
+            except OSError as exc:
+                self._buffer = b""
+                raise FluidNCError(f"Kanal zu {self.host} abgerissen: {exc}") from exc
+            if not chunk:
+                self._buffer = buffer
+                return None
+            buffer += chunk
+        line, _, rest = buffer.partition(b"\n")
+        self._buffer = rest
+        return line.decode("utf-8", errors="replace").strip("\r")
+
+    def _write(self, payload: bytes) -> None:
+        sock = self.connect()
+        with _as_fluidnc_error(f"Senden an {self.host} fehlgeschlagen"):
+            sock.settimeout(self.timeout_s)
+            sock.sendall(payload)
+
+    def send_line(self, line: str, expect_ok: bool = True) -> str:
+        """Eine Zeile senden und die Antwort bis ``ok``/``error:`` einsammeln.
+
+        FluidNC quittiert jede Zeile mit ``ok`` oder ``error:<n>``; alles, was
+        davor kommt, ist die eigentliche Ausgabe. Ein ``error:`` wird zur
+        Ausnahme — stillschweigend „Erfolg" zu melden war genau der Fehler,
+        den der HTTP-Weg gemacht hat.
+        """
+        self._write(line.rstrip("\n").encode("utf-8") + b"\n")
+        if not expect_ok:
+            return ""
+        collected: list[str] = []
+        while True:
+            answer = self._read_line(self.timeout_s)
+            if answer is None:
+                raise FluidNCError(
+                    f"Keine Quittung auf {line!r} innerhalb von {self.timeout_s:.0f} s"
+                )
+            if _OK_RE.match(answer):
+                return "\n".join(collected)
+            if _ERROR_RE.match(answer):
+                raise FluidNCError(f"{line!r} abgelehnt: {answer}")
+            collected.append(answer)
+
+    def send_realtime(self, byte: int) -> None:
+        """Ein Realtime-Byte schicken — Halt, Weiter, Reset, Jog-Abbruch.
+
+        Realtime-Zeichen werden von FluidNC sofort ausgewertet, noch bevor
+        eine Zeile vollständig ist, und **nicht** quittiert. Wer hier auf ein
+        ``ok`` wartet, wartet vergebens.
+        """
+        if not 0 <= byte <= 0xFF:
+            raise FluidNCError("Ein Realtime-Byte liegt zwischen 0 und 255")
+        self._write(bytes([byte]))
+
+    def status(self) -> MachineStatus:
+        """``?`` senden und den Statusbericht abholen."""
+        self.send_realtime(ord("?"))
+        deadline = min(self.timeout_s, REALTIME_TIMEOUT_S)
+        while True:
+            line = self._read_line(deadline)
+            if line is None:
+                raise FluidNCError(f"{self.host} antwortet nicht auf die Statusabfrage")
+            if _STATUS_RE.search(line):
+                return parse_status(line)
+
+
+class FluidNCClient:
+    """Client für ein FluidNC-Board — HTTP für Dateien, TCP für Kommandos.
+
+    ``session`` (alles mit ``get``/``post`` wie ``requests``) und ``channel``
+    (etwas mit der Schnittstelle von :class:`TelnetChannel`) sind injizierbar
+    — das hält die Klasse testbar, ohne ein Board im Netz.
+    """
+
+    def __init__(
+        self,
+        config: FluidNCConfig | None = None,
+        session: Any = None,
+        channel: Any = None,
+    ) -> None:
         self.config = config or FluidNCConfig()
         self._session = session
+        self._channel = channel
 
     @property
     def session(self) -> Any:
@@ -143,10 +351,45 @@ class FluidNCClient:
             self._session = requests.Session()
         return self._session
 
-    # -- Basisoperationen -------------------------------------------------
+    @property
+    def channel(self) -> Any:
+        if self._channel is None:
+            self._channel = TelnetChannel(
+                self.config.hostname,
+                self.config.telnet_port,
+                min(self.config.timeout_s, REALTIME_TIMEOUT_S * 2),
+            )
+        return self._channel
+
+    def close(self) -> None:
+        if self._channel is not None:
+            self._channel.close()
+
+    # -- Kommandos --------------------------------------------------------
 
     def send_command(self, command: str) -> str:
-        """GRBL-/FluidNC-Kommando senden und die Antwort als Text liefern."""
+        """Ein Kommando ans Board schicken.
+
+        Der Weg hängt am Kommando, und das ist keine Feinheit:
+
+        * ``$…`` und ``[ESP…]`` versteht auch der HTTP-Endpunkt. Er dient hier
+          als Rückfallebene, falls der TCP-Kanal nicht aufgeht (Telnet
+          abgeschaltet, Port belegt).
+        * Alles andere — GCode, ``?``, Realtime — geht **ausschließlich** über
+          den Kanal. Über HTTP käme es nicht durch, würde aber mit HTTP 200
+          quittiert.
+        """
+        stripped = command.strip()
+        is_setting = stripped.startswith(("$", "[ESP"))
+        try:
+            return self.channel.send_line(stripped)
+        except FluidNCError:
+            if not is_setting:
+                raise
+            return self._http_setting(stripped)
+
+    def _http_setting(self, command: str) -> str:
+        """``$``-Kommando über ``/command?plain=`` — nur als Rückfallebene."""
         with _as_fluidnc_error(f"Kommando {command!r} fehlgeschlagen"):
             response = self.session.get(
                 f"{self.config.base_url}/command",
@@ -155,51 +398,41 @@ class FluidNCClient:
             )
         return self._text_or_raise(response, f"Kommando {command!r} fehlgeschlagen")
 
-    def send_realtime(self, byte: int) -> str:
-        """Ein Realtime-Byte schicken — Halt, Weiter, Reset, Jog-Abbruch.
+    def send_realtime(self, byte: int) -> None:
+        """Realtime-Byte über den Kanal — der einzige Weg, auf dem es wirkt."""
+        self.channel.send_realtime(byte)
 
-        Realtime-Bytes sind keine Kommandos: GRBL wertet sie sofort aus, noch
-        bevor eine Zeile im Puffer steht. Zwei Gründe, warum sie hier einen
-        eigenen Weg brauchen statt über :meth:`send_command` zu laufen:
-
-        * **Kodierung.** ``requests`` kodiert Zeichen jenseits von ASCII als
-          UTF-8, wenn sie durch ``params=`` gehen. Aus dem Jog-Abbruch ``0x85``
-          würde ``0xC2 0x85``, also zwei Bytes — das Board sähe nie das Byte,
-          auf das es wartet. Die Escape-Sequenz wird deshalb selbst gebaut.
-        * **Zeit.** Ein Not-Halt darf nicht dieselbe Geduld haben wie ein
-          Datei-Upload; hier gilt ein kurzes, festes Zeitlimit.
-        """
-        if not 0 <= byte <= 0xFF:
-            raise FluidNCError("Ein Realtime-Byte liegt zwischen 0 und 255")
-        timeout = min(self.config.timeout_s, REALTIME_TIMEOUT_S)
-        url = f"{self.config.base_url}/command?plain=%{byte:02X}"
-        with _as_fluidnc_error(f"Realtime-Byte 0x{byte:02X} fehlgeschlagen"):
-            response = self.session.get(url, timeout=timeout)
-        return self._text_or_raise(response, f"Realtime-Byte 0x{byte:02X} fehlgeschlagen")
+    # -- Dateien ----------------------------------------------------------
 
     def upload(self, data: bytes | str, filename: str) -> str:
         """Datei auf die µSD-Karte des Boards laden.
 
-        Endpunkt ist ``/sdfiles`` — ``/upload`` schreibt in ESP3D v3 auf den
-        Flash-Speicher des ESP32, nicht auf die Karte.
+        Endpunkt ist ``POST /upload``. Der Dateiname im Multipart-Teil trägt
+        den **vollen Zielpfad** — FluidNC legt die Datei genau dort ab, und
+        nur dann passt er zum Größenfeld ``<pfad>S``, über das die Firmware
+        vorab prüft, ob der Platz reicht.
         """
         payload = data.encode("utf-8") if isinstance(data, str) else data
-        remote_dir = self.config.remote_dir if self.config.remote_dir.endswith("/") else self.config.remote_dir + "/"
+        remote_dir = (
+            self.config.remote_dir
+            if self.config.remote_dir.endswith("/")
+            else self.config.remote_dir + "/"
+        )
         remote_path = f"{remote_dir}{filename}"
 
         with _as_fluidnc_error(f"Upload von {filename!r} fehlgeschlagen"):
             response = self.session.post(
-                f"{self.config.base_url}/sdfiles",
-                params={"path": remote_dir, "createPath": "yes"},
+                f"{self.config.base_url}/upload",
+                params={"path": remote_dir},
                 data={f"{remote_path}S": str(len(payload))},
-                files={remote_path: (filename, payload, "text/plain")},
+                files={"file": (remote_path, payload, "text/plain")},
                 timeout=self.config.timeout_s,
             )
         self._text_or_raise(response, f"Upload von {filename!r} fehlgeschlagen")
         return remote_path
 
     def download(self, remote_path: str) -> str:
-        """Datei von der Karte lesen (``GET /sd/<pfad>``)."""
+        """Datei von der Karte lesen (``GET /sd/<pfad>``, WebDAV-Zweig)."""
         path = remote_path if remote_path.startswith("/") else f"/{remote_path}"
         with _as_fluidnc_error(f"Lesen von {path!r} fehlgeschlagen"):
             response = self.session.get(
@@ -208,11 +441,16 @@ class FluidNCClient:
         return self._text_or_raise(response, f"Lesen von {path!r} fehlgeschlagen")
 
     def list_files(self, directory: str = "/") -> str:
-        """Verzeichnis der Karte auflisten (JSON-Antwort als Text)."""
+        """Verzeichnis der Karte auflisten (JSON-Antwort als Text).
+
+        ``GET /upload?path=…`` — eine Liste kommt ohne weitere Parameter
+        zurück; ``action`` kennt die Firmware nur zusammen mit ``filename``
+        und nur für Löschen, Anlegen und Umbenennen.
+        """
         with _as_fluidnc_error("Dateiliste fehlgeschlagen"):
             response = self.session.get(
-                f"{self.config.base_url}/sdfiles",
-                params={"path": directory, "action": "list"},
+                f"{self.config.base_url}/upload",
+                params={"path": directory},
                 timeout=self.config.timeout_s,
             )
         return self._text_or_raise(response, "Dateiliste fehlgeschlagen")
@@ -221,27 +459,50 @@ class FluidNCClient:
         """Datei von der SD-Karte abspielen lassen."""
         return self.send_command(f"$SD/Run={remote_path}")
 
-    # -- Jobsteuerung (Stufe 6) -------------------------------------------
+    # -- Jobsteuerung -----------------------------------------------------
 
     def status(self) -> MachineStatus:
-        return parse_status(self.send_command("?"))
+        return self.channel.status()
 
     def pause(self) -> str:
-        """Feed Hold (``!``) — die Maschine bremst kontrolliert ab."""
-        return self.send_realtime(FEED_HOLD)
+        """Feed Hold — die Maschine bremst kontrolliert ab.
+
+        Über ``GET /feedhold_reload``: der Handler löst direkt
+        ``protocol_send_event(&feedHoldEvent)`` aus, braucht keinen Kanal und
+        wird auch nicht von ``$HTTP/BlockDuringMotion`` blockiert.
+        """
+        return self._trigger("/feedhold_reload", "Pause")
 
     def resume(self) -> str:
-        """Cycle Start (``~``) — weiter nach einem Feed Hold."""
-        return self.send_realtime(CYCLE_START)
+        """Cycle Start — weiter nach einem Feed Hold oder einer ``M0``-Pause."""
+        return self._trigger("/cyclestart_reload", "Fortsetzen")
 
     def stop(self) -> str:
-        """Soft-Reset (Ctrl-X) — bricht einen laufenden SD-Job ab.
+        """Soft-Reset — bricht einen laufenden SD-Job ab.
 
         Danach ist ein per ``G92`` gesetzter Nullpunkt weg; zum Weiterplotten
         erst die kalibrierte Ecke anfahren, dann
         :func:`wallplotter.resume.resume_program`.
         """
-        return self.send_realtime(SOFT_RESET)
+        return self._trigger("/restart_reload", "Stopp")
+
+    def _trigger(self, endpoint: str, what: str) -> str:
+        """Einen der Ereignis-Endpunkte auslösen.
+
+        Sie antworten mit einem Redirect (302 auf ``/`` bzw. ``/did_restart``)
+        — das ist Erfolg, kein Fehler, deshalb wird der Umleitung nicht
+        gefolgt und 3xx als gut gewertet.
+        """
+        with _as_fluidnc_error(f"{what} fehlgeschlagen"):
+            response = self.session.get(
+                f"{self.config.base_url}{endpoint}",
+                timeout=min(self.config.timeout_s, REALTIME_TIMEOUT_S),
+                allow_redirects=False,
+            )
+        status_code = getattr(response, "status_code", 200)
+        if status_code >= 400:
+            raise FluidNCError(f"{what} fehlgeschlagen (HTTP {status_code})")
+        return getattr(response, "text", "")
 
     # -- Jog & Kalibrierung -----------------------------------------------
 
@@ -261,9 +522,12 @@ class FluidNCClient:
         """Absolut verfahren, ohne den Stift abzusetzen."""
         return self.send_command(f"$J=G90 G21 X{x:.3f} Y{y:.3f} F{feed:.0f}")
 
-    def jog_cancel(self) -> str:
-        """Laufende Jog-Bewegung abbrechen (Realtime-Byte 0x85)."""
-        return self.send_realtime(JOG_CANCEL)
+    def jog_cancel(self) -> None:
+        """Laufende Jog-Bewegung abbrechen (Realtime-Byte 0x85).
+
+        Nur über den Kanal — dafür gibt es keinen HTTP-Endpunkt.
+        """
+        self.send_realtime(JOG_CANCEL)
 
     def set_work_offset(self, x: float = 0.0, y: float = 0.0, system: int = 1) -> str:
         """Der aktuellen Position feste Koordinaten geben — **dauerhaft**.
@@ -273,10 +537,12 @@ class FluidNCClient:
         bekommt. Anders als ``G92`` liegt das im NVS des ESP32 und übersteht
         Aus- und Einschalten.
 
-        Der Haken liegt woanders: Ohne Referenzfahrt ist die *Maschinen*-
-        position nach dem Einschalten willkürlich, dann zeigt auch ein
-        gespeicherter Versatz ins Leere. Dauerhaft nützt das erst zusammen mit
-        einer reproduzierbaren Referenz — Anschlag oder StallGuard-Homing.
+        Der Haken liegt woanders: Die WallPlotter-Kinematik kann nicht
+        referenzieren (``canHome()`` gibt ``false`` zurück, ``$H`` scheitert),
+        und FluidNC friert den Maschinennullpunkt **beim Booten** auf die
+        Gondelposition ein. Dauerhaft nützt ein Versatz deshalb nur zusammen
+        mit einer reproduzierbaren mechanischen Referenz: Gondel an den
+        Anschlag, Board dort neu starten.
         """
         if not 1 <= system <= 6:
             raise FluidNCError("Koordinatensystem 1..6 (G54..G59)")
@@ -289,21 +555,24 @@ class FluidNCClient:
     def set_zero(self, x: float = 0.0, y: float = 0.0) -> str:
         """Der aktuellen Position feste Koordinaten zuweisen (G92).
 
-        Achtung: ``G92`` ist laut GRBL-Konvention flüchtig und wird beim
-        Programmende verworfen — für alles, was ein Ausschalten oder ein
-        ``M2`` überleben soll, ist :meth:`set_work_offset` das richtige
-        Werkzeug.
+        ``G92`` überlebt kein Ausschalten und keinen Soft-Reset — es liegt
+        nicht im NVS. (Ein ``M2`` verwirft es entgegen früherer Behauptung
+        hier **nicht**; das setzt nur die Modalgruppen zurück.) Für alles, was
+        länger halten soll, ist :meth:`set_work_offset` das richtige Werkzeug.
 
         Ohne Argumente ist das der Nullpunkt beim Referenzieren am Anschlag.
         Mit Argumenten lässt sich ein verlorener Nullpunkt wiederherstellen:
         eine kalibrierte Ecke anfahren und ihre gespeicherten Koordinaten
-        setzen. Genau das braucht man, wenn eine mehrfarbige Zeichnung über
-        mehrere Tage entsteht und das Board zwischendurch aus war.
+        setzen.
         """
         return self.send_command(f"G92 X{x:.3f} Y{y:.3f}")
 
     def position(self) -> tuple[float, float]:
-        """Aktuelle XY-Position in Maschinenkoordinaten."""
+        """Aktuelle XY-Position in **Werkstückkoordinaten**.
+
+        Das ist dasselbe System, in dem der erzeugte GCode fährt — und der
+        Grund, warum hier nicht einfach ``MPos`` durchgereicht wird.
+        """
         machine = self.status()
         if machine.position is None:
             raise FluidNCError(f"Status ohne Position: {machine.raw}")

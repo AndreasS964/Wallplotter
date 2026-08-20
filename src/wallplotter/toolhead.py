@@ -211,6 +211,11 @@ class PenToolhead:
             )
         if self.dwell_s < 0:
             raise ToolheadError("dwell_s kann nicht negativ sein")
+        for label, value in (("down_value", self.down_value), ("up_value", self.up_value)):
+            if value < 0:
+                # Ein negativer S-Wert ist kein Grenzfall, sondern ein Tippfehler:
+                # FluidNC lehnt ihn mit `error:` ab und bricht den Lauf ab.
+                raise ToolheadError(f"{label}={value} — S-Werte sind nie negativ")
         if self.width_mm <= 0:
             raise ToolheadError("Strichbreite muss größer als 0 sein")
         if self.draw_feed is not None and self.draw_feed <= 0:
@@ -349,8 +354,18 @@ class LaserToolhead:
     air_delay_s: float = 0.5
     """Vorlauf, damit die Luft steht, bevor der Strahl kommt."""
 
-    tool_number: int | None = None
-    """``M6 T<n>``, falls in der ``config.yaml`` mehrere Spindeln stehen."""
+    tool_number: int | None = 100
+    """``M6 T<n>`` — welche Spindel dieses Werkzeug meint.
+
+    Vorbelegt mit 100, weil genau das in der mitgelieferten ``config.yaml`` im
+    auskommentierten Laserblock steht. Ohne Anwahl liefe ein Laserprogramm auf
+    der Spindel, die gerade aktiv ist — beim Wandplotter also auf der
+    50-Hz-PWM des Pen-Servos. Die ist nicht rate-adjusted, ein ``M4`` darauf
+    endet in ``error:`` („M4 requires laser mode or a reversible spindle").
+
+    Mit ``None`` wird nicht umgeschaltet; richtig ist das nur, solange
+    tatsächlich bloß eine Spindel konfiguriert ist.
+    """
 
     color: str = "#c81e1e"
     width_mm: float = 0.2
@@ -542,7 +557,10 @@ Federweg und Halter unterscheiden sich an jedem Aufbau. Nachgezogen wird mit
 
 TOOLHEADS: dict[str, Toolhead] = {
     **PENS,
-    "laser": LaserToolhead(note="ungetestet — vor dem ersten Schuss das Programm lesen"),
+    "laser": LaserToolhead(
+        tool_number=100,
+        note="ungetestet — vor dem ersten Schuss das Programm lesen",
+    ),
 }
 
 

@@ -14,8 +14,13 @@ BLACK = Layer(1, "#000000", [[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 10
 RED = Layer(2, "#e02020", [[(10.0, 10.0), (20.0, 10.0), (20.0, 20.0), (10.0, 20.0)]])
 
 
-def coordinates(program: str) -> list[tuple[float, float]]:
-    """Angefahrene Punkte ohne die abschließende Parkfahrt auf den Nullpunkt."""
+def coordinates(program: str, park=(0.0, 0.0)) -> list[tuple[float, float]]:
+    """Angefahrene Punkte ohne die abschließende Parkfahrt.
+
+    Geparkt wird an der unteren linken Ecke der *Zeichenfläche*, nicht auf
+    Maschinen-(0,0) — bei kalibrierter Fläche läge der nämlich außerhalb, im
+    Bereich der schlechtesten Riemengeometrie.
+    """
     points = []
     for line in program.splitlines():
         if not line.startswith(("G0 X", "G1 X")):
@@ -23,7 +28,7 @@ def coordinates(program: str) -> list[tuple[float, float]]:
         parts = {p[0]: float(p[1:]) for p in line.split() if p[0] in "XY"}
         if "X" in parts and "Y" in parts:
             points.append((parts["X"], parts["Y"]))
-    return points[:-1] if points and points[-1] == (0.0, 0.0) else points
+    return points[:-1] if points and points[-1] == park else points
 
 
 def test_one_file_per_layer():
@@ -120,7 +125,8 @@ def test_layers_land_where_a_single_colour_drawing_lands():
     expected = bounds(prepare_geometry(combined, CALIBRATED, fit=True))
 
     programs = layers_to_gcode([BLACK, RED], CALIBRATED, fit=True)
-    points = [point for program in programs.values() for point in coordinates(program)]
+    park = (CALIBRATED.origin_x_mm, CALIBRATED.origin_y_mm)
+    points = [point for program in programs.values() for point in coordinates(program, park)]
     xs = [x for x, _ in points]
     ys = [y for _, y in points]
     assert (min(xs), min(ys), max(xs), max(ys)) == pytest.approx(expected, abs=1e-6)
@@ -128,7 +134,8 @@ def test_layers_land_where_a_single_colour_drawing_lands():
 
 def test_layers_keep_the_area_offset_exactly_once():
     programs = layers_to_gcode([BLACK], CALIBRATED, fit=True)
-    xs = [x for x, _ in coordinates(programs["#000000"])]
+    park = (CALIBRATED.origin_x_mm, CALIBRATED.origin_y_mm)
+    xs = [x for x, _ in coordinates(programs["#000000"], park)]
     # 1000 mm Fläche, 50 mm Rand, 300 mm Versatz → 350 … 1250
     assert min(xs) == pytest.approx(350.0, abs=1e-6)
     assert max(xs) == pytest.approx(1250.0, abs=1e-6)
@@ -159,9 +166,12 @@ def test_no_park_run_across_the_wall_before_a_pen_change():
     combined = layers_to_gcode([BLACK, RED], CALIBRATED, separate=False)
     lines = combined.splitlines()
     pause = next(index for index, line in enumerate(lines) if line.startswith("M0 "))
-    assert not any(line.startswith("G0 X0 Y0") for line in lines[:pause])
+    park = f"G0 X{CALIBRATED.origin_x_mm:.0f} Y{CALIBRATED.origin_y_mm:.0f}"
+    assert not any(line.startswith(park) for line in lines[:pause])
     # genau eine Parkfahrt, und die steht am Schluss
-    assert combined.count("G0 X0 Y0") == 1
+    assert combined.count(park) == 1
+    # und sie geht an die Ecke der Zeichenfläche, nicht auf Maschinen-(0,0)
+    assert "G0 X0 Y0" not in combined
     # das Werkzeug ist trotzdem aus, bevor jemand hinfasst
     assert any(line.startswith("M5") for line in lines[pause - 4 : pause])
 

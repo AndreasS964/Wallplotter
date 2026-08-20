@@ -302,8 +302,15 @@ def check_board(host: str, timeout: float = 4.0) -> list[Check]:
     from .upload import FluidNCClient, FluidNCError
 
     client = FluidNCClient(FluidNCConfig(host=host, timeout_s=timeout))
+    checks: list[Check] = []
+
+    # Zuerst über HTTP nachsehen, ob überhaupt jemand da ist. Vorher begann
+    # diese Prüfung mit der Statusabfrage — und die läuft über den TCP-Kanal.
+    # War der zu, meldete der Selbsttest „Board noch nicht da" und hörte auf,
+    # obwohl ein angeschlossenes Board bereitwillig antwortete. Genau das
+    # Werkzeug, das klären soll, warum nichts geht, beruhigte dann.
     try:
-        machine = client.status()
+        listing = client.list_files("/")
     except FluidNCError as exc:
         return [
             Check(
@@ -314,8 +321,26 @@ def check_board(host: str, timeout: float = 4.0) -> list[Check]:
                 "Sonst: IP prüfen, --host angeben",
             )
         ]
+    checks.append(Check("Board erreichbar", OK, f"{host} antwortet über HTTP"))
+    checks.append(Check("SD-Karte", OK, f"lesbar, {len(listing)} Zeichen Antwort"))
 
-    checks = [Check("Board erreichbar", OK, f"{host}, Zustand {machine.state}")]
+    try:
+        machine = client.status()
+    except FluidNCError as exc:
+        checks.append(
+            Check(
+                "Kommandokanal",
+                FAIL,
+                f"Port {client.config.telnet_port}: {exc}",
+                "Ohne den Kanal gehen weder Status noch GCode noch Jog. "
+                "Im FluidNC-Terminal einschalten: $Telnet/Enable=ON, dann $Bye",
+            )
+        )
+        return checks
+
+    checks.append(
+        Check("Kommandokanal", OK, f"Port {client.config.telnet_port}, Zustand {machine.state}")
+    )
     if machine.state.startswith("Alarm"):
         checks.append(
             Check(
@@ -333,15 +358,6 @@ def check_board(host: str, timeout: float = 4.0) -> list[Check]:
         checks.append(
             Check("Position", WARN, "der Status meldet keine Position", "Firmware-Version prüfen")
         )
-
-    try:
-        listing = client.list_files("/")
-    except FluidNCError as exc:
-        checks.append(
-            Check("SD-Karte", FAIL, str(exc), "Karte gesteckt und formatiert? FAT32 wird erwartet")
-        )
-    else:
-        checks.append(Check("SD-Karte", OK, f"lesbar, {len(listing)} Zeichen Antwort"))
     return checks
 
 

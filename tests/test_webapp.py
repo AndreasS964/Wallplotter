@@ -6,6 +6,7 @@ auf, bevor sie vor der Wand auffallen).
 """
 
 import asyncio
+import os
 import time
 from types import SimpleNamespace
 
@@ -292,7 +293,33 @@ def test_status_polling_does_not_block_the_event_loop(app):
     # weit unter dem Erwartungswert (~100), damit Last auf dem Rechner den Test
     # nicht grundlos rot macht.
     assert asyncio.run(scenario()) >= 5
-    assert app.status_label.text == "FluidNC nicht erreichbar"
+    # Der Grund steht in der Anzeige, nicht nur „nicht erreichbar": „Board
+    # antwortet nicht" und „Board ist gerade beschäftigt" sind zwei
+    # verschiedene Lagen, und die zweite ist während eines Plots der Normalfall.
+    assert "kein Status" in app.status_label.text
+    assert "nicht erreichbar" in app.status_label.text
+
+
+def test_a_failed_poll_keeps_the_last_progress(app, monkeypatch):
+    """Der Balken sprang bei jeder verpassten Abfrage auf null zurück.
+
+    Ausgerechnet während des Plots, wo die Abfrage am ehesten mal danebengeht,
+    zeigte die Oberfläche dadurch 0 % — und das sah aus wie ein abgebrochener
+    Lauf.
+    """
+    import asyncio
+
+    from wallplotter.upload import MachineStatus
+
+    monkeypatch.setattr(
+        app, "_read_status", lambda: MachineStatus(state="Run", sd_percent=42.0)
+    )
+    asyncio.run(app.poll_status())
+    assert app.progress.value == pytest.approx(0.42)
+
+    monkeypatch.setattr(app, "_read_status", lambda: "Board antwortet nicht")
+    asyncio.run(app.poll_status())
+    assert app.progress.value == pytest.approx(0.42)
 
 
 def test_a_pen_can_be_assigned_per_colour_layer(app):
@@ -367,3 +394,108 @@ def test_a_broken_locations_file_does_not_stop_the_ui(tmp_path):
     instance.build_ui()
     assert instance.location is None
     assert instance.plot_config().width_mm == 2000.0
+
+
+def test_the_documented_start_command_actually_serves_a_page():
+    """`python -m wallplotter.webapp` — der Weg, der in README und Handbuch steht.
+
+    Der Server lief immer; nur antwortete er auf **jede** Anfrage mit HTTP 500,
+    weil NiceGUI ab Version 3 bei jedem Seitenaufruf
+    `runpy.run_path(sys.argv[0], run_name='__main__')` ausführt und die
+    relativen Importe dieses Moduls dabei brechen. Kein einziger Test rief die
+    Seite je auf, deshalb blieb die Suite grün.
+
+    Dieser Test startet den echten Prozess und holt die echte Seite. Er ist
+    langsam — und das ist er wert.
+    """
+    import socket
+    import subprocess
+    import sys
+    import time
+    import urllib.error
+    import urllib.request
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+
+    process = subprocess.Popen(
+        [sys.executable, "-m", "wallplotter.webapp", "--host", "127.0.0.1", "--port", str(port)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        # PYTEST_CURRENT_TEST muss raus: NiceGUI erkennt daran „läuft unter
+        # pytest" und erwartet dann NICEGUI_SCREEN_TEST_PORT. Der Kindprozess
+        # hier ist aber ein echter Serverlauf, kein Screen-Test.
+        env={k: v for k, v in os.environ.items() if not k.startswith("PYTEST_")},
+    )
+    try:
+        url = f"http://127.0.0.1:{port}/"
+        deadline = time.monotonic() + 40
+        last = None
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                pytest.fail(f"Server beendet sich: {process.stdout.read()[-2000:]}")
+            try:
+                with urllib.request.urlopen(url, timeout=3) as answer:
+                    body = answer.read()
+                    assert answer.status == 200
+                    assert len(body) > 1000, "Seite ist verdächtig leer"
+                    return
+            except urllib.error.HTTPError as exc:
+                last = f"HTTP {exc.code}: {exc.read()[:200]!r}"
+            except OSError as exc:
+                last = str(exc)
+            time.sleep(0.5)
+        pytest.fail(f"Seite kam nicht: {last}")
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+def test_the_laser_bar_holds_for_layer_assignments_too(app):
+    """Über die Ebenenzuordnung ging der Riegel vorbei.
+
+    Der Schalter „Laser scharf" wurde nur gegen den Kopf aus der Auswahlliste
+    geprüft. Wer stattdessen `#e02020 = laser` zuordnete, bekam vollständigen
+    Laser-GCode, ohne den Riegel je anzufassen — genau die Lücke, die die CLI
+    mit `guard_lasers()` längst geschlossen hatte.
+    """
+    app.head_select.value = "fineliner"
+    app.layer_heads = {"#e02020": "laser"}
+    assert "nicht scharfgeschaltet" in app.laser_blocked()
+
+    app.laser_armed.value = True
+    assert app.laser_blocked() == ""
+
+
+def test_loading_a_pattern_clears_the_previous_layers(app):
+    """Sonst blieben die Sende-Knöpfe der alten Zeichnung bedienbar.
+
+    Die Vorschau zeigte das Muster, die Ebenenliste die Zeichnung davor — und
+    ein Klick schickte die alte Ebene an die Wand.
+    """
+    from wallplotter.pipeline import Layer
+
+    app.layers = [Layer(1, "#000000", [[(0.0, 0.0), (10.0, 10.0)]])]
+    app.refresh_layers()
+    app.load_pattern("frame")
+    assert app.layers == []
+
+
+def test_pen_s_values_stay_inside_the_speed_map(app):
+    """0…100 ist, was die speed_map der config.yaml abbildet.
+
+    Ein negativer S-Wert wird von FluidNC mit `error:` abgelehnt und bricht den
+    Lauf ab. Ein Zahlenfeld, in das man sich vertippen kann, darf das nicht
+    auslösen.
+    """
+    app.head_select.value = "fineliner"
+    app.pen_down.value = -5
+    app.pen_up.value = 4000
+    head = app.toolhead()
+    assert head.down_value == 0
+    assert head.up_value == 100

@@ -29,6 +29,7 @@ __all__ = [
     "IMAGE_SUFFIXES",
     "TECHNIQUES",
     "GrayImage",
+    "MAX_SPIRAL_POINTS",
     "load_gray",
     "image_to_lines",
     "describe",
@@ -37,6 +38,14 @@ __all__ = [
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 """Was als Bildvorlage statt als SVG behandelt wird — eine Liste für alle
 Oberflächen, sonst nimmt die eine ``.webp`` an und die andere nicht."""
+
+MAX_SPIRAL_POINTS = 4_000_000
+"""Obergrenze für die Stützpunkte einer Spirale.
+
+Nicht die Grenze des Machbaren, sondern die des Sinnvollen: 4 Millionen
+Punkte sind rund 100 MB GCode und ein Plot über mehrere Tage. Ohne diese
+Schranke rechnete ein versehentlich eingetipptes Komma die Oberfläche
+minutenlang fest, ohne dass jemand erfuhr, warum."""
 
 
 class ImagingError(RuntimeError):
@@ -249,10 +258,31 @@ def spiral(
         raise ImagingError("pitch_mm, step_mm und wobble_period_mm müssen größer als 0 sein")
 
     wavelength = wobble_period_mm if wobble_period_mm else pitch_mm
+    # Die Schrittweite muss die Welle abtasten können. Bei feinem Bahnabstand
+    # wurde sonst über die Wellenlänge hinweggeschritten: der Wobble fiel dem
+    # Aliasing zum Opfer, das Bild verschwand vollständig und übrig blieb eine
+    # glatte Spirale. Acht Stützpunkte je Welle sind das Minimum, bei dem die
+    # Auslenkung noch sichtbar bleibt.
+    step_mm = min(step_mm, wavelength / 8)
+
     scale, offset_x, offset_y = _fit_box(image, width_mm, height_mm)
     center = (offset_x + image.width * scale / 2, offset_y + image.height * scale / 2)
     max_radius = math.hypot(image.width * scale, image.height * scale) / 2
     growth = pitch_mm / (2 * math.pi)  # Radiuszuwachs je Bogenmaß
+
+    # Zeichenweg vorab abschätzen: Fläche geteilt durch Bahnabstand, plus
+    # Zuschlag für den Wobble. Ein zu feiner Bahnabstand ergibt kein besseres
+    # Bild, sondern eine Datei, an der die Oberfläche minutenlang rechnet und
+    # der Plot Tage braucht — das gehört gesagt, nicht stillschweigend
+    # durchgerechnet.
+    estimated_points = math.pi * max_radius**2 / pitch_mm / max(step_mm, 1e-6)
+    if estimated_points > MAX_SPIRAL_POINTS:
+        raise ImagingError(
+            f"Bahnabstand {pitch_mm:.1f} mm ergäbe rund {estimated_points / 1e6:.1f} "
+            f"Millionen Stützpunkte auf {width_mm:.0f} × {height_mm:.0f} mm. "
+            "Gröberen Bahnabstand wählen (Faustwert: Strichbreite × 3 … × 10) "
+            "oder die Fläche verkleinern."
+        )
 
     lines: Lines = []
     current: Line = []
@@ -279,7 +309,11 @@ def spiral(
         # Schrittweite so wählen, dass der Bogen etwa step_mm lang wird
         delta = step_mm / max(radius, pitch_mm / 4)
         angle += delta
-        arc += step_mm
+        # Der Bogen wächst um das, was tatsächlich gefahren wurde. Innen, wo
+        # der Radius kleiner ist als der Nenner oben, ist das weniger als
+        # step_mm — mit dem Nennwert zu rechnen ließ die Phase des Wobbles im
+        # Zentrum davonlaufen.
+        arc += min(step_mm, delta * max(radius, pitch_mm / 4))
 
     if len(current) >= 2:
         lines.append(current)

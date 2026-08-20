@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from wallplotter.geometry import bounds, draw_length, travel_length
@@ -16,6 +18,19 @@ from wallplotter.imaging import (
 Image = pytest.importorskip("PIL.Image", reason="Pillow ist optional (Extra: photo)")
 
 AREA = (2000.0, 2500.0)
+
+
+def _gradient_image(width: int, height: int) -> GrayImage:
+    """Dunkle Mitte, helle Ränder — genug Kontrast für einen sichtbaren Wobble."""
+    pixels = []
+    for y in range(height):
+        row = []
+        for x in range(width):
+            dx, dy = x - width / 2, y - height / 2
+            distance = math.hypot(dx, dy) / (math.hypot(width, height) / 2)
+            row.append(int(min(255, 255 * distance)))
+        pixels.append(row)
+    return GrayImage(width=width, height=height, pixels=pixels)
 
 
 @pytest.fixture
@@ -186,3 +201,30 @@ def test_missing_hatched_package_points_at_the_right_extra(photo, monkeypatch):
     monkeypatch.setattr(builtins, "__import__", without_hatched)
     with pytest.raises(ImagingError, match=r"\.\[hatch\]"):
         image_to_lines(photo, *AREA, "hatch")
+
+
+def test_spiral_keeps_the_picture_at_a_fine_pitch():
+    """Bei feinem Bahnabstand verschwand das Bild vollständig.
+
+    Die Wellenlänge des Wobbles folgt dem Bahnabstand; die Schrittweite tat es
+    nicht. Ab etwa 2,4 mm Bahnabstand abwärts wurde über die Welle
+    hinweggeschritten — Aliasing —, die Auslenkung mittelte sich weg und übrig
+    blieb eine glatte Spirale ohne Motiv.
+
+    Gemessen wird der Zeichenweg gegen denselben Aufruf mit ``amplitude=0``:
+    Ein wirksamer Wobble muss den Weg deutlich verlängern. Vorher lag das
+    Verhältnis bei genau 1,00 — die Auslenkung war rechnerisch da und
+    zeichnerisch weg.
+    """
+    image = _gradient_image(60, 60)
+    for pitch in (4.0, 2.4, 1.2, 0.8):
+        wobbled = draw_length(spiral(image, 200.0, 200.0, pitch_mm=pitch))
+        smooth = draw_length(spiral(image, 200.0, 200.0, pitch_mm=pitch, amplitude=0.0))
+        assert smooth > 0
+        assert wobbled / smooth > 2.0, f"Bahnabstand {pitch} mm: Wobble ohne Wirkung"
+
+
+def test_spiral_refuses_an_absurdly_fine_pitch():
+    image = _gradient_image(60, 60)
+    with pytest.raises(ImagingError, match="Bahnabstand"):
+        spiral(image, 2000.0, 2500.0, pitch_mm=0.01)
