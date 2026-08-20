@@ -189,19 +189,34 @@ def plot_duration_s(
     start: Point = (0.0, 0.0),
     line_overhead_s: float = 0.0,
     park: bool = True,
+    draw_feeds: Sequence[float] | None = None,
 ) -> float:
     """Gesamtdauer eines Plots: Leerwege, Zeichenwege und Werkzeugzeiten.
 
     ``line_overhead_s`` ist, was der Kopf je Linie zusätzlich kostet — beim
     Stift die zweimalige Servo-Wartezeit, beim Laser nichts.
+
+    ``draw_feeds`` setzt den Zeichenvorschub je Linie statt für alle gleich.
+    Ohne das rechnet die Schätzung mit einem Vorschub, den das Programm gar
+    nicht schreibt — der Vorschub-Test und der ortsabhängige Vorschub
+    (:func:`wallplotter.motion.conditioning_feeds`) fahren ausdrücklich
+    unterschiedlich schnell.
+
+    ``travel_feed`` ist der Vorschub der *Leerwege*. Werden die als ``G0``
+    ausgegeben (der Normalfall), ist das nicht der eingestellte Wert, sondern
+    das Eilgangtempo der Maschine — die Aufrufer setzen dafür
+    ``limits.max_rate_mm_min`` ein.
     """
     bounds = limits or MotionLimits()
     drawable = [line for line in lines if len(line) >= 2]
+    if draw_feeds is not None and len(draw_feeds) != len(drawable):
+        raise ValueError("draw_feeds muss genauso viele Einträge haben wie es Linien gibt")
     total = 0.0
     position = start
-    for line in drawable:
+    for index, line in enumerate(drawable):
+        feed = draw_feeds[index] if draw_feeds is not None else draw_feed
         total += path_duration_s([position, line[0]], travel_feed, bounds)
-        total += path_duration_s(line, draw_feed, bounds)
+        total += path_duration_s(line, feed, bounds)
         total += line_overhead_s
         position = line[-1]
     if park and drawable:

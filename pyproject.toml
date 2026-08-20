@@ -27,7 +27,11 @@ geometry = ["vpype>=1.14"]
 # will.
 photo = ["pillow>=10.0"]
 hatch = ["pillow>=10.0", "hatched>=0.2"]
-web = ["nicegui>=2.0"]
+# Obergrenze mit Grund: NiceGUI 3 führt bei jedem Seitenaufruf
+# `runpy.run_path(sys.argv[0])` aus. Damit das trägt, baut webapp.main()
+# die Oberfläche über `ui.run(root=…)` auf. Eine noch neuere Hauptversion
+# kann das wieder ändern — deshalb erst prüfen, dann anheben.
+web = ["nicegui>=2.0,<4.0"]
 dev = ["pytest>=8.0", "ruff>=0.6", "pyyaml>=6.0"]
 
 [project.scripts]
@@ -38,6 +42,7 @@ wallplotter-doctor = "wallplotter.doctor:main"
 wallplotter-kinematics = "wallplotter.kinematics:main"
 wallplotter-location = "wallplotter.location_cli:main"
 wallplotter-resume = "wallplotter.resume_cli:main"
+wallplotter-web = "wallplotter.webapp:_cli"
 
 [project.urls]
 Repository = "https://github.com/AndreasS964/Wallplotter"

@@ -91,14 +91,26 @@ def grid(width: float, height: float, margin: float = 0.0, spacing: float = 250.
     x1, y1 = width - margin, height - margin
     lines: Lines = []
 
-    x = x0
-    while x <= x1 + 1e-9:
+    # Bis an den Rand schließen: Die letzte Linie lag beim letzten Vielfachen
+    # der Teilung, bei 1000 mm Fläche und 250 mm Teilung also 150 mm vor der
+    # Kante. Wer „mit dem Zollstock nachmessen" liest, misst aber die Kante —
+    # und maß dann einen Fehler, den es nicht gab.
+    def ticks(start: float, end: float) -> list[float]:
+        values = []
+        value = start
+        while value <= end - 1e-9:
+            values.append(value)
+            value += spacing
+        values.append(end)
+        # Steht das letzte Vielfache fast auf der Kante, nicht doppelt zeichnen
+        if len(values) >= 2 and end - values[-2] < spacing * 0.2:
+            del values[-2]
+        return values
+
+    for x in ticks(x0, x1):
         lines.append([(x, y0), (x, y1)])
-        x += spacing
-    y = y0
-    while y <= y1 + 1e-9:
+    for y in ticks(y0, y1):
         lines.append([(x0, y), (x1, y)])
-        y += spacing
 
     return Pattern(
         "grid",

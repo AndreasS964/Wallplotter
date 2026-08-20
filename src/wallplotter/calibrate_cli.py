@@ -121,8 +121,13 @@ def main(argv: list[str] | None = None) -> int:
                 client.set_work_offset(x, y)
                 where = f" über {args.corner}" if args.corner else ""
                 print(f"Nullpunkt{where} als G54-Versatz gespeichert: X{x:.1f} Y{y:.1f}")
-                print("Hinweis: hilft nach dem Einschalten nur mit reproduzierbarer "
-                      "Referenzfahrt (Anschlag oder StallGuard).")
+                print(
+                    "Hinweis: Das hilft nach dem Einschalten nur mit einer "
+                    "reproduzierbaren mechanischen Referenz — Gondel an den Anschlag "
+                    "und das Board DORT neu starten. Ein $H gibt es nicht: die "
+                    "WallPlotter-Kinematik kann nicht referenzieren (canHome() liefert "
+                    "false), auch nicht mit StallGuard."
+                )
             else:
                 client.set_zero(x, y)
                 where = f" über {args.corner} wiederhergestellt" if args.corner else " gesetzt"

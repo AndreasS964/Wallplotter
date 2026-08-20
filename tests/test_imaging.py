@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from wallplotter.geometry import bounds, draw_length, travel_length
@@ -16,6 +18,19 @@ from wallplotter.imaging import (
 Image = pytest.importorskip("PIL.Image", reason="Pillow ist optional (Extra: photo)")
 
 AREA = (2000.0, 2500.0)
+
+
+def _gradient_image(width: int, height: int) -> GrayImage:
+    """Dunkle Mitte, helle Ränder — genug Kontrast für einen sichtbaren Wobble."""
+    pixels = []
+    for y in range(height):
+        row = []
+        for x in range(width):
+            dx, dy = x - width / 2, y - height / 2
+            distance = math.hypot(dx, dy) / (math.hypot(width, height) / 2)
+            row.append(int(min(255, 255 * distance)))
+        pixels.append(row)
+    return GrayImage(width=width, height=height, pixels=pixels)
 
 
 @pytest.fixture
@@ -160,10 +175,20 @@ def test_every_technique_is_described():
 
 
 def test_hatch_fills_the_area(photo):
-    """Das vierte Verfahren war bisher nirgends geprüft — es hängt als
-    einziges an einem Fremdpaket, bricht also am ehesten weg."""
+    """Das vierte Verfahren hängt als einziges an einem Fremdpaket.
+
+    Und das ist genau der Grund, warum es hier steht: `hatched` 0.2.0 ist die
+    letzte Veröffentlichung und mit Shapely 2 nicht mehr lauffähig. Solange das
+    so ist, meldet der Test ein **xfail** — sichtbar im Bericht, anders als ein
+    Skip, und er wird von selbst wieder grün, wenn upstream nachzieht.
+    """
     pytest.importorskip("hatched", reason="Paket `hatched` ist optional (Extra: hatch)")
-    lines = image_to_lines(photo, *AREA, "hatch", margin_mm=100.0, pitch_mm=8.0)
+    try:
+        lines = image_to_lines(photo, *AREA, "hatch", margin_mm=100.0, pitch_mm=8.0)
+    except ImagingError as exc:
+        if "Shapely 2" in str(exc):
+            pytest.xfail(f"hatched 0.2.0 gegen Shapely 2: {exc}")
+        raise
     assert lines
     xmin, ymin, xmax, ymax = bounds(lines)
     assert xmin >= 100.0 - 1e-6
@@ -186,3 +211,67 @@ def test_missing_hatched_package_points_at_the_right_extra(photo, monkeypatch):
     monkeypatch.setattr(builtins, "__import__", without_hatched)
     with pytest.raises(ImagingError, match=r"\.\[hatch\]"):
         image_to_lines(photo, *AREA, "hatch")
+
+
+def test_spiral_keeps_the_picture_at_a_fine_pitch():
+    """Bei feinem Bahnabstand verschwand das Bild vollständig.
+
+    Die Wellenlänge des Wobbles folgt dem Bahnabstand; die Schrittweite tat es
+    nicht. Ab etwa 2,4 mm Bahnabstand abwärts wurde über die Welle
+    hinweggeschritten — Aliasing —, die Auslenkung mittelte sich weg und übrig
+    blieb eine glatte Spirale ohne Motiv.
+
+    Gemessen wird der Zeichenweg gegen denselben Aufruf mit ``amplitude=0``:
+    Ein wirksamer Wobble muss den Weg deutlich verlängern. Vorher lag das
+    Verhältnis bei genau 1,00 — die Auslenkung war rechnerisch da und
+    zeichnerisch weg.
+    """
+    image = _gradient_image(60, 60)
+    for pitch in (4.0, 2.4, 1.2, 0.8):
+        wobbled = draw_length(spiral(image, 200.0, 200.0, pitch_mm=pitch))
+        smooth = draw_length(spiral(image, 200.0, 200.0, pitch_mm=pitch, amplitude=0.0))
+        assert smooth > 0
+        assert wobbled / smooth > 2.0, f"Bahnabstand {pitch} mm: Wobble ohne Wirkung"
+
+
+def test_spiral_refuses_an_absurdly_fine_pitch():
+    image = _gradient_image(60, 60)
+    with pytest.raises(ImagingError, match="Bahnabstand"):
+        spiral(image, 2000.0, 2500.0, pitch_mm=0.01)
+
+
+def test_a_broken_hatched_says_what_to_do_instead():
+    """Die rohe Meldung von Shapely hilft niemandem weiter.
+
+    „The truth value of an empty array is ambiguous" sagt nichts darüber, dass
+    das Fremdpaket seit Jahren nicht mehr veröffentlicht wurde und drei andere
+    Bildverfahren bereitstehen, die nur Pillow brauchen.
+    """
+    import sys
+    import types
+
+    from wallplotter.imaging import hatch
+
+    kaputt = types.ModuleType("hatched")
+
+    def explodiert(*args, **kwargs):
+        raise ValueError(
+            "The truth value of an empty array is ambiguous. "
+            "Use `array.size > 0` to check that an array is not empty."
+        )
+
+    kaputt.hatch = explodiert
+    original = sys.modules.get("hatched")
+    sys.modules["hatched"] = kaputt
+    try:
+        with pytest.raises(ImagingError) as fehler:
+            hatch(b"nicht wirklich ein Bild", 100.0, 100.0)
+    finally:
+        if original is None:
+            del sys.modules["hatched"]
+        else:
+            sys.modules["hatched"] = original
+
+    meldung = str(fehler.value)
+    assert "Shapely 2" in meldung
+    assert "stipple" in meldung and "tsp" in meldung and "spiral" in meldung

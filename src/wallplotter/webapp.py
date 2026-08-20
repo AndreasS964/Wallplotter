@@ -123,10 +123,21 @@ class WallplotterUI:
         head = toolhead_by_name(self.head_select.value or "fineliner")
         if isinstance(head, LaserToolhead):
             return head
+        # Auf 0…100 begrenzen: Das ist der Bereich, den die speed_map der
+        # mitgelieferten config.yaml abbildet. Ein negativer S-Wert wird von
+        # FluidNC mit `error:` abgelehnt und bricht den Lauf ab — ein
+        # Zahlenfeld, in dem man sich vertippen kann, darf das nicht auslösen.
+        def s_value(raw, fallback: int) -> int:
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                return fallback
+            return max(0, min(100, value))
+
         return replace(
             head,
-            down_value=int(self.pen_down.value or head.down_value),
-            up_value=int(self.pen_up.value or 0),
+            down_value=s_value(self.pen_down.value, head.down_value),
+            up_value=s_value(self.pen_up.value, 0),
             # negative Wartezeit gäbe es an keinem Servo, und ToolheadError
             # mitten im Aufbau der Konfiguration hilft niemandem
             dwell_s=max(0.0, self.pen_dwell.value if self.pen_dwell.value is not None else head.dwell_s),
@@ -201,11 +212,22 @@ class WallplotterUI:
         Klick erzeugte ein vollständiges Laserprogramm, das sich mit dem
         nächsten Knopf hochladen und starten lässt.
         """
-        head = toolhead_by_name(self.head_select.value or "fineliner")
         armed = getattr(self, "laser_armed", None)
-        if isinstance(head, LaserToolhead) and not (armed and armed.value):
+        if armed and armed.value:
+            return ""
+        # Über *jeden* Kopf, der im Programm landet — nicht nur über den aus
+        # der Auswahlliste. Über die Ebenenzuordnung („#e02020 = laser") kam
+        # sonst vollständiger Laser-GCode zustande, ohne dass der Riegel je
+        # angefasst wurde: dieselbe Lücke, die die CLI mit `guard_lasers()`
+        # längst geschlossen hatte.
+        heads = [toolhead_by_name(self.head_select.value or "fineliner")]
+        try:
+            heads += list(self.layer_tools().values())
+        except Exception:  # noqa: BLE001 — eine kaputte Zuordnung meldet die UI woanders
+            pass
+        if any(isinstance(head, LaserToolhead) for head in heads):
             return (
-                "Laser gewählt, aber nicht scharfgeschaltet. Erst die Warnungen lesen "
+                "Laser im Spiel, aber nicht scharfgeschaltet. Erst die Warnungen lesen "
                 "und den Schalter \u201eLaser scharf\u201c umlegen \u2014 dann entsteht Laser-GCode."
             )
         return ""
@@ -290,6 +312,12 @@ class WallplotterUI:
         self.lines, self.feeds = pattern.lines, pattern.feeds
         self.source_name, self.source_is_pattern = pattern.name, True
         self.fit_source = False
+        # Die Ebenen der vorherigen Vorlage gehören nicht zu diesem Muster.
+        # Blieben sie stehen, blieben auch ihre Sende-Knöpfe bedienbar — und
+        # schickten die alte Zeichnung an die Wand, während die Vorschau das
+        # Muster zeigte.
+        self.layers = []
+        self.refresh_layers()
         self.regenerate()
         self.ui.notify(pattern.description, multi_line=True)
 
@@ -450,8 +478,28 @@ class WallplotterUI:
         # Eigener Name je Vorlage: sonst überschreibt jeder Plot den vorigen auf
         # der Karte — und genau die Originaldatei braucht das Fortsetzen später.
         remote = await self._send(self.gcode, self.remote_name(), "Plot")
-        if remote:
-            self.ui.notify(f"Plot gestartet: {remote}", type="positive")
+        if not remote:
+            return
+        # Nicht „gestartet" melden, weil ein Aufruf durchging. Das Board sagt
+        # selbst, ob es fährt — und wenn es das nicht tut, will man das jetzt
+        # wissen und nicht in zwei Stunden vor einer leeren Wand.
+        machine = await asyncio.to_thread(self._read_status)
+        if isinstance(machine, str) or machine is None:
+            self.ui.notify(
+                f"{remote} liegt auf der Karte, aber das Board bestätigt den Start nicht "
+                f"({machine}). Im FluidNC-WebUI nachsehen.",
+                type="warning",
+                multi_line=True,
+            )
+        elif machine.is_running:
+            self.ui.notify(f"Plot läuft: {remote}", type="positive")
+        else:
+            self.ui.notify(
+                f"{remote} liegt auf der Karte, das Board steht aber auf {machine.state}. "
+                "Alarm quittieren ($X) oder im WebUI starten.",
+                type="warning",
+                multi_line=True,
+            )
 
     async def jog(self, dx: float, dy: float) -> None:
         # Ein Toggle lässt sich auch abwählen — dann steht dort None
@@ -461,15 +509,42 @@ class WallplotterUI:
             "Jog", lambda: self.client(5).jog(dx * step, dy * step, feed=feed), quiet=True
         )
 
-    async def machine_command(self, name: str, action, *, quiet: bool = False) -> bool:
-        """Ein Kommando ans Board schicken, ohne die Oberfläche anzuhalten."""
+    async def machine_command(
+        self, name: str, action, *, quiet: bool = False, expect: set[str] | None = None
+    ) -> bool:
+        """Ein Kommando ans Board schicken, ohne die Oberfläche anzuhalten.
+
+        ``expect`` nennt die Zustände, in denen das Board danach stehen soll.
+        Ohne diese Gegenprobe meldete die Oberfläche „gesendet", sobald ein
+        Aufruf ohne Ausnahme zurückkam — und genau das war jahrelang der Fall,
+        während der Not-Halt gar nichts tat.
+        """
         try:
             await asyncio.to_thread(action)
         except Exception as exc:
             self.ui.notify(f"{name} fehlgeschlagen: {exc}", type="negative")
             return False
-        if not quiet:
+        if quiet:
+            return True
+        if not expect:
             self.ui.notify(f"{name} gesendet", type="positive")
+            return True
+        machine = await asyncio.to_thread(self._read_status)
+        if isinstance(machine, str) or machine is None:
+            self.ui.notify(
+                f"{name} gesendet, aber das Board bestätigt nichts ({machine})",
+                type="warning",
+                multi_line=True,
+            )
+            return True
+        if machine.state.split(":")[0] in expect:
+            self.ui.notify(f"{name}: Board steht auf {machine.state}", type="positive")
+            return True
+        self.ui.notify(
+            f"{name} gesendet, das Board steht aber weiter auf {machine.state}",
+            type="warning",
+            multi_line=True,
+        )
         return True
 
     async def record_corner(self, corner: str) -> None:
@@ -562,11 +637,17 @@ class WallplotterUI:
         self.regenerate()
 
     def _read_status(self):
-        """Statusabfrage — blockiert, gehört deshalb in einen Thread."""
+        """Statusabfrage — blockiert, gehört deshalb in einen Thread.
+
+        Zurück kommt entweder der Status oder die Fehlermeldung als Text. Ein
+        blankes ``None`` reichte nicht: „Board antwortet nicht" und „Board ist
+        beschäftigt" sind zwei verschiedene Dinge, und das zweite ist der
+        Normalfall während eines Plots.
+        """
         try:
             return self.client(3).status()
-        except Exception:
-            return None
+        except Exception as exc:  # noqa: BLE001
+            return str(exc)
 
     async def poll_status(self) -> None:
         """Alle zwei Sekunden den Maschinenstatus holen und anzeigen.
@@ -578,11 +659,13 @@ class WallplotterUI:
         Geräte, die gerade draufschauen.
         """
         machine = await asyncio.to_thread(self._read_status)
-        if machine is None:
-            self.status_label.set_text("FluidNC nicht erreichbar")
+        if isinstance(machine, str):
+            # Den zuletzt bekannten Fortschritt stehen lassen. Ihn auf 0
+            # zurückzusetzen, weil eine einzelne Abfrage nicht durchkam, war
+            # die unfreundlichste Anzeige von allen: der Balken sprang
+            # ausgerechnet während des Plots auf null zurück.
+            self.status_label.set_text(f"kein Status: {machine}")
             self.status_badge.props("color=grey")
-            self.progress.set_value(0)
-            self.position_label.set_text("")
             return
         self.status_label.set_text(machine.state)
         self.status_badge.props(
@@ -839,13 +922,25 @@ class WallplotterUI:
             self.progress = ui.linear_progress(value=0, show_value=False).classes("w-full")
             with ui.row().classes("gap-2 mt-2"):
                 ui.button(
-                    "Pause", icon="pause", on_click=lambda: self.machine_command("Pause", self.client(5).pause)
+                    "Pause",
+                    icon="pause",
+                    on_click=lambda: self.machine_command(
+                        "Pause", self.client(5).pause, expect={"Hold", "Door"}
+                    ),
                 ).props("outline")
                 ui.button(
-                    "Weiter", icon="play_arrow", on_click=lambda: self.machine_command("Resume", self.client(5).resume)
+                    "Weiter",
+                    icon="play_arrow",
+                    on_click=lambda: self.machine_command(
+                        "Weiter", self.client(5).resume, expect={"Run", "Idle", "Jog"}
+                    ),
                 ).props("outline")
                 ui.button(
-                    "Stopp", icon="stop", on_click=lambda: self.machine_command("Stopp", self.client(5).stop)
+                    "Stopp",
+                    icon="stop",
+                    on_click=lambda: self.machine_command(
+                        "Stopp", self.client(5).stop, expect={"Idle", "Alarm"}
+                    ),
                 ).props("outline color=negative")
             ui.separator()
             ui.label(
@@ -855,7 +950,11 @@ class WallplotterUI:
 
 
 def create_app(host: str = "fluidnc.local", locations_path: str = str(LOCATIONS_PATH)):
-    """UI aufbauen und das ``ui``-Modul zurückgeben (Start über :func:`main`)."""
+    """UI aufbauen und das ``ui``-Modul zurückgeben.
+
+    Baut die Oberfläche *sofort* auf — gedacht für Tests und für den direkten
+    Zugriff auf die Widgets. Der Serverstart geht über :func:`main`.
+    """
     ui = _require_nicegui()
     app = WallplotterUI(ui, host, locations_path)
     app.build_ui()
@@ -863,10 +962,55 @@ def create_app(host: str = "fluidnc.local", locations_path: str = str(LOCATIONS_
     return ui
 
 
-def main(host: str = "0.0.0.0", port: int = 8080) -> None:
-    ui = create_app()
-    ui.run(host=host, port=port, title="Wandplotter", reload=False, show=False)
+def main(host: str = "0.0.0.0", port: int = 8080, board: str = "fluidnc.local") -> None:
+    """Server starten.
+
+    Die Oberfläche wird in einer **Wurzelfunktion** aufgebaut, nicht im
+    Modulrumpf. Das ist kein Stil, sondern notwendig: NiceGUI führt ab
+    Version 3 bei jedem Seitenaufruf ``runpy.run_path(sys.argv[0],
+    run_name='__main__')`` aus. Beim dokumentierten Start
+    ``python -m wallplotter.webapp`` ist ``sys.argv[0]`` der Dateipfad dieses
+    Moduls; der Wiederablauf als Top-Level-Skript scheiterte an den relativen
+    Importen, und die Oberfläche antwortete auf **jede** Anfrage mit HTTP 500.
+    Der Server lief dabei fehlerfrei — auffallen konnte das nur, wenn jemand
+    die Seite wirklich aufrief, und kein Test tat das.
+
+    Mit ``root=`` baut NiceGUI die Seite je Aufruf aus dieser Funktion auf,
+    ohne die Datei erneut auszuführen. Nebenbei bekommt damit jeder Browser
+    seine eigene Instanz, statt sich eine mit allen anderen zu teilen.
+    """
+    ui = _require_nicegui()
+
+    def build() -> None:
+        app = WallplotterUI(ui, board, str(LOCATIONS_PATH))
+        app.build_ui()
+        app.refresh_calibration()
+
+    ui.run(
+        host=host,
+        port=port,
+        title="Wandplotter",
+        reload=False,
+        show=False,
+        root=build,
+    )
+
+
+def _cli(argv: list[str] | None = None) -> int:
+    """Einstieg für das Konsolenskript ``wallplotter-web``."""
+    import argparse  # noqa: PLC0415
+
+    parser = argparse.ArgumentParser(description="Web-Oberfläche des Wandplotters")
+    parser.add_argument("--host", default="0.0.0.0", help="Adresse, auf der der Server lauscht")
+    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--board", default="fluidnc.local", help="Hostname oder IP des Boards")
+    args = parser.parse_args(argv)
+    main(args.host, args.port, args.board)
+    return 0
 
 
 if __name__ in {"__main__", "__mp_main__"}:  # NiceGUI startet den Prozess neu
-    main()
+    # Über _cli(), damit `python -m wallplotter.webapp --port 8099` dasselbe
+    # kann wie das Konsolenskript `wallplotter-web`. Vorher gab es über den
+    # dokumentierten Startbefehl keine Möglichkeit, Port oder Board zu setzen.
+    _cli()

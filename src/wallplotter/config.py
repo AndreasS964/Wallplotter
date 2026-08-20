@@ -112,9 +112,29 @@ class FluidNCConfig:
 
     timeout_s: float = 30.0
 
+    telnet_port: int = 23
+    """Port des TCP-Kanals (``$Telnet/Port``, ab Werk 23 und eingeschaltet).
+
+    Über diesen Kanal laufen GCode, Realtime-Zeichen und die Statusabfrage —
+    über HTTP geht davon nichts, siehe :mod:`wallplotter.upload`.
+    """
+
     @property
     def base_url(self) -> str:
         host = self.host
         if not host.startswith(("http://", "https://")):
             host = f"http://{host}"
         return host.rstrip("/")
+
+    @property
+    def hostname(self) -> str:
+        """Nur der Hostname, ohne Schema und ohne Port — für den TCP-Kanal."""
+        host = self.host
+        for scheme in ("http://", "https://"):
+            if host.startswith(scheme):
+                host = host[len(scheme) :]
+        host = host.rstrip("/")
+        # IPv6 in eckigen Klammern unangetastet lassen
+        if host.startswith("["):
+            return host.partition("]")[0] + "]"
+        return host.partition(":")[0]

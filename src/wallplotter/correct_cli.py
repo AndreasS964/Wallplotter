@@ -98,7 +98,15 @@ def build_parser() -> argparse.ArgumentParser:
     fit.add_argument("--degree", choices=sorted(DEGREES), help="Grad des Polynoms")
     fit.add_argument("-o", "--out", type=Path, default=DEFAULT_CORRECTION)
 
-    sub.add_parser("zeigen", help="eine vorhandene Korrekturdatei bewerten")
+    show = sub.add_parser("zeigen", help="eine vorhandene Korrekturdatei bewerten")
+    show.add_argument(
+        "-i",
+        "--in",
+        dest="source",
+        type=Path,
+        default=DEFAULT_CORRECTION,
+        help=f"Korrekturdatei (Vorgabe: {DEFAULT_CORRECTION})",
+    )
     return parser
 
 
@@ -209,6 +217,8 @@ def main(argv: list[str] | None = None) -> int:
                     "Fehler ist keiner, den man wegrechnen kann — dann hilft nur die Mechanik.",
                     file=sys.stderr,
                 )
+            for note in _honesty_notes(correction, points, args.model):
+                print(note, file=sys.stderr)
             write_text(
                 args.out,
                 json.dumps(correction.to_dict(), indent=2, ensure_ascii=False) + "\n",
@@ -222,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
             from .correction import load_correction  # noqa: PLC0415
 
             correction = load_correction(
-                DEFAULT_CORRECTION, kinematics=location.kinematics() if location else None
+                args.source, kinematics=location.kinematics() if location else None
             )
             print(json.dumps(correction.to_dict(), indent=2, ensure_ascii=False))
             try:
@@ -239,6 +249,41 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 3
     return 0
+
+
+def _honesty_notes(correction, points, model: str) -> list[str]:
+    """Was die Zahl oben verschweigt.
+
+    Der gemeldete Restfehler wird an genau den Punkten gemessen, aus denen die
+    Korrektur gerechnet wurde. Bei genügend Freiheitsgraden ist er
+    zwangsläufig klein, ohne dass die Korrektur zwischen den Punkten etwas
+    taugt — und dann kann auch die Warnung „nimmt kaum etwas weg" gar nicht
+    mehr auslösen. Zwei Fälle sind so eindeutig, dass sie gesagt gehören.
+    """
+    notes: list[str] = []
+    if model == "dehnung":
+        # Ein Materialwert aus vielen Punkten — überanpassen kann das nicht.
+        return notes
+
+    unknowns = {"affin": 3, "bilinear": 4, "quadratisch": 6, "kubisch": 10}
+    needed = unknowns.get(getattr(correction, "degree", ""), 0)
+    if needed and len(points) <= needed:
+        notes.append(
+            f"Achtung: {len(points)} Messpunkte für ein Polynom mit {needed} Unbekannten. "
+            "Die Anpassung geht dann exakt durch jeden Punkt, und der oben gemeldete "
+            "Restfehler ist zwangsläufig 0 — über die Güte sagt er nichts."
+        )
+    elif needed and len(points) < 2 * needed:
+        notes.append(
+            f"Hinweis: {len(points)} Messpunkte für {needed} Unbekannte ist knapp. Der "
+            "Restfehler ist an den Messpunkten gemessen; zwischen ihnen kann er "
+            "deutlich größer sein."
+        )
+    notes.append(
+        "Prüfen lässt sich das nur außerhalb: eine Stelle nachmessen, die nicht im "
+        "Raster lag."
+    )
+    return notes
 
 
 def _residual(correction, points) -> float:

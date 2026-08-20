@@ -29,12 +29,15 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .gcode import comment_lines
+
 __all__ = [
     "ResumeError",
     "ProgramState",
     "scan_program",
     "line_for_percent",
     "resume_program",
+    "read_program",
     "resume_file",
 ]
 
@@ -94,6 +97,27 @@ class ProgramState:
 
     last_pause: str = ""
     """Text der zuletzt passierten ``M0``-Pause — welches Werkzeug stecken muss."""
+
+
+def _pause_text(line: str) -> str:
+    """Den Wechseltext einer ``M0``-Zeile herausholen.
+
+    Erzeugt wird heute ``M0 (MSG,Stift wechseln auf: … — weiter mit Cycle
+    Start)`` — Klammerkommentare mit ``MSG`` protokolliert FluidNC, ein
+    ``;``-Kommentar dagegen verschwindet spurlos. Ältere Programme (und
+    fremde) tragen den Text hinter einem Semikolon; beide Formen werden hier
+    gelesen, sonst verlöre ein Fortsetzen die Angabe, welcher Stift im Halter
+    stecken muss.
+    """
+    if "(" in line and ")" in line:
+        inside = line[line.index("(") + 1 : line.rindex(")")].strip()
+        for marker in ("MSG,", "MSG "):
+            if inside.upper().startswith(marker):
+                inside = inside[len(marker) :].strip()
+                break
+        if inside:
+            return inside
+    return line.partition(";")[2].strip() or "Halt"
 
 
 def _code(line: str) -> str:
@@ -193,7 +217,7 @@ def scan_program(program: str) -> list[ProgramState]:
         elif code in {"M9", "M09"}:
             following.coolant = ""
         elif code in {"M0", "M00"}:
-            following.last_pause = line.partition(";")[2].strip() or "Halt"
+            following.last_pause = _pause_text(line)
         elif code == "F" or (code.startswith("F") and len(code) > 1):
             if "F" in words:
                 following.feed = words["F"]
@@ -323,7 +347,9 @@ def resume_program(
     if before.last_pause:
         # Bei einem mehrfarbigen Programm mit M0-Pausen steckt jetzt ein
         # bestimmtes Werkzeug im Halter — und das steht nur im Original.
-        out.append(f"; Im Halter muss stecken: {before.last_pause.removeprefix('anhalten — ')}")
+        stecken = before.last_pause.removeprefix("anhalten — ")
+        stecken = stecken.removesuffix(" — weiter mit Cycle Start")
+        out += comment_lines(f"Im Halter muss stecken: {stecken}")
     # Modalen Zustand wieder aufbauen: die Maschine weiß nach einem Abbruch nichts mehr
     out += before.setup or ["G21", "G90", "G17"]
     out.append("M5 ; Werkzeug aus, bevor irgendetwas verfahren wird")
@@ -354,6 +380,18 @@ def resume_program(
     return "\n".join(out) + "\n"
 
 
+def read_program(path: Path | str) -> str:
+    """GCode-Datei einlesen — nachsichtig, was die Kodierung angeht.
+
+    Fremde Toolchains schreiben Kommentare gern in Latin-1; ein Umlaut darin
+    ist kein Grund, ein halbfertiges Wandbild aufzugeben.
+    """
+    source = Path(path)
+    if not source.exists():
+        raise ResumeError(f"Keine Datei unter {source}")
+    return source.read_text(encoding="utf-8", errors="replace")
+
+
 def resume_file(
     path: Path | str,
     *,
@@ -362,12 +400,8 @@ def resume_file(
     whole_stroke: bool = True,
 ) -> str:
     source = Path(path)
-    if not source.exists():
-        raise ResumeError(f"Keine Datei unter {source}")
-    # Fremde Toolchains schreiben Kommentare gern in Latin-1; ein Umlaut
-    # darin ist kein Grund, ein halbfertiges Wandbild aufzugeben.
     return resume_program(
-        source.read_text(encoding="utf-8", errors="replace"),
+        read_program(source),
         line=line,
         percent=percent,
         whole_stroke=whole_stroke,

@@ -1,5 +1,121 @@
 # Änderungen
 
+## Unveröffentlicht — die Funde behoben, Projektseite
+
+Zweiter Teil derselben Runde: Was die Gegenprüfung gefunden hat, ist jetzt
+behoben, und die Dokumentation steht als Website unter
+[andreass964.github.io/Wallplotter](https://andreass964.github.io/Wallplotter/).
+
+### Der Kern: eine Weiche, die es vorher nicht gab
+
+`wallplotter.upload` trennt jetzt sauber, was FluidNC selbst trennt:
+
+* **Dateien über HTTP.** `POST /upload` schreibt auf die Karte,
+  `GET /upload?path=/` listet sie, `GET /sd/<datei>` liest zurück. Der
+  Multipart-Dateiname trägt den vollen Zielpfad, damit er zum Größenfeld passt
+  — sonst landete die Datei im Wurzelverzeichnis und die Platzprüfung fiel aus.
+* **Kommandos über den TCP-Kanal auf Port 23** (`TelnetChannel`). Der ist ab
+  Werk an und ein vollwertiger `Channel`: dort wirken Realtime-Zeichen, `?`
+  liefert einen Statusbericht, GCode wird ausgeführt. Ohne neue Abhängigkeit —
+  FluidNC verhandelt keine Telnet-Optionen, ein Socket aus der
+  Standardbibliothek reicht.
+* **Halt, Pause und Weiter über die Ereignis-Endpunkte** `/feedhold_reload`,
+  `/cyclestart_reload`, `/restart_reload`. Die lösen direkt das
+  Firmware-Ereignis aus und werden nicht von `$HTTP/BlockDuringMotion`
+  blockiert — also genau das, was ein Halt können muss.
+* `$`-Kommandos gehen weiterhin über `/command?plain=`, aber nur als
+  Rückfallebene, falls der Kanal nicht aufgeht. Für GCode gibt es **keinen**
+  Rückfall: lieber laut scheitern als still nichts tun.
+
+`parse_status` unterscheidet außerdem `MPos` und `WPos` und rechnet über `WCO`
+in Werkstückkoordinaten um — das ist das System, in dem der erzeugte GCode
+fährt. Und `SD: <name>: Sent` heißt „fertig", nicht „kein Fortschritt".
+
+### Web-UI
+
+Sie antwortete seit NiceGUI 3 auf **jede** Anfrage mit HTTP 500: Die
+Bibliothek führt pro Seitenaufruf `runpy.run_path(sys.argv[0])` aus, und bei
+`python -m wallplotter.webapp` brachen dabei die relativen Importe. Die
+Oberfläche baut sich jetzt in einer Wurzelfunktion auf (`ui.run(root=…)`),
+`python -m wallplotter.webapp` nimmt `--host/--port/--board`, es gibt ein
+Konsolenskript `wallplotter-web`, `nicegui` ist auf `<4.0` eingegrenzt — und
+ein Test holt die Seite wirklich über HTTP ab. Vorher rief kein einziger sie
+je auf.
+
+Dazu: Der Laser-Riegel greift jetzt über *alle* benutzten Köpfe (über die
+Ebenenzuordnung ging er vorbei), ein geladenes Testmuster räumt die alte
+Ebenenliste weg, S-Werte werden auf 0…100 begrenzt, eine verpasste
+Statusabfrage lässt den Fortschritt stehen statt ihn auf 0 zu setzen, und
+„Plot gestartet" wird erst gemeldet, wenn das Board bestätigt, dass es fährt.
+
+### Zwei Rechenfehler
+
+* `kinematics.resolution_mm` mischte Komponenten aus beiden Spalten der
+  inversen Jacobi-Matrix. Richtig ist `Schrittweite / |sin(Riemenwinkel)|`. Die
+  Zahlen sahen plausibel aus, wiesen aber die falsche Problemzone aus — und
+  `motion.conditioning_feeds` bremste danach am falschen Ende.
+  `docs/kinematik.md` ist neu gerechnet.
+* Die Resonanzprüfung maß den **Bahnabstand** statt der **Bahnlänge**. Wie oft
+  die Gondel umkehrt, hängt daran, wie lang eine Bahn ist. Bei einer Schraffur
+  über 1000 mm mit 3 mm Abstand lagen zwischen beiden Zahlen mehr als zwei
+  Größenordnungen: Alarm gab es bei genau den Mustern, die harmlos sind.
+
+### Kleineres, aber ebenso konkret
+
+* Kommentarzeilen über 127 Byte brachen den Lauf mit `error:14` ab — FluidNC
+  liest in einen `char line[128]` und prüft **vor** dem Entfernen der
+  Kommentare. `gcode.comment_lines()` bricht jetzt um, ein Test prüft jede
+  Zeile jedes erzeugten Programms.
+* Der Stiftwechseltext stand hinter einem Semikolon und erreichte damit
+  niemanden; jetzt `M0 (MSG,…)`, das protokolliert FluidNC.
+* Die Parkfahrt ging auf Maschinen-(0,0) — bei kalibrierter Fläche in die Zone
+  mit der schlechtesten Riemengeometrie. Jetzt an die Ecke der Zeichenfläche.
+* Drei Ebenen derselben Farbe (`black`, `#000000`, `rgb(0,0,0)` sind für vpype
+  drei) überschrieben sich als Wörterbuchschlüssel lautlos. Jetzt zusammengefasst.
+* Die Spirale verlor bei feinem Bahnabstand durch Aliasing das ganze Bild; dazu
+  gibt es jetzt eine Obergrenze für die Punktzahl statt einer minutenlang
+  rechnenden Oberfläche.
+* `--layers` zeigt Laufzeit und Resonanzprüfung, `--adaptive-feed` wird nicht
+  mehr still verschluckt.
+* Das Raster von `--pattern grid` schließt bis an den Rand — vorher lag die
+  letzte Linie beim letzten Vielfachen der Teilung, und wer nachmaß, maß einen
+  Fehler, den es nicht gab.
+* `wallplotter-correct zeigen` nimmt `--in`; `anpassen` sagt jetzt, wenn zu
+  wenige Messpunkte für den gewählten Grad da sind und der Restfehler deshalb
+  zwangsläufig 0 ist.
+* `wallplotter-resume` stürzt nicht mehr bei nicht-UTF-8-Dateien ab, nachdem
+  das Restprogramm schon geschrieben war.
+* `wallplotter-doctor` prüft erst HTTP, dann den Kanal — und sagt, welcher der
+  beiden fehlt, statt „Board noch nicht da" zu melden, während es antwortet.
+
+### Tests und CI
+
+Die Attrappen sagen jetzt auch Nein. Die alten quittierten jede URL und jedes
+Kommando mit 200 — darüber sind sechs Firmware-Fehler grün geblieben. Die neue
+Gegenstelle (`tests/fluidnc_fake.py`) kennt nur die Endpunkte, die FluidNC
+registriert, und verhält sich bei `plain=` wie `settings_execute_line()`.
+**461 Tests.**
+
+Dabei kam gleich etwas heraus, das vorher unter dem Skip lag: Das Fremdpaket
+`hatched` (0.2.0, die letzte Veröffentlichung) ist mit Shapely 2 nicht mehr
+lauffähig — es baut ein leeres `MultiLineString` aus einem numpy-Array.
+`imaging.hatch` sagt das jetzt im Klartext und nennt die drei Verfahren, die
+nur Pillow brauchen; der Test meldet ein sichtbares xfail statt eines stillen
+Skips und wird von selbst grün, wenn upstream nachzieht.
+
+Die CI installiert alle Extras in einem Job und bricht ab, wenn sich ein Test
+wegen eines fehlenden Pakets überspringt — genau so blieben ganze Testdateien
+unbemerkt liegen. Dazu ein Job, der den Kern ohne Extras prüft und jedes
+Konsolenskript einmal startet, und einer nur für die `config.yaml`.
+
+### Projektseite
+
+`tools/build_site.py` baut die Dokumentation zu einer statischen Website,
+`.github/workflows/pages.yml` veröffentlicht sie. Kein Jekyll, kein Theme von
+der Stange: `python tools/build_site.py && python -m http.server -d site` zeigt
+lokal genau das, was online steht, und die CI bricht ab, wenn ein interner
+Verweis ins Leere zeigt.
+
 ## Unveröffentlicht — Gegenprüfung gegen den FluidNC-Quelltext, Bauanleitung
 
 Bisher war alles Board-nahe „nach Dokumentation gebaut". Diese Runde hat den

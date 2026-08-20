@@ -62,7 +62,18 @@ def fit_to_area(
     xmin, ymin, xmax, ymax = source_bounds if source_bounds is not None else bounds(lines)
     src_w, src_h = xmax - xmin, ymax - ymin
     if src_w <= 0 and src_h <= 0:
-        return [list(line) for line in lines]
+        # Alles auf einem Punkt: skalieren geht nicht, aber die Rohkoordinaten
+        # einfach durchzureichen hieße, dass die Zeichnung irgendwo landet —
+        # bei einem SVG mit Ursprung weit außerhalb auch neben der Wand.
+        # Also wenigstens in die Mitte der Fläche schieben.
+        if not any(line for line in lines):
+            return [list(line) for line in lines]
+        return transform(
+            lines,
+            1.0,
+            margin_mm + inner_w / 2 - xmin,
+            margin_mm + inner_h / 2 - ymin,
+        )
 
     scale = min(
         inner_w / src_w if src_w > 0 else math.inf,

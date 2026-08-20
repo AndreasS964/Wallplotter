@@ -152,20 +152,35 @@ class WallPlotterKinematics:
     def resolution_mm(self, x: float, y: float) -> float:
         """Größte Stiftbewegung, die ein einzelner Mikroschritt auslöst.
 
-        Aus der Jacobi-Matrix der Riemenlängen: ein Schritt auf einer Achse
-        verschiebt den Stift je nach Position unterschiedlich weit. Zurück
-        kommt der ungünstigere der beiden Werte — das ist die effektive
-        Auflösung an dieser Stelle.
+        Aus der Jacobi-Matrix der Riemenlängen. Mit den Einheitsvektoren
+        :math:`u_l`, :math:`u_r` vom Stift zu den Ankern ist
+
+        .. code-block:: text
+
+            J = [[-lx, -ly],
+                 [-rx, -ry]]        det J = lx·ry − ly·rx = sin(Riemenwinkel)
+
+        Die Spalten der inversen Matrix sind :math:`(-r_y, r_x)/\\det` und
+        :math:`(l_y, -l_x)/\\det`. Beide haben die Länge 1/|det|, weil
+        :math:`u_l` und :math:`u_r` Einheitsvektoren sind — ein Schritt auf
+        *jeder* der beiden Achsen verschiebt den Stift also gleich weit:
+
+        .. code-block:: text
+
+            Auflösung = Schrittweite / |sin(Riemenwinkel)|
+
+        Hier stand früher eine Mischung aus Komponenten beider Spalten
+        (``hypot(-ry, lx)`` und ``hypot(rx, -ly)``). Die Zahlen sahen plausibel
+        aus, wiesen aber die falsche Problemzone aus — und weil
+        :func:`wallplotter.motion.conditioning_feeds` genau daraus den
+        ortsabhängigen Vorschub ableitet, wurde dort am falschen Ende
+        gebremst.
         """
         (lx, ly), (rx, ry) = self._unit_vectors(x, y)
-        # d(Länge)/d(Position) = -Einheitsvektor zum Anker
-        det = (-lx) * (-ry) - (-ly) * (-rx)
+        det = lx * ry - ly * rx
         if abs(det) < 1e-12:
             return math.inf  # Riemen kollinear: Position nicht bestimmbar
-        # Spaltennormen der inversen Jacobi-Matrix
-        col_left = math.hypot(-ry, lx) / abs(det)
-        col_right = math.hypot(rx, -ly) / abs(det)
-        return max(col_left, col_right) * self.motor.step_mm
+        return self.motor.step_mm / abs(det)
 
     def belt_tension_n(self, x: float, y: float) -> tuple[float, float]:
         """Statische Riemenkräfte, die das Gondelgewicht halten."""

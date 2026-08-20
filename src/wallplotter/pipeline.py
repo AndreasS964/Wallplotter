@@ -107,23 +107,43 @@ def _document_to_lines(document) -> Lines:
 
 
 def _document_to_layers(document) -> list[Layer]:
-    """Ebenen einzeln herausziehen, samt Farbe aus dem SVG."""
-    layers: list[Layer] = []
+    """Ebenen herausziehen, samt Farbe aus dem SVG — gleiche Beschriftung zusammen.
+
+    vpype trennt nach dem *Attributtext* des Strichs: ``black``, ``#000000``
+    und ``rgb(0,0,0)`` sind für vpype drei Ebenen, für den Stiftkasten aber
+    eine. Zusammengefasst wird deshalb nach der Beschriftung, und das aus zwei
+    Gründen:
+
+    * Getrennt gelassen kollidierten sie später als Schlüssel des
+      Ergebnis-Wörterbuchs, und alle bis auf die letzte Ebene verschwanden
+      lautlos — bei einem SVG aus Inkscape mit gemischter Farbschreibweise
+      fehlten also einfach Linien.
+    * Selbst ohne Kollision wäre es falsch: drei Ebenen derselben Farbe heißen
+      drei Dateien und zwei ``M0``-Pausen für einen Stift, der gar nicht
+      gewechselt wird.
+
+    Eine eigene Beschriftung (``vp_name``, in Inkscape der Ebenenname) trennt
+    weiterhin — wer seine Ebenen benannt hat, meint sie auch getrennt.
+    """
+    merged: dict[str, Layer] = {}
     for index, collection in sorted(document.layers.items()):
         lines = _collection_to_lines(collection)
         if not lines:
             continue
         color = collection.metadata.get("vp_color")
         stroke = collection.metadata.get("svg_stroke")
-        layers.append(
-            Layer(
-                index=index,
-                color=_as_hex(color) or (stroke if isinstance(stroke, str) else "#000000"),
-                lines=lines,
-                name=str(collection.metadata.get("vp_name", "")),
-            )
+        layer = Layer(
+            index=index,
+            color=_as_hex(color) or (stroke if isinstance(stroke, str) else "#000000"),
+            lines=lines,
+            name=str(collection.metadata.get("vp_name", "")),
         )
-    return layers
+        existing = merged.get(layer.label)
+        if existing is None:
+            merged[layer.label] = layer
+        else:
+            existing.lines.extend(layer.lines)
+    return list(merged.values())
 
 
 def _as_hex(color) -> str | None:

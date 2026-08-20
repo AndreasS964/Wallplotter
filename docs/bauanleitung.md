@@ -4,19 +4,21 @@ Vom Karton bis zum ersten Strich an der Wand. Diese Anleitung ist gegen den
 FluidNC-Quelltext, BTTs `rodent.yaml` und das Rodent-Handbuch V1.03
 geschrieben — nicht gegen Erinnerung. Wo etwas ungeprüft ist, steht es dabei.
 
-*Stand: August 2026 · zugehörige Prüfung: [firmware-gegenpruefung.md](firmware-gegenpruefung.md)*
+*Stand: August 2026 · zugehörige [Gegenprüfung gegen den Firmware-Quelltext](firmware-gegenpruefung.md)*
 
 ---
 
 ## 0. Vorher lesen
 
-**Der Aufbau funktioniert. Die Software um ihn herum an drei Stellen noch
-nicht.** Upload, Statusabfrage und Nullpunktsetzen laufen über
-HTTP-Endpunkte, die es in FluidNC so nicht gibt; die Web-UI startet auf dem
-dokumentierten Weg gar nicht erst richtig. Was das für den Bau heißt, steht in
-[Abschnitt 10](#10-was-heute-noch-nicht-geht) — kurz: es geht alles, nur läuft
-der Weg zum Board vorerst über FluidNCs eigenes Web-Interface im Browser statt
-über `plot --upload --run`.
+**Was hier steht, ist gegen den Firmware-Quelltext geprüft, nicht gegen
+Erinnerung** — die [Gegenprüfung](firmware-gegenpruefung.md) listet, was dabei
+herauskam. Fünf Funde hätten das Board blockiert; sie sind behoben, und die
+ausgelieferte `config.yaml` ist die korrigierte.
+
+**Was noch aussteht, ist Hardware.** Alles Board-nahe ist gegen den Quelltext
+gebaut und gegen eine Gegenstelle getestet, die sich wie FluidNC verhält — aber
+an keinem echten Board gelaufen. Was das im Einzelnen heißt, steht in
+[Abschnitt 10](#10-was-noch-an-hardware-zu-prüfen-ist).
 
 Die Reihenfolge dieser Anleitung ist nicht beliebig. Sie ist so gebaut, dass
 jeder Schritt prüfbar ist, bevor der nächste darauf aufsetzt — und dass ein
@@ -331,10 +333,15 @@ und ist für einen VFD gedacht, nicht für einen RC-Servo.
 
 ### 7.5 Not-Halt und Pause als Taster
 
-**Das ist kein optionaler Komfort.** Über das Netzwerk lässt sich die Maschine
-derzeit nicht anhalten (siehe [Abschnitt 10](#10-was-heute-noch-nicht-geht)),
-und über die Kinematik werden die Endstop-Eingänge nie gebraucht. Drei Taster
-gegen Masse, an drei freie Eingänge:
+**Das ist kein optionaler Komfort.** Über das Netzwerk hält die Maschine
+inzwischen an — Pause, Weiter und Reset laufen über die Ereignis-Endpunkte der
+Firmware —, aber ein Not-Halt, der ein funktionierendes WLAN, einen wachen
+Browser und drei Schichten Software braucht, ist keiner. Ein Taster an einem
+optogekoppelten Eingang ist einer.
+
+Die Eingänge sind ohnehin frei: Die WallPlotter-Kinematik kann nicht
+referenzieren, also wird kein einziger der fünf Endstop-Eingänge gebraucht.
+Drei Taster gegen Masse:
 
 | Taster | Eingang | Wirkung |
 | --- | --- | --- |
@@ -342,8 +349,9 @@ gegen Masse, an drei freie Eingänge:
 | Pause | gpio.34 (Y-MAX) | `feed_hold_pin` — bremst kontrolliert ab |
 | Weiter | gpio.33 (Z-MAX) | `cycle_start_pin` — setzt fort |
 
-Der Weiter-Taster ist zusätzlich der einzige heute funktionierende Weg, die
-`M0`-Pause beim Stiftwechsel aufzulösen.
+Der Weiter-Taster ist außerdem der bequemste Weg, die `M0`-Pause beim
+Stiftwechsel aufzulösen — man steht ohnehin an der Wand und hat die Hände am
+Stift, nicht am Handy.
 
 Die Eingänge sind optogekoppelt; Spannungswahl über die `SW_VCC`-Brücke
 (5 V bei einem 24-V-Netzteil). Die Taster schließen gegen GND, in der
@@ -384,11 +392,26 @@ Gleich mit erledigen, es erspart später Rätselraten:
 
 ```
 $HTTP/BlockDuringMotion=OFF
+$Telnet/Enable=ON
 ```
 
-Solange die Einstellung an ist (Werkszustand), antwortet der Kommando-Endpunkt
-während jeder Bewegung nur mit HTTP 503 — Statusabfrage und Fortschrittsbalken
-eingeschlossen.
+Zum ersten: Solange `BlockDuringMotion` an ist (Werkszustand), antwortet der
+Kommando-Endpunkt während jeder Bewegung nur mit HTTP 503.
+
+Zum zweiten: Über den **TCP-Kanal auf Port 23** laufen Statusabfrage, GCode und
+die Realtime-Zeichen — er ist ab Werk an, und ohne ihn geht von der Software
+nur noch der Datei-Upload. Prüfen lässt sich das ohne Werkzeug:
+
+```bash
+printf '?' | nc <ip> 23        # muss eine Zeile wie <Idle|MPos:…> liefern
+```
+
+Warum nicht über HTTP? Weil `/command?plain=` die Zeile an
+`settings_execute_line()` weiterreicht, und das versteht nur `$name=wert`. Ein
+`?` oder ein Realtime-Byte landet dort beim namenlosen Hilfe-Kommando und wird
+mit HTTP 200 quittiert, ohne dass irgendetwas passiert — der Not-Halt meldete
+so lange Zeit Erfolg. Belege in der
+[Gegenprüfung](firmware-gegenpruefung.md), Abschnitt 2.3.
 
 ### 8.3 Konfiguration hochladen
 
@@ -579,26 +602,28 @@ gemessenen Stelle nachgemessen hast.
 
 ---
 
-## 10. Was heute noch nicht geht
+## 10. Was noch an Hardware zu prüfen ist
 
-Die Prüfung gegen den FluidNC-Quelltext hat drei Wege gefunden, die im Repo
-gebaut, aber nicht gangbar sind. Details und Belege stehen in
-[firmware-gegenpruefung.md](firmware-gegenpruefung.md); hier steht, was du
-stattdessen tust.
+Die Software spricht das Board jetzt auf den Wegen an, die FluidNC wirklich
+anbietet — Dateien über HTTP, Kommandos über den TCP-Kanal, Halt und Pause über
+die Ereignis-Endpunkte. Getestet ist das gegen eine Gegenstelle, die sich wie
+die Firmware verhält. **An einem echten Board ist es noch nicht gelaufen.**
 
-| Was nicht geht | Warum | Was stattdessen |
+Diese Liste ist die Reihenfolge, in der du das prüfst, sobald das Board hängt:
+
+| Prüfen | Erwartet | Wenn nicht |
 | --- | --- | --- |
-| `plot --upload` | postet nach `/sdfiles`, das es in FluidNC nicht gibt (die SD hängt an `/upload`, der Flash an `/files`) | GCode-Datei erzeugen (`plot … --out`) und im FluidNC-WebUI auf die Karte laden |
-| `plot --run`, Fortschritt, Statusanzeige | `/command?plain=` führt nur `$`-Kommandos aus, `?` liefert eine Hilfezeile | im WebUI starten, dort steht auch der Fortschritt |
-| Pause / Weiter / Stopp in der Web-UI | Realtime-Bytes über `plain=` melden Erfolg und tun nichts | **die Taster aus [7.5](#75-not-halt-und-pause-als-taster)**, oder die Knöpfe im FluidNC-WebUI |
-| `wallplotter-calibrate zero` | `G92` über `plain=` endet in HTTP 500 | `G92 X0 Y0` im WebUI-Terminal eingeben |
-| `python -m wallplotter.webapp` | NiceGUI ab 3.0 startet die Datei pro Seitenaufruf neu, die relativen Importe brechen | vorerst die CLI benutzen |
+| `wallplotter-doctor --host <ip>` | „Board erreichbar", „SD-Karte", „Kommandokanal" alle grün | Der Selbsttest sagt, welcher der drei fehlt |
+| Not-Halt-Taster drücken (Motor läuft) | Maschine hält sofort, Zustand `Alarm` | `control:`-Block und Steckbrücken prüfen, [7.5](#75-not-halt-und-pause-als-taster) |
+| `wallplotter-calibrate --host <ip> status` | eine Statuszeile mit Position | Telnet aus? `$Telnet/Enable=ON`, dann `$Bye` |
+| `plot --pattern frame --upload --run` | Datei liegt auf der Karte, Plot läuft an | Antwort des Boards lesen; `wallplotter-doctor` |
+| Pause/Weiter in der Web-UI | Zustand wechselt auf `Hold` und zurück auf `Run` | die Oberfläche meldet jetzt, wenn das Board **nicht** umschaltet |
+| `--layers --one-file`, `M0`-Pause | Maschine hält, Wechseltext steht in der WebUI-Konsole | mit Cycle Start (Taster oder Knopf) weiter |
 
-Was **ohne Einschränkung** funktioniert und den größten Teil der Arbeit
-ausmacht: GCode aus SVG und Fotos erzeugen, Vorschau, Laufzeitschätzung,
-Testmuster, Standorte und Flächen rechnen, Kinematik auswerten, Korrektur
-anpassen, abgebrochene Plots fortsetzen. Und `$SD/Run=` sowie `$J=` sind die
-zwei Board-Kommandos, die über HTTP tatsächlich durchgehen.
+Die Servo-Werte im Stiftkatalog und der komplette Laserpfad bleiben ungeprüft —
+beides hängt an Hardware, die noch nicht da ist, und beides steht als solches
+gekennzeichnet in [Abschnitt 9.3](#93-servoweg-einstellen) bzw. im
+[Projekthandbuch](wandplotter-handbuch.md).
 
 ---
 
@@ -619,8 +644,10 @@ zwei Board-Kommandos, die über HTTP tatsächlich durchgehen.
 | Linien werden wellig | Pendelresonanz. `wallplotter.motion` nennt zwei Auswege: Vorschub deutlich darüber oder darunter, oder Bahnabstand ändern. |
 | Riemen springt bei Leerfahrten | `--travel-as-g1` setzen, dann laufen Leerwege mit `travel_feed` statt Eilgang. |
 | Lauf bricht mitten im Bild ab, `error:14` im Log | Zeile länger als 127 Byte — betrifft heute nur Laserprogramme mit langen Warnkommentaren. |
-| Upload endet mit HTTP 404 | Bekannt, siehe [Abschnitt 10](#10-was-heute-noch-nicht-geht). |
-| `wallplotter-doctor` meldet „Board noch nicht da", obwohl es antwortet | Bekannt: Der Selbsttest beginnt mit der Statusabfrage, die über HTTP nie einen Status liefert. |
+| Upload endet mit HTTP 404 | Falsche Firmware-Version oder ein Proxy dazwischen — die SD-Karte hängt an `POST /upload`, nicht an `/sdfiles`. |
+| „Kein TCP-Kanal zu …:23" | Telnet ist aus: `$Telnet/Enable=ON`, dann `$Bye`. Oder ein anderer Port: `$Telnet/Port`. |
+| Statusabfrage läuft in eine Zeitüberschreitung | Der Kanal steht, das Board antwortet nicht — meist ein zweiter Client, der ihn belegt. |
+| Web-UI antwortet mit HTTP 500 | NiceGUI-Hauptversion neuer als getestet. `pip install -e ".[web]"` hält sie unter 4.0. |
 
 ---
 

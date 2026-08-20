@@ -6,7 +6,8 @@ sondern Eigenschaften des jeweiligen Aufbaus. Dieses Modul hält sie
 zusammen mit der zugehörigen Flächenkalibrierung unter einem Namen.
 
 Pro Standort sind genau drei Maße nötig, alle mit dem Zollstock zu nehmen,
-nachdem die Gondel am Referenzpunkt hängt und der Nullpunkt gesetzt ist:
+nachdem die Gondel am Referenzpunkt hängt und **das Board dort neu gestartet
+wurde** — nicht erst nach einem G92 (siehe :class:`Location`):
 
 * Abstand der beiden Umlenkpunkte zueinander
 * Länge des linken Riemens vom Umlenkpunkt bis zur Gondel
@@ -40,8 +41,24 @@ class LocationError(RuntimeError):
 class Location:
     """Ein Aufbau an einer bestimmten Wand.
 
-    Der Maschinennullpunkt liegt dort, wo die Gondel beim Referenzieren stand
-    (``G92``) — alle Koordinaten hier beziehen sich darauf.
+    Alle Koordinaten hier beziehen sich auf den **Maschinennullpunkt**, und
+    der entsteht nicht durch ``G92``, sondern beim Einschalten:
+
+    .. code-block:: cpp
+
+        void WallPlotter::init() {
+            // We assume the machine starts at cartesian (0, 0, 0).
+            xy_to_lengths(0, 0, zero_left, zero_right);
+
+    FluidNC friert die Riemenlängen für kartesisch (0,0) beim Start bzw. beim
+    Neuladen der Konfiguration ein — der Nullpunkt ist damit exakt die
+    Gondelposition in diesem Augenblick. Ein späteres ``G92`` verschiebt nur
+    das *Werkstück*-Koordinatensystem und lässt die Kinematik unberührt.
+
+    Für die drei Maße heißt das: **Gondel an den Referenzpunkt, Board dort neu
+    starten, dann messen.** Wer nach dem Booten erst joggt und dann nullt,
+    bekommt Ankermaße, die um die Jog-Strecke daneben liegen — und eine
+    Zeichnung, die verzerrt ist, ohne dass irgendwo eine Meldung erscheint.
     """
 
     name: str
@@ -82,6 +99,13 @@ class Location:
         wenn sie an einer Deckenkante oder einer Leiste sitzen. Steht einer
         deutlich höher, misst man das an den ungleichen Riemenlängen: die
         Rechnung schiebt den Nullpunkt dann seitlich, nicht in der Höhe.
+
+        Diese Annahme ist keine Bequemlichkeit, sondern deckt sich mit dem,
+        was die Firmware rechnet: ``WallPlotter::lengths_to_xy()`` nimmt als
+        Abstand der Kreismittelpunkte nur die **X-Differenz** der Anker und
+        setzt ``y = left_anchor_y - h``. Bei ungleichen Ankerhöhen wäre die
+        Rückrechnung dort falsch — und damit Positionsanzeige und
+        Soft-Limit-Grenzen. Also: mit der Wasserwaage aufhängen.
         """
         span = self.anchor_span_mm
         # Abstand vom linken Anker zum Fußpunkt der Gondel auf der Ankerlinie

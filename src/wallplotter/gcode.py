@@ -36,6 +36,8 @@ __all__ = [
     "prepare_geometry",
     "PlotStats",
     "stats_for",
+    "comment_lines",
+    "MAX_LINE_BYTES",
 ]
 
 
@@ -88,11 +90,61 @@ _fmt = fmt
 """Koordinaten formatiert jetzt :mod:`wallplotter.toolhead` — beide Seiten
 müssen dieselben Zahlen schreiben, also gibt es nur eine Fassung davon."""
 
+MAX_LINE_BYTES = 127
+"""Was FluidNC je Zeile annimmt — Kommentare eingerechnet.
+
+``gc_execute_line()`` liest in einen ``char line[128]`` und lehnt vorher alles
+Längere mit ``Error::LineLengthExceeded`` ab. Die Prüfung greift **vor** dem
+Entfernen der Kommentare, ein langes ``;``-Kommentar zählt also mit. Und die
+Folge ist kein Alarm, sondern ``Job::abort()``: der Lauf stirbt mitten im Bild
+mit ``error:14`` im Log. Gezählt werden Bytes, nicht Zeichen — ein Umlaut
+kostet zwei.
+"""
+
+
+def comment_lines(text: str, prefix: str = "; ") -> list[str]:
+    """Kommentartext auf mehrere Zeilen umbrechen, keine über 127 Byte.
+
+    Wortweise, damit die Meldung lesbar bleibt; ein einzelnes Wort, das allein
+    schon zu lang ist, wird hart getrennt.
+    """
+    budget = MAX_LINE_BYTES - len(prefix.encode("utf-8"))
+    lines: list[str] = []
+    current = ""
+
+    def flush() -> None:
+        nonlocal current
+        if current:
+            lines.append(prefix + current)
+            current = ""
+
+    for word in text.split():
+        while len(word.encode("utf-8")) > budget:
+            head = word
+            while len(head.encode("utf-8")) > budget:
+                head = head[:-1]
+            flush()
+            lines.append(prefix + head)
+            word = word[len(head) :]
+        candidate = f"{current} {word}" if current else word
+        if len(candidate.encode("utf-8")) > budget:
+            flush()
+            current = word
+        else:
+            current = candidate
+    flush()
+    return lines or [prefix.rstrip()]
+
 
 class PlotStats:
     """Kennzahlen eines Plots, für CLI-Ausgabe und Web-UI."""
 
-    def __init__(self, lines: Sequence[Line], config: PlotConfig) -> None:
+    def __init__(
+        self,
+        lines: Sequence[Line],
+        config: PlotConfig,
+        feeds: Sequence[float] | None = None,
+    ) -> None:
         head = config.toolhead
         self.line_count = len(lines)
         self.point_count = sum(len(line) for line in lines)
@@ -107,9 +159,22 @@ class PlotStats:
         self.pen_s = self.line_count * max(0.0, head.cycle_time_s()) * self.passes
         # Mit Beschleunigungsprofil statt Weg durch Tempo — bei kurzen Strichen
         # ist das der Unterschied zwischen sieben und einundzwanzig Minuten.
+        #
+        # Der Leerweg-Vorschub hängt daran, was tatsächlich ausgegeben wird:
+        # `G0` fährt Eilgang, nicht `travel_feed`. Nur mit `--travel-as-g1`
+        # steht der eingestellte Wert wirklich in der Datei.
+        travel_feed = (
+            config.travel_feed if config.travel_as_g1 else config.limits.max_rate_mm_min
+        )
+        drawable = [line for line in lines if len(line) >= 2]
         self.motion_s = (
             plot_duration_s(
-                lines, head.feed_for(config.draw_feed), config.travel_feed, config.limits
+                drawable,
+                head.feed_for(config.draw_feed),
+                travel_feed,
+                config.limits,
+                start=(config.origin_x_mm, config.origin_y_mm),
+                draw_feeds=list(feeds) if feeds is not None else None,
             )
             * self.passes
         )
@@ -141,8 +206,12 @@ class PlotStats:
         return text
 
 
-def stats_for(lines: Sequence[Line], config: PlotConfig | None = None) -> PlotStats:
-    return PlotStats(lines, config or PlotConfig())
+def stats_for(
+    lines: Sequence[Line],
+    config: PlotConfig | None = None,
+    feeds: Sequence[float] | None = None,
+) -> PlotStats:
+    return PlotStats(lines, config or PlotConfig(), feeds)
 
 
 def lines_to_gcode(
@@ -225,16 +294,17 @@ def _program(
     # sie noch jemand, wenn die Meldung auf der Konsole längst weg ist.
     concerns = head.check(travel_as_g1=cfg.travel_as_g1, draw_feed=cfg.draw_feed)
 
-    stats = PlotStats(geometry, cfg if toolhead is None else replace(cfg, toolhead=head))
+    stats = PlotStats(geometry, cfg if toolhead is None else replace(cfg, toolhead=head), feeds)
     out: list[str] = []
 
     if header:
-        out.append(f"; {header}")
+        out += comment_lines(header)
     out.append("; erzeugt mit wallplotter")
     out.append(f"; Flaeche {_fmt(cfg.width_mm)} x {_fmt(cfg.height_mm)} mm, Rand {_fmt(cfg.margin_mm)} mm")
-    out.append(f"; Werkzeug: {head.describe()}")
-    out += [f"; ACHTUNG: {note}" for note in concerns]
-    out.append(f"; {stats}")
+    out += comment_lines(f"Werkzeug: {head.describe()}")
+    for note in concerns:
+        out += comment_lines(f"ACHTUNG: {note}")
+    out += comment_lines(str(stats))
     if include_setup:
         out.append("G21 ; Millimeter")
         out.append("G90 ; absolute Koordinaten")
@@ -270,7 +340,13 @@ def _program(
 
     out.extend(head.program_end())
     if include_end:
-        out.append(f"{travel_cmd} X0 Y0")
+        # Parken an der unteren linken Ecke der Zeichenfläche, nicht auf
+        # Maschinen-(0,0). Bei kalibrierter Fläche liegt der Maschinennullpunkt
+        # dort, wo die Gondel beim Referenzieren hing — also meist *über* der
+        # Fläche, im Bereich der schlechtesten Riemengeometrie (Winkel nahe
+        # 180°, 11 bis 19 N Zug). Jedes Programm dorthin enden zu lassen, war
+        # die eine Fahrt, die keine Prüfung je angesehen hat.
+        out.append(f"{travel_cmd} X{_fmt(cfg.origin_x_mm)} Y{_fmt(cfg.origin_y_mm)}")
         out.append("M2 ; Programmende")
     return "\n".join(out) + "\n"
 
@@ -298,8 +374,22 @@ def _program_with_pauses(blocks: Sequence[tuple[str, str, Lines, Toolhead]], cfg
         if not last:
             # Den Wechseltext formuliert der nächste Kopf: „Stift wechseln auf"
             # stimmt nicht mehr, sobald einer davon ein Laser ist.
+            #
+            # `(MSG,…)` statt `;`: Ein Semikolon-Kommentar verschwindet beim
+            # Einlesen spurlos, der Mensch vor der Wand sieht nur eine Maschine,
+            # die grundlos steht. Klammerkommentare mit MSG protokolliert
+            # FluidNC dagegen (`gcode_comment_msg` -> `log_info("MSG," …)`),
+            # sie stehen also in der Konsole des WebUI.
             next_label, next_head = blocks[position + 1][1], blocks[position + 1][3]
-            body.append(f"M0 ; anhalten — {next_head.change_prompt(next_label)}")
+            prompt = next_head.change_prompt(next_label)
+            weiter = "weiter mit Cycle Start"
+            line = f"M0 (MSG,{prompt} — {weiter})"
+            if len(line.encode("utf-8")) > MAX_LINE_BYTES:
+                room = MAX_LINE_BYTES - len(f"M0 (MSG,… — {weiter})".encode())
+                while len(prompt.encode("utf-8")) > room:
+                    prompt = prompt[:-1]
+                line = f"M0 (MSG,{prompt}… — {weiter})"
+            body.append(line)
         parts.append("\n".join(body))
     return "\n".join(parts) + "\n"
 
