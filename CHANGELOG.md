@@ -116,6 +116,11 @@ der Stange: `python tools/build_site.py && python -m http.server -d site` zeigt
 lokal genau das, was online steht, und die CI bricht ab, wenn ein interner
 Verweis ins Leere zeigt.
 
+Der Workflow schaltet Pages beim ersten Lauf selbst frei. Ohne das scheiterte
+er an `configure-pages` mit „Get Pages site failed" — und zwar erst *nach* dem
+Bauen, was aussieht, als sei die Website kaputt, obwohl bloß ein Schalter in
+den Repo-Einstellungen fehlte.
+
 ## Unveröffentlicht — Gegenprüfung gegen den FluidNC-Quelltext, Bauanleitung
 
 Bisher war alles Board-nahe „nach Dokumentation gebaut". Diese Runde hat den
