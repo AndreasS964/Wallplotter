@@ -8,6 +8,11 @@ tatsächlich anbietet (geprüft gegen ``FluidNC/src/WebUI/WebUIServer.cpp`` und
   ``GET /upload?path=/`` listet sie, ``GET /sd/<datei>`` liest zurück. (Und
   ``/files`` ist der *Flash*, nicht die Karte — das war hier lange umgekehrt
   eingetragen. Ein ``/sdfiles`` gibt es überhaupt nicht.)
+
+  Die Unterscheidung ist keine Feinheit: Die ``config.yaml`` liegt im Flash,
+  nicht auf der Karte. Wer sie auf die SD-Karte lädt, bekommt eine erfolgreiche
+  Antwort und ein Board, das weiterhin die alte Konfiguration fährt. Dafür gibt
+  es :meth:`FluidNCClient.upload_local`.
 * **Kommandos** gehen über den Telnet-Kanal auf Port 23. Der ist bei FluidNC
   ab Werk an (``DEFAULT_TELNET_STATE = 1``) und ein vollwertiger ``Channel``:
   dort wirken Realtime-Zeichen, ``?`` liefert einen Statusbericht, und GCode
@@ -430,6 +435,81 @@ class FluidNCClient:
             )
         self._text_or_raise(response, f"Upload von {filename!r} fehlgeschlagen")
         return remote_path
+
+    def upload_local(self, data: bytes | str, remote_path: str = "/config.yaml") -> str:
+        """Datei in den **Flash** des Boards schreiben — dorthin, wo die config.yaml liegt.
+
+        Nicht dasselbe wie :meth:`upload`: Die SD-Karte trägt die GCode-Dateien,
+        die Konfiguration liest FluidNC dagegen aus dem lokalen Dateisystem.
+        Belegt ist das an zwei Stellen im Quelltext:
+
+        * ``Machine/MachineConfig.cpp:282`` öffnet sie als
+          ``FileStream file(filename, "rb", LocalFS)`` — der Name kommt aus der
+          Einstellung ``$Config/Filename``, ab Werk ``config.yaml``
+          (``SettingsDefinitions.cpp:98``).
+        * ``WebUI/WebUIServer.cpp:365`` hängt genau dafür einen eigenen
+          Endpunkt ein: ``_webserver->on("/files", HTTP_ANY, handleFileList,
+          LocalFSFileupload)``. Der Endpunkt ``/upload`` daneben (Zeile 373)
+          schreibt auf die SD-Karte.
+
+        Die Form des Multipart ist bei beiden dieselbe (``fileUpload()``,
+        Zeile 1032): Der Dateiname trägt den vollen Zielpfad, und ein
+        Formularfeld ``<pfad>S`` nennt die Größe, über die die Firmware vorab
+        prüft, ob der Platz reicht.
+
+        Wirksam wird die neue Datei erst nach einem Neustart — siehe
+        :meth:`restart`.
+        """
+        payload = data.encode("utf-8") if isinstance(data, str) else data
+        path = remote_path if remote_path.startswith("/") else f"/{remote_path}"
+        directory = path.rsplit("/", 1)[0] + "/"
+
+        with _as_fluidnc_error(f"Schreiben von {path!r} in den Flash fehlgeschlagen"):
+            response = self.session.post(
+                f"{self.config.base_url}/files",
+                params={"path": directory},
+                data={f"{path}S": str(len(payload))},
+                files={"file": (path, payload, "text/plain")},
+                timeout=self.config.timeout_s,
+            )
+        self._text_or_raise(response, f"Schreiben von {path!r} in den Flash fehlgeschlagen")
+        return path
+
+    def download_local(self, remote_path: str = "/config.yaml") -> str:
+        """Datei aus dem Flash zurücklesen — die Gegenprobe zu :meth:`upload_local`.
+
+        Einen eigenen Endpunkt gibt es dafür nicht; der Webserver liefert
+        Dateien aus dem Flash über den Nicht-gefunden-Zweig aus
+        (``WebUI/WebUIServer.cpp:687`` ruft ``myStreamFile(request, path, true)``
+        auf, und das öffnet ``FluidPath { path, LocalFS }``). ``GET /config.yaml``
+        liefert also genau die Datei, die das Board beim Start eingelesen hat.
+
+        Währenddessen darf die Maschine nicht fahren: Ist ``$HTTP/BlockDuringMotion``
+        an — ab Werk ist es das —, weist der Server die Anfrage bei Bewegung ab,
+        damit das Lesen aus dem Flash die Schrittausgabe nicht ins Stocken bringt.
+        """
+        path = remote_path if remote_path.startswith("/") else f"/{remote_path}"
+        with _as_fluidnc_error(f"Lesen von {path!r} aus dem Flash fehlgeschlagen"):
+            response = self.session.get(
+                f"{self.config.base_url}{path}", timeout=self.config.timeout_s
+            )
+        return self._text_or_raise(response, f"Lesen von {path!r} aus dem Flash fehlgeschlagen")
+
+    def restart(self) -> str:
+        """Board neu starten, damit es die Konfiguration neu einliest.
+
+        ``$Bye`` — ``FileCommands.cpp:701`` meldet es als
+        ``new WebCommand("RESTART", WEBCMD, WA, NULL, "Bye", restart)`` an.
+
+        Die Antwort ist unzuverlässig: Das Board fährt herunter, während sie
+        noch unterwegs ist. Ein Abbruch der Verbindung ist hier deshalb kein
+        Fehler, sondern der Normalfall — nur weitergemeldet wird er trotzdem,
+        damit niemand einen ausgebliebenen Neustart für erledigt hält.
+        """
+        try:
+            return self.send_command("$Bye")
+        except FluidNCError as exc:
+            return f"Neustart angestoßen; das Board hat nicht mehr geantwortet ({exc})"
 
     def download(self, remote_path: str) -> str:
         """Datei von der Karte lesen (``GET /sd/<pfad>``, WebDAV-Zweig)."""

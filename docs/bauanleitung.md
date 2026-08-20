@@ -415,13 +415,36 @@ so lange Zeit Erfolg. Belege in der
 
 ### 8.3 Konfiguration hochladen
 
-`config/fluidnc-wallplotter.yaml` über das FluidNC-WebUI auf den Flash laden
-(Dateisymbol → Upload) und das Board neu starten.
+Die Datei wird **erzeugt, nicht getippt**:
 
-**Vorher die Ankerkoordinaten eintragen.** Die vier Zeilen im
-`kinematics`-Block sind Beispielwerte für eine symmetrische Aufhängung; die
-echten fallen in [Abschnitt 9.5](#95-einmessen) an. Ohne sie fährt die Maschine
-zwar, aber in einem falschen Koordinatensystem.
+```bash
+wallplotter-firmware pruefen config/fluidnc-wallplotter.yaml   # ohne Board
+wallplotter-firmware push --host <ip>                          # in den Flash, dann Neustart
+```
+
+`push` schreibt in den Flash und startet das Board neu; die bisherige Fassung
+lädt es vorher herunter und legt sie als `config.yaml.bak` daneben. Von Hand
+geht es auch: über das FluidNC-WebUI (Dateisymbol → Upload) — aber auf den
+**Flash**, nicht auf die SD-Karte. Dort liest FluidNC die Konfiguration nie,
+und der Upload sähe trotzdem erfolgreich aus.
+
+**Die Ankerkoordinaten kommen aus dem Standort, nicht aus dem Editor.** Die vier
+Zeilen im `kinematics`-Block der ausgelieferten Datei sind Beispielwerte für eine
+symmetrische Aufhängung; die echten fallen in [Abschnitt 9.5](#95-einmessen) an
+und wandern über `--location <Name>` hinein. Ohne sie fährt die Maschine zwar,
+aber in einem falschen Koordinatensystem.
+
+Was sonst noch in der Datei steht, ändert man ebenfalls über das Werkzeug und
+nicht im Editor: `wallplotter-firmware config --help` zählt die Stellschrauben
+auf — Mikroschritte, Motorstrom, Höchstgeschwindigkeit, Servofenster, Laser,
+Taster. Der Aufruf, der genau die vorliegende Datei wiederherstellt, steht in
+ihrer eigenen Kopfzeile.
+
+> **Falle, wenn doch von Hand:** Hinter einen Wert gehört **kein** Kommentar.
+> FluidNC schneidet ihn nicht ab — bei einer Zahl scheitert das Einlesen und
+> das Board geht in ConfigAlarm, bei einem `true`/`false` wird stillschweigend
+> `false` daraus. Kommentare immer in die Zeile darüber. Einzelheiten in der
+> [Gegenprüfung](firmware-gegenpruefung.md), Abschnitt 2.6.
 
 Beim Start ins Log sehen. Zwei Zeilen entscheiden:
 
@@ -545,10 +568,12 @@ Drei Maße mit dem Zollstock, Gondel am Referenzpunkt, Board dort gestartet:
 
 ```bash
 wallplotter-location new Keller --span 2300 --left 1450 --right 1470
-wallplotter-location config Keller     # gibt den kinematics-Block aus
+wallplotter-firmware push --host <ip> --location Keller
 ```
 
-Der ausgegebene Block wandert in die `config.yaml`, dann Board neu starten.
+Der zweite Aufruf erzeugt die `config.yaml` mit genau diesen Maßen, schreibt sie
+in den Flash und startet das Board neu. Wer sie erst ansehen will:
+`wallplotter-firmware config --location Keller` gibt sie auf der Konsole aus.
 Aus den drei Maßen fallen die Ankerkoordinaten per Trilateration heraus — unter
 der Annahme gleicher Ankerhöhen, was zu dem passt, was die Firmware rechnet.
 
@@ -631,7 +656,7 @@ gekennzeichnet in [Abschnitt 9.3](#93-servoweg-einstellen) bzw. im
 
 | Symptom | Wahrscheinliche Ursache |
 | --- | --- |
-| Board startet, meldet aber `ConfigAlarm` | Unbekannter Schlüssel in der `config.yaml`. Das Log nennt ihn: `[MSG:ERR: Ignored key …]`. |
+| Board startet, meldet aber `ConfigAlarm` | Unbekannter Schlüssel in der `config.yaml`. Das Log nennt ihn: `[MSG:ERR: Ignored key …]`. Ohne Log: `wallplotter-firmware pruefen --host <ip>` holt die Datei vom Board und sagt, welcher Schlüssel es ist. |
 | `$H` meldet „This kinematic system cannot home" | Richtig so. Die WallPlotter-Kinematik referenziert nicht — siehe [7.3](#73-warum-kein-endschalter-nötig-ist). |
 | Motor brummt, dreht nicht | Ader innerhalb eines Spulenpaares vertauscht. |
 | Motor wird heiß | `run_amps` zu hoch, oder `r_sense_ohms` passt nicht zur Boardrevision. |

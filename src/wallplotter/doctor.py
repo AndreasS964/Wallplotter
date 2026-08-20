@@ -244,57 +244,118 @@ def check_locations(path: Path) -> list[Check]:
     return checks
 
 
-def check_firmware_config(path: Path, locations_path: Path) -> Check:
-    """Steht in der config.yaml dieselbe Geometrie wie im aktiven Standort?
+def check_firmware_config(path: Path, locations_path: Path) -> list[Check]:
+    """Beschreibt die config.yaml dieselbe Maschine wie die Software?
 
-    Das ist die Stelle, an der ein Wandbild unbemerkt schief wird: Die Software
-    rechnet mit den gemessenen Ankermaßen, die Firmware mit denen, die jemand
-    vor drei Wochen eingetragen hat.
+    Drei Fragen, in dieser Reihenfolge — jede kann für sich schiefgehen:
+
+    1. Liest FluidNC die Datei überhaupt so, wie sie gemeint ist? Geprüft wird
+       mit dessen eigenem Blick auf die Zeilen — ein Kommentar hinter einem
+       Zahlenwert etwa reicht für ConfigAlarm, und ein YAML-Parser sieht daran
+       nichts. Und kennt FluidNC jeden Schlüssel? Einer zu viel, und das Board
+       steht ebenfalls, ohne dass eine Achse zuckt.
+    2. Stehen dort die Ankermaße des aktiven Standorts? Das ist die Stelle, an
+       der ein Wandbild unbemerkt schief wird: Die Software rechnet mit dem
+       Gemessenen, die Firmware mit dem, was jemand vor drei Wochen eintrug.
+    3. Ist die Datei noch das, was der Erzeuger schreiben würde — oder hat
+       jemand hineingegriffen?
     """
     if not path.exists():
-        return Check("Firmware-Konfiguration", SKIP, f"{path} nicht gefunden")
+        return [Check("Firmware-Konfiguration", SKIP, f"{path} nicht gefunden")]
     try:
         import yaml  # noqa: PLC0415
     except ImportError:
-        return Check("Firmware-Konfiguration", SKIP, "PyYAML fehlt, nicht gegengeprüft")
+        return [Check("Firmware-Konfiguration", SKIP, "PyYAML fehlt, nicht gegengeprüft")]
 
+    from .firmware import FirmwareConfig
+    from .fluidnc_schema import ERROR as SCHEMA_ERROR
+    from .fluidnc_schema import check_lines, check_mapping
     from .location import LocationBook, LocationError
 
+    text = path.read_text(encoding="utf-8")
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        data = yaml.safe_load(text) or {}
         wall = data["kinematics"]["WallPlotter"]
     except Exception as exc:
-        return Check("Firmware-Konfiguration", FAIL, f"kein WallPlotter-Block: {exc}")
+        return [Check("Firmware-Konfiguration", FAIL, f"kein WallPlotter-Block: {exc}")]
+
+    checks: list[Check] = []
+
+    schlimm = [
+        str(f)
+        for f in list(check_lines(text)) + list(check_mapping(data))
+        if f.level == SCHEMA_ERROR
+    ]
+    if schlimm:
+        checks.append(
+            Check(
+                "config.yaml gegen FluidNC",
+                FAIL,
+                "; ".join(schlimm[:3]) + (f" (+{len(schlimm) - 3} weitere)" if len(schlimm) > 3 else ""),
+                "FluidNC geht damit in ConfigAlarm und fährt nicht — "
+                f"Einzelheiten: wallplotter-firmware pruefen {path}",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                "config.yaml gegen FluidNC",
+                OK,
+                "jeder Schlüssel bekannt, jede Zeile so lesbar wie gemeint",
+            )
+        )
 
     try:
         location = LocationBook.load(locations_path).get()
         anchors = location.anchors()
     except LocationError:
-        return Check(
-            "Firmware-Konfiguration",
-            SKIP,
-            "WallPlotter-Block vorhanden, aber kein Standort zum Gegenprüfen",
+        checks.append(
+            Check(
+                "Firmware-Konfiguration",
+                SKIP,
+                "WallPlotter-Block vorhanden, aber kein Standort zum Gegenprüfen",
+            )
         )
+        erzeugt = FirmwareConfig()
+    else:
+        pairs = [
+            ("left_anchor_x", anchors.left_x),
+            ("right_anchor_x", anchors.right_x),
+            ("left_anchor_y", anchors.y),
+            ("right_anchor_y", anchors.y),
+        ]
+        off = [
+            f"{key}: Firmware {float(wall.get(key, 0)):.0f} ≠ Standort {value:.0f}"
+            for key, value in pairs
+            if abs(float(wall.get(key, 0)) - value) > 1.0
+        ]
+        if off:
+            checks.append(
+                Check(
+                    "Firmware-Konfiguration",
+                    WARN,
+                    "; ".join(off),
+                    f"wallplotter-firmware config --location {location.name} --out {path}",
+                )
+            )
+        else:
+            checks.append(
+                Check("Firmware-Konfiguration", OK, f"Ankermaße passen zu Standort {location.name}")
+            )
+        erzeugt = FirmwareConfig.from_location(location)
 
-    pairs = [
-        ("left_anchor_x", anchors.left_x),
-        ("right_anchor_x", anchors.right_x),
-        ("left_anchor_y", anchors.y),
-        ("right_anchor_y", anchors.y),
-    ]
-    off = [
-        f"{key}: Firmware {float(wall.get(key, 0)):.0f} ≠ Standort {value:.0f}"
-        for key, value in pairs
-        if abs(float(wall.get(key, 0)) - value) > 1.0
-    ]
-    if off:
-        return Check(
-            "Firmware-Konfiguration",
-            WARN,
-            "; ".join(off),
-            f"wallplotter-location config {location.name} --out kinematics.yaml und übertragen",
+    if text == erzeugt.render():
+        checks.append(Check("Erzeugt", OK, "die Datei ist das, was das Werkzeug schreibt"))
+    else:
+        checks.append(
+            Check(
+                "Erzeugt",
+                WARN,
+                "die Datei weicht vom Erzeuger ab",
+                f"Unterschiede zeigen: wallplotter-firmware diff {path}",
+            )
         )
-    return Check("Firmware-Konfiguration", OK, f"Ankermaße passen zu Standort {location.name}")
+    return checks
 
 
 def check_board(host: str, timeout: float = 4.0) -> list[Check]:
@@ -382,7 +443,7 @@ def run_checks(
         ("Installation", [check_python(), *check_extras()]),
         ("Kern", check_core()),
         ("Standort und Fläche", check_locations(locations)),
-        ("Firmware", [check_firmware_config(firmware, locations)]),
+        ("Firmware", check_firmware_config(firmware, locations)),
     ]
     if host:
         sections.append(("Board", check_board(host)))

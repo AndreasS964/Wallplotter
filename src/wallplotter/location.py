@@ -174,7 +174,12 @@ class Location:
         return "\n".join(lines)
 
     def fluidnc_kinematics_yaml(self, segment_length_mm: float = 1.0) -> str:
-        """Der ``kinematics``-Block für die config.yaml dieses Standorts."""
+        """Der ``kinematics``-Block für die config.yaml dieses Standorts.
+
+        Nur dieser Block — zum Einsetzen in eine bestehende Datei. Die
+        vollständige ``config.yaml`` baut :mod:`wallplotter.firmware` aus
+        demselben Standort, und die enthält dann auch Treiber, Servo und Taster.
+        """
         anchors = self.anchors()
         return "\n".join(
             [

@@ -194,8 +194,8 @@ Kinematik-Auswertung, FluidNC-Konfiguration und erreichbare Fläche.
 
 ```bash
 wallplotter-location new Keller --span 2300 --left 1450 --right 1470
-wallplotter-location config Keller     # gibt den kinematics-Block aus
 wallplotter-location show              # Auflösung, Kräfte, Riemenlänge
+wallplotter-firmware config --location Keller --out config.yaml
 ```
 
 ---
@@ -205,6 +205,64 @@ wallplotter-location show              # Auflösung, Kräfte, Riemenlänge
 Konfiguration: [`config/fluidnc-wallplotter.yaml`](../config/fluidnc-wallplotter.yaml).
 Pinbelegung stammt aus [BTTs eigener rodent.yaml](https://github.com/bigtreetech/Rodent/blob/master/rodent.yaml)
 — also echte Werte, keine geratenen.
+
+### Die Datei wird erzeugt
+
+Sie ist ein **Erzeugnis**, kein gepflegtes Dokument. Geschrieben hat sie
+`wallplotter-firmware` aus derselben Beschreibung, mit der auch die Vorschau
+rechnet; der Aufruf, der sie wiederherstellt, steht in ihrer eigenen Kopfzeile.
+
+```bash
+wallplotter-firmware config --location Keller --out config/fluidnc-wallplotter.yaml
+wallplotter-firmware pruefen config/fluidnc-wallplotter.yaml   # ohne Board
+wallplotter-firmware pruefen --host <ip>                       # die vom Board
+wallplotter-firmware diff   config/fluidnc-wallplotter.yaml    # von Hand geändert?
+wallplotter-firmware push   --host <ip> --location Keller
+```
+
+Der Grund ist nicht Bequemlichkeit, sondern dass es vorher **zwei**
+Beschreibungen derselben Maschine gab: die Python-Seite und eine YAML-Datei,
+die jemand von Hand nachzog. Zwei Beschreibungen laufen auseinander, und zwar
+lautlos — die Vorschau rechnet mit den gemessenen Ankermaßen, das Board mit
+denen von vor drei Wochen, und das Bild an der Wand ist verzerrt, ohne dass
+irgendwo eine Meldung erscheint.
+
+Drei Kopplungen hält der Erzeuger fest, die von Hand schon danebengegangen sind:
+
+| Was | Folgt woraus | Was von Hand schiefging |
+| --- | --- | --- |
+| `left_anchor_*` / `right_anchor_*` | den drei Maßen des Standorts | zwei Stellen, die auseinanderliefen |
+| `steps_per_mm` | Pulley × Riementeilung ÷ Mikroschritte | Mikroschritte geändert, Schritte vergessen — Faktor daneben |
+| `speed_map` | Impulsfenster ÷ PWM-Periode | `0=0.000% 100=100.000%` — der ganze Servoweg lag zwischen S5 und S10 |
+
+`pruefen` schaut mit zwei Blickwinkeln auf die Datei.
+
+Erstens mit dem eines YAML-Parsers: jeder Schlüssel gegen eine Liste, die aus
+dem FluidNC-Quelltext gezogen ist (`handler.item()` / `handler.section()`, Stand
+`8a0f8c8`). Der Unterschied, den sie macht, ist scharf: Ein **unbekannter
+Schlüssel** setzt das Board in ConfigAlarm, dann fährt nichts mehr; ein **Wert
+außerhalb des Bereichs** wird von der Firmware geklemmt und nur gemeldet
+(`NutsBolts.h`, `constrain_with_message`). Beides sagt das Werkzeug getrennt.
+
+Zweitens mit dem von FluidNCs **eigenem Tokenizer**, denn der weicht von YAML
+ab. Am folgenreichsten hier:
+
+> Hinter einen Wert gehört kein Kommentar. `parseValue()` nimmt bei einem
+> unquotierten Wert den ganzen Rest der Zeile — `idle_ms: 255 # gehalten
+> lassen` wird also als Zahl `255 # gehalten lassen` gelesen, scheitert, und das
+> Board geht in **ConfigAlarm**. Bei `true`/`false` wird stillschweigend `false`
+> daraus, bei einem Pin gibt es `Setting up pin … failed`.
+
+Ein YAML-Parser sieht davon nichts — deshalb beide Blickwinkel. In BTTs eigener
+`rodent.yaml` trägt aus demselben Grund keine Zeile einen Kommentar hinter dem
+Wert. Ausführlich in der [Gegenprüfung](firmware-gegenpruefung.md),
+Abschnitt 2.6.
+
+`push` schreibt in den **Flash**, nicht auf die SD-Karte. Das ist keine
+Feinheit: FluidNC liest die Konfiguration über `FileStream(filename, "rb",
+LocalFS)`, und ein Upload auf die Karte gälte als geglückt, während das Board
+weiter mit der alten Datei fährt. Die bisherige Fassung wird vorher
+heruntergeladen und gesichert.
 
 ### Die wichtigsten Einstellungen
 
@@ -411,7 +469,8 @@ Selbst nachsehen: `wallplotter-doctor`.
 
 ### Erstinbetriebnahme
 
-1. Board flashen, `config.yaml` hochladen, WLAN einrichten
+1. Board flashen, `config.yaml` erzeugen und in den Flash laden
+   (`wallplotter-firmware push --host <ip>`), WLAN einrichten
 2. `wallplotter-doctor --host <ip>` — sagt, was noch fehlt
 3. Motoren ohne Mechanik auf dem Tisch testen, Treiberstrom prüfen
 4. Servo/Pen-Lift durchtesten, S-Werte für oben/unten ermitteln,
@@ -430,7 +489,7 @@ Selbst nachsehen: `wallplotter-doctor`.
 ```bash
 wallplotter-calibrate --host <ip> zero                        # am Referenzpunkt
 wallplotter-location new Werkstatt --span 1800 --left 1200 --right 1200
-wallplotter-location config Werkstatt                         # in die config.yaml
+wallplotter-firmware push --host <ip> --location Werkstatt    # config.yaml + Neustart
 wallplotter-calibrate --host <ip> jog --dx -100               # in die Ecken fahren
 wallplotter-calibrate --host <ip> record bottom-left          # ... und alle vier aufnehmen
 wallplotter-location show                                     # Urteil zur Geometrie

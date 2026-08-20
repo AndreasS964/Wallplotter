@@ -10,7 +10,8 @@ hätte das Board gar nicht erst starten lassen, und der Not-Halt tat nichts.**
 
 > **Alles davon ist inzwischen behoben** — wie, steht in
 > [Abschnitt 6](#6-wie-es-behoben-wurde), was sich sonst geändert hat im
-> [CHANGELOG](../CHANGELOG.md). Dieses Dokument bleibt trotzdem stehen, und
+> [CHANGELOG](../CHANGELOG.md). Ein sechster Fund kam später dazu, beim Bau des
+> Erzeugers: [Abschnitt 2.6](#26-ein-kommentar-hinter-einem-wert-legt-das-board-still). Dieses Dokument bleibt trotzdem stehen, und
 > zwar vollständig: Die Begründungen sind der Grund, warum die Wege heute so
 > aussehen, wie sie aussehen. Ohne sie sieht `TelnetChannel` neben einem
 > vorhandenen HTTP-Client nach unnötigem Umweg aus — und jemand vereinfacht
@@ -33,6 +34,7 @@ die das Board in Alarm setzt, wäre keine.
 | Servo-Pin `gpio.25` mit „PRÜFEN" | geraten | belegt: `Sp-Enable` (CN51), Schaltplan im Handbuch |
 | kein `control:`-Block | kein wirksamer Halt | `feed_hold_pin`, `cycle_start_pin`, `reset_pin` vorbereitet |
 | Homing-Kommentar | empfahl StallGuard + `$H` | `$H` geht mit dieser Kinematik nicht — steht jetzt da |
+| Kommentar hinter dem Wert | elf Zeilen, vier davon **ConfigAlarm** (siehe 2.6) | jeder Kommentar steht in der Zeile darüber |
 
 Alles Übrige in dieser Datei wurde Schlüssel für Schlüssel gegen den
 FluidNC-Quelltext gehalten und ist gültig: `stepping`, `axes`, `motor0`, alle
@@ -42,7 +44,7 @@ FluidNC-Quelltext gehalten und ist gültig: `stepping`, `axes`, `motor0`, alle
 
 ---
 
-## 2. Die fünf Dinge, die das Board blockiert hätten
+## 2. Die sechs Dinge, die das Board blockiert hätten
 
 ### 2.1 Ein unbekannter Schlüssel ist kein Schönheitsfehler
 
@@ -209,10 +211,94 @@ zurück (`GCode.cpp:1949-1990`) — `gc_state.coord_offset` bleibt stehen.
 
 ---
 
+### 2.6 Ein Kommentar hinter einem Wert legt das Board still
+
+Dieser Fund kam erst dazu, als die `config.yaml` zum Erzeugnis wurde — und er
+ist der unangenehmste der Reihe, weil er nach nichts aussieht. Die
+ausgelieferte Datei hatte elf solche Zeilen, vier davon tödlich:
+
+```yaml
+stepping:
+  idle_ms: 255 # Motoren gehalten lassen — die Gondel hängt am Riemen
+```
+
+Das ist gültiges YAML, jeder Parser liest daraus `255`. **FluidNC nicht.** Es
+bringt einen eigenen Tokenizer mit, und der schneidet Kommentare am Zeilenende
+nicht ab:
+
+```cpp
+// Configuration/Tokenizer.cpp — nextLine()
+if (_line.front() == '#') {          // Comment till end of line
+    _line.remove_prefix(_line.size());
+}
+```
+
+Verworfen wird also nur eine Zeile, die *mit* `#` beginnt. Der Wert dagegen:
+
+```cpp
+// Configuration/Tokenizer.cpp — parseValue()
+auto delimiter = _line.front();
+if (delimiter == '"' || delimiter == '\'') {
+    …                                 // bis zum schließenden Zeichen, Rest fällt weg
+} else {
+    _token._value = _line;            // der GANZE Rest der Zeile
+}
+```
+
+`_token._value` ist damit `255 # Motoren gehalten lassen — die Gondel hängt am
+Riemen`. Was daraus wird, hängt am Typ des Schlüssels:
+
+| Typ | Umwandlung | Folge |
+| --- | --- | --- |
+| Zahl | `intValue()` / `floatValue()` | `parseError()` → **ConfigAlarm** |
+| Wahrheitswert | `boolValue()` | stillschweigend `false` |
+| Pin | `Pin::create()` | ErrorPin, `Setting up pin … failed` |
+| Text | `stringValue()` | Kommentar wird Teil des Werts |
+
+Die Zahlen sind der harte Fall, und zwar ohne Kulanz:
+
+```cpp
+// string_util.cpp
+bool from_decimal(std::string_view sv, int32_t& value) {
+    auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.length(), value);
+    if (ec == … || ptr != sv.data() + sv.length()) { return false; }   // GANZE Zeichenkette
+    return true;
+}
+```
+
+`from_float` prüft genauso auf `floatEnd == str + length`. Schlägt beides fehl,
+ruft `Parser::intValue()` `parseError()` — und das ist
+`set_state(State::ConfigAlarm)` (`Tokenizer.cpp:25`). Betroffen waren
+`idle_ms`, `run_amps`, `hold_amps` und `pwm_hz`; beim ersten davon wäre Schluss
+gewesen.
+
+Der stille Fall ist fast schlimmer: `boolValue()` vergleicht die ganze
+Zeichenkette mit `"true"`. Ein `hard_limits: true # nur zur Sicherheit` ist
+damit **aus**, und gemeldet wird nichts.
+
+Geprüft über alle Freigaben: `parseValue()` ist in v3.8.0, v3.9.8, v4.0.4 und
+`main` Zeile für Zeile dieselbe Funktion. Und das Gegenstück steht in BTTs
+eigener `rodent.yaml`: dort trägt **keine einzige** Zeile einen Kommentar
+hinter dem Wert. Das war kein Zufall.
+
+Behoben ist es zweifach: Der Erzeuger setzt jeden Kommentar in die Zeile
+*darüber*, und `fluidnc_schema.check_lines()` liest eine beliebige `config.yaml`
+mit denselben Regeln wie der Tokenizer und meldet den Fall. Ein YAML-Parser
+kann das nicht finden — deshalb prüft `wallplotter-firmware pruefen` mit beiden
+Blickwinkeln.
+
+Was **erlaubt** bleibt: ein Kommentar hinter einem quotierten Wert. Dort liest
+`parseValue()` bis zum schließenden Anführungszeichen und wirft den Rest der
+Zeile weg — `name: "Wand" # Notiz` geht also. Sauberer ist trotzdem die eigene
+Zeile.
+
+---
+
 ## 3. Vollständige Fundliste
 
-39 Funde haben eine adversarische Gegenprüfung überstanden (von 46 gemeldeten).
-Sortiert nach Schwere; die Zeilennummern sind die zum Zeitpunkt der Prüfung.
+39 Funde haben eine adversarische Gegenprüfung überstanden (von 46 gemeldeten);
+Fund 40 kam später beim Bau des Erzeugers dazu. Sortiert nach Schwere; die
+Zeilennummern sind die zum Zeitpunkt der Prüfung.
 
 ### Kritisch
 
@@ -228,6 +314,7 @@ Sortiert nach Schwere; die Zeilennummern sind die zum Zeitpunkt der Prüfung.
 | 8 | Laser läuft über die Ebenenzuordnung ohne Scharfschaltung los | `webapp.py:374` |
 | 9 | `Laser: laser_mode` setzt das Board in ConfigAlarm | `config.yaml` ✔ behoben |
 | 10 | Handbuch erklärt den wirkungslosen Weg für begründet | `wandplotter-handbuch.md:324` |
+| 40 | Kommentar hinter einem Zahlenwert → ConfigAlarm (elf Zeilen, vier tödlich) | `config.yaml` ✔ behoben |
 
 Zu **4**: `GCode.cpp:246-249` prüft `strlen(input_line) > 127` **vor** dem
 Entfernen der Kommentare, zählt also Bytes inklusive Kommentar. Die Folge ist
@@ -388,8 +475,95 @@ Damit es niemand „repariert":
 | Selbsttest | prüft erst HTTP, dann den Kanal — und meldet, welcher der beiden fehlt. |
 | Testattrappen | kennen nur die Endpunkte, die FluidNC registriert; alles andere ist 404. `/command?plain=` verhält sich wie `settings_execute_line()`. |
 | CI | installiert alle Extras und bricht ab, wenn sich ein Test wegen eines fehlenden Pakets überspringt. |
+| Kommentar hinter dem Wert (Fund 40) | Der Erzeuger setzt jeden Kommentar in die Zeile darüber; `check_lines()` liest eine beliebige Datei mit den Regeln des Tokenizers und meldet den Fall. |
 
 Was **nicht** behoben ist, weil es Hardware braucht: die Servo-Werte im
 Stiftkatalog, die Steckerbelegung am eigenen Board und der komplette
 Laserpfad. Die Reihenfolge zum Prüfen steht in der
 [Bauanleitung](bauanleitung.md), Abschnitt 10.
+
+---
+
+## 7. Damit es nicht wieder passiert: die Datei wird jetzt erzeugt
+
+Die Fundliste oben hat einen gemeinsamen Nenner, der in keiner Zeile steht:
+Fast alle Fehler in der `config.yaml` waren **Abschreibfehler**. Es gab zwei
+Beschreibungen derselben Maschine — die Python-Seite und eine YAML-Datei, die
+jemand von Hand nachzog — und die liefen auseinander, ohne dass irgendetwas
+gemeldet hätte.
+
+`config/fluidnc-wallplotter.yaml` ist deshalb kein gepflegtes Dokument mehr,
+sondern ein **Erzeugnis** von `wallplotter-firmware`. Der Aufruf, der genau
+diese Datei wiederherstellt, steht in ihrer eigenen Kopfzeile, und ein Test
+hält beides zusammen: die ausgelieferte Datei muss byteweise das sein, was der
+Erzeuger schreibt.
+
+Was das an den einzelnen Funden ändert:
+
+| Fund | Vorher | Jetzt |
+| --- | --- | --- |
+| 9 — `laser_mode` setzt das Board in ConfigAlarm | von Hand entfernt | kann nicht wieder hinein: jeder erzeugte Schlüssel wird gegen die Liste aus dem Quelltext gehalten |
+| 20 — `speed_map` fährt den Servo in den Anschlag | von Hand auf `0=5.000% 100=10.000%` gesetzt | aus PWM-Frequenz und Impulsfenster gerechnet; ein Test rechnet zurück auf 1,0 bis 2,0 ms |
+| Anker vs. Standort | in beiden Dateien gepflegt | `--location <Name>` nimmt die Trilateration aus demselben Standort, mit dem auch die Vorschau rechnet |
+| `steps_per_mm` vs. `microsteps` | zwei Zahlen, die zusammenpassen mussten | eine Rechnung: Pulley × Riementeilung ÷ Mikroschritte |
+
+### Die Schlüsselliste
+
+`wallplotter/fluidnc_schema.py` führt, welche Schlüssel FluidNC in welchem
+Abschnitt kennt und auf welchen Bereich es sie klemmt. Sie ist mechanisch aus
+dem Quelltext gezogen — nicht aus dem Wiki abgeschrieben:
+
+```console
+grep -rn 'handler\.item(\|handler\.section(' FluidNC/src --include=*.cpp --include=*.h
+grep -rn 'InstanceBuilder<'                    FluidNC/src --include=*.cpp --include=*.h
+```
+
+Stand: `bdring/FluidNC 8a0f8c8` vom 17.08.2026. Jeder Eintrag trägt seine
+Fundstelle mit.
+
+Zwei Dinge, die die Liste sauber auseinanderhält, weil die Firmware sie
+auseinanderhält:
+
+* **Unbekannter Schlüssel** → `log_config_error("Ignored key …")` →
+  `ConfigAlarm`. Das Board fährt nicht. *(Fehler.)*
+* **Wert außerhalb des Bereichs** → `constrain_with_message()` in
+  `NutsBolts.h:109` klemmt ihn und schreibt eine Warnung. Das Board fährt.
+  *(Warnung.)*
+
+Abschnitte, die die Liste nicht führt — Netzwerkmodule, Pin-Extender, UARTs —
+meldet sie als **ungeprüft** und nicht als falsch. Eine Tabelle, die
+Vollständigkeit behauptet, die sie nicht hat, wäre genau die Sorte Beleg, gegen
+die dieses Dokument geschrieben ist.
+
+### Zwei Blickwinkel, weil einer nicht reicht
+
+`check_mapping()` sieht die Datei so, wie ein YAML-Parser sie sieht: als Baum
+aus Abschnitten und Schlüsseln. Das findet erfundene Schlüssel.
+
+`check_lines()` sieht sie so, wie **FluidNCs eigener Tokenizer** sie sieht:
+Zeile für Zeile, mit dessen Abweichungen von YAML. Das findet Fund 40 — den
+Kommentar hinter dem Wert, an dem ein YAML-Parser nichts Auffälliges bemerkt
+und das Board trotzdem in ConfigAlarm geht. Nachgebaut sind `nextLine()`,
+`parseKey()` und `parseValue()` aus `Configuration/Tokenizer.cpp` samt der
+Wertumwandlung aus `Configuration/Parser.cpp`.
+
+Die zweite Prüfung braucht keinen YAML-Parser und läuft deshalb auch dort, wo
+PyYAML nicht installiert ist.
+
+`wallplotter-firmware pruefen --host <ip>` holt die Datei vom Board und hält sie
+gegen beide. Damit ist die häufigste Frage aus Abschnitt 2.1 — *welcher
+Schlüssel war es?* — ohne serielle Konsole zu beantworten.
+
+### Was der Erzeuger zusätzlich prüft
+
+Nicht jeder Fehler ist ein unbekannter Schlüssel. `check()` sagt vor dem
+Schreiben auch:
+
+* zwei Verbraucher auf demselben GPIO — FluidNC belegt einen Pin exklusiv, die
+  Datei ließe sich nicht einmal parsen;
+* ein Ausgang auf `gpio.34` bis `gpio.39` — die können am ESP32 nur lesen;
+* eine Laserspindel mit Servotakt oder mit derselben `tool_num` wie der Stift;
+* `run_amps` über dem Nennstrom des Motors;
+* `idle_ms` unter 255 — die Gondel hängt am Riemen und sackt sonst irgendwann ab;
+* ein Impulsfenster, das nicht in die PWM-Periode passt.
+

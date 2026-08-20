@@ -85,13 +85,16 @@ jobs:
           wallplotter-calibrate --help > /dev/null
           wallplotter-correct --help > /dev/null
           wallplotter-doctor --help > /dev/null
+          wallplotter-firmware --help > /dev/null
           wallplotter-kinematics --help > /dev/null
           wallplotter-location --help > /dev/null
           wallplotter-resume --help > /dev/null
 
-  # Die ausgelieferte config.yaml gegen das prüfen, was FluidNC wirklich kennt.
-  # Ein unbekannter Schlüssel setzt das Board in ConfigAlarm — das gehört hier
-  # gemerkt und nicht an der Wand.
+  # Die ausgelieferte config.yaml gegen zwei Dinge halten: gegen das, was FluidNC
+  # wirklich kennt (ein unbekannter Schlüssel setzt das Board in ConfigAlarm), und
+  # gegen das, was `wallplotter-firmware` schreiben würde. Läuft das auseinander,
+  # beschreiben Software und Board zwei verschiedene Maschinen — und niemand merkt
+  # es, bis das Bild an der Wand schief ist.
   firmware-konfiguration:
     runs-on: ubuntu-latest
     steps:
@@ -108,4 +111,11 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Konfiguration prüfen
-        run: pytest -q tests/test_firmware_config.py
+        run: pytest -q tests/test_firmware_config.py tests/test_firmware.py
+
+      - name: Erzeugnis auf dem Stand?
+        # Dasselbe noch einmal über die CLI, weil genau dieser Aufruf in der
+        # Kopfzeile der Datei steht — er soll auch wirklich funktionieren.
+        run: |
+          wallplotter-firmware pruefen config/fluidnc-wallplotter.yaml
+          wallplotter-firmware diff config/fluidnc-wallplotter.yaml --kein-standort

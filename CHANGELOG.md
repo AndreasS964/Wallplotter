@@ -1,5 +1,130 @@
 # Änderungen
 
+## Unveröffentlicht — die `config.yaml` wird erzeugt, nicht getippt
+
+Bis hierher gab es **zwei** Beschreibungen derselben Maschine: die Python-Seite
+(Anker aus `location.py`, Motor aus `kinematics.py`, Grenzen aus `timing.py`,
+Servowerte aus `toolhead.py`) und eine 300 Zeilen lange YAML-Datei, die jemand
+von Hand nachzog. Zwei Beschreibungen laufen auseinander, und zwar lautlos: Die
+Vorschau rechnet mit den gemessenen Ankermaßen, das Board mit denen von vor drei
+Wochen, und das Bild an der Wand ist verzerrt, ohne dass irgendwo eine Meldung
+erscheint. Fast alle Funde der Gegenprüfung an dieser Datei waren im Kern
+Abschreibfehler.
+
+### Neu: `wallplotter-firmware`
+
+```bash
+wallplotter-firmware config --location Keller --out config/fluidnc-wallplotter.yaml
+wallplotter-firmware pruefen config/fluidnc-wallplotter.yaml   # ohne Board
+wallplotter-firmware pruefen --host <ip>                       # die vom Board
+wallplotter-firmware diff   config/fluidnc-wallplotter.yaml    # von Hand geändert?
+wallplotter-firmware push   --host <ip> --location Keller
+```
+
+`config/fluidnc-wallplotter.yaml` ist damit ein **Erzeugnis**. Der Aufruf, der
+genau diese Datei wiederherstellt, steht in ihrer Kopfzeile — und ein Test hält
+beides zusammen: Die ausgelieferte Datei muss byteweise das sein, was der
+Erzeuger schreibt, und der genannte Aufruf muss sie wirklich hervorbringen.
+Die Kommentare gehen dabei nicht verloren; sie sind die halbe Substanz der
+Datei und werden mitgeschrieben.
+
+Drei Kopplungen, die von Hand schon danebengegangen sind, hält jetzt der
+Erzeuger:
+
+| Was | Folgt woraus |
+| --- | --- |
+| `left_anchor_*` / `right_anchor_*` | den drei Maßen des Standorts, per Trilateration — dieselbe Rechnung wie in der Vorschau |
+| `steps_per_mm` | Pulley × Riementeilung ÷ Mikroschritte; wer die Mikroschritte änderte und die Schritte vergaß, fuhr um denselben Faktor daneben |
+| `speed_map` | Impulsfenster ÷ PWM-Periode; hier stand einmal `0=0.000% 100=100.000%`, womit der ganze Servoweg zwischen S5 und S10 lag |
+
+### Fund 40, gefunden beim Bauen: der Kommentar hinter dem Wert
+
+Beim Nachbauen von FluidNCs Tokenizer fiel etwas auf, das die Gegenprüfung
+übersehen hatte — und das die ausgelieferte `config.yaml` unfahrbar machte.
+FluidNC schneidet Kommentare am Zeilenende **nicht** ab. `parseValue()` nimmt
+bei einem unquotierten Wert den ganzen Rest der Zeile; verworfen wird nur eine
+Zeile, die *mit* `#` beginnt.
+
+```yaml
+stepping:
+  idle_ms: 255 # Motoren gehalten lassen — die Gondel hängt am Riemen
+```
+
+Jeder YAML-Parser liest daraus `255`. FluidNC liest die ganze Zeile, gibt sie an
+`intValue()`, und `from_decimal` verlangt, dass die *gesamte* Zeichenkette die
+Zahl ist. Es folgt `parseError()` — also `set_state(State::ConfigAlarm)`. **Das
+Board fährt nicht.**
+
+Die Datei hatte elf solche Zeilen. Vier davon tödlich (`idle_ms`, `run_amps`,
+`hold_amps`, `pwm_hz`), eine still gefährlich (`boolValue()` vergleicht die
+ganze Zeile mit `"true"` — mit einem Kommentar dahinter kommt nie `true`
+heraus), sechs an Pins und Texten, die den Kommentar in den Wert übernommen
+hätten. Geprüft über v3.8.0, v3.9.8, v4.0.4 und `main`: dieselbe Funktion. Und
+in BTTs eigener `rodent.yaml` trägt keine einzige Zeile einen Kommentar hinter
+dem Wert — das war kein Zufall.
+
+Behoben doppelt: Der Erzeuger setzt jeden Kommentar in die Zeile darüber
+(auch im auskommentierten Laserblock, damit das Entkommentieren keine Falle
+ist), und `check_lines()` liest eine beliebige `config.yaml` mit den Regeln des
+Tokenizers und meldet den Fall. Einzelheiten in der
+[Gegenprüfung](docs/firmware-gegenpruefung.md), Abschnitt 2.6.
+
+### Die Schlüsselliste aus dem Firmware-Quelltext
+
+Neu ist `wallplotter.fluidnc_schema`: welche Schlüssel FluidNC in welchem
+Abschnitt kennt und auf welchen Bereich es sie klemmt. Mechanisch aus
+`bdring/FluidNC 8a0f8c8` gezogen (`handler.item()`, `handler.section()`,
+`InstanceBuilder<>`), nicht aus dem Wiki abgeschrieben. Jeder Eintrag trägt
+seine Fundstelle.
+
+Dazu kommt `check_lines()` — dieselbe Datei, aber mit dem Blick von FluidNCs
+eigenem Tokenizer statt dem eines YAML-Parsers. Nur so ist Fund 40 zu sehen.
+Diese Prüfung braucht kein PyYAML und läuft deshalb auch im nackten Kern.
+
+Die Schlüsselliste unterscheidet, was auch die Firmware unterscheidet:
+
+* **Unbekannter Schlüssel** → `ConfigAlarm`, das Board fährt nicht. Genau so
+  hätte ein `laser_mode` die Maschine stillgelegt.
+* **Wert außerhalb des Bereichs** → `constrain_with_message()` klemmt ihn und
+  warnt. Das Board fährt.
+
+Abschnitte, die die Liste nicht führt, meldet sie als **ungeprüft** statt als
+falsch.
+
+### Was `check()` zusätzlich meldet
+
+Zwei Verbraucher auf einem GPIO (FluidNC belegt Pins exklusiv — die Datei ließe
+sich nicht einmal parsen), ein Ausgang auf `gpio.34` bis `gpio.39` (am ESP32
+reine Eingänge), eine Laserspindel mit Servotakt oder mit der `tool_num` des
+Stifts, `run_amps` über dem Motornennstrom, `idle_ms` unter 255 (die Gondel
+hängt am Riemen), ein Impuls, der nicht in die PWM-Periode passt.
+
+### Flash statt SD-Karte
+
+`FluidNCClient` kann jetzt beides auseinanderhalten, weil FluidNC es
+auseinanderhält: `upload_local()` schreibt über `POST /files` in den **Flash**,
+wo die Firmware ihre Konfiguration liest (`FileStream(filename, "rb",
+LocalFS)`); `download_local()` liest sie über den Nicht-gefunden-Zweig des
+Webservers zurück; `restart()` schickt `$Bye`. Ein Upload der `config.yaml` auf
+die SD-Karte hätte erfolgreich ausgesehen und nichts bewirkt.
+
+`push` sichert die bisherige Fassung, bevor es überschreibt, und weigert sich,
+eine Datei zu übertragen, die das Board in ConfigAlarm setzen würde — von dort
+holt es nur die serielle Schnittstelle zurück.
+
+### Nebenher
+
+* `wallplotter-doctor` prüft die `config.yaml` jetzt dreifach: kennt FluidNC
+  jeden Schlüssel, passen die Ankermaße zum aktiven Standort, ist die Datei noch
+  das Erzeugnis.
+* `wallplotter-location config` gibt weiterhin nur den Kinematikblock aus und
+  sagt jetzt dazu, womit man die ganze Datei bekommt.
+* Die Testattrappe hat ein zweites Dateisystem: Karte und Flash sind getrennt,
+  und während einer Fahrt liefert der Flash-Zweig **503** statt der Datei —
+  genau wie das Board.
+* CI hält die ausgelieferte Datei gegen den Erzeuger und gegen die
+  Schlüsselliste.
+
 ## Unveröffentlicht — die Funde behoben, Projektseite
 
 Zweiter Teil derselben Runde: Was die Gegenprüfung gefunden hat, ist jetzt

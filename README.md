@@ -33,8 +33,8 @@ Zollstock**, den Rest rechnet die Software.
 
 ```bash
 wallplotter-location new Keller --span 2300 --left 1450 --right 1470
-wallplotter-location config Keller     # fertiger kinematics-Block für FluidNC
 wallplotter-location show              # Auflösung, Riemenkräfte, Riemenlänge
+wallplotter-firmware config --location Keller --out config.yaml
 ```
 
 ## Dokumentation
@@ -50,7 +50,7 @@ Alles auch gesetzt und verlinkt unter
 | [Projektidee](docs/projektidee.md) | Hardware, Mechanik, Entscheidungen |
 | [Software-Roadmap](docs/software-roadmap.md) | Stufenplan und UI-Architektur |
 | [Kinematik-Auswertung](docs/kinematik.md) | gerechnete Zahlen für eine Beispielaufhängung |
-| [FluidNC-Konfiguration](config/fluidnc-wallplotter.yaml) | kommentierte `config.yaml` fürs Rodent-Board |
+| [FluidNC-Konfiguration](config/fluidnc-wallplotter.yaml) | kommentierte `config.yaml` fürs Rodent-Board — **erzeugt**, siehe unten |
 
 ## Warum eigener GCode-Export?
 
@@ -85,7 +85,7 @@ drei Maße mit dem Zollstock, alles Weitere folgt daraus:
 ```bash
 wallplotter-calibrate --host 192.168.1.42 zero      # Gondel am Referenzpunkt
 wallplotter-location new Keller --span 2300 --left 1450 --right 1470
-wallplotter-location config Keller                  # Kinematikblock für die config.yaml
+wallplotter-firmware config --location Keller --out config.yaml
 ```
 
 `--span` ist der Abstand der beiden Umlenkpunkte, `--left`/`--right` die
@@ -95,6 +95,52 @@ die Ankerkoordinaten per Trilateration heraus — die kommen in die
 
 `wallplotter-location list` zeigt alle Aufhängungen, `use <Name>` wechselt.
 In der Web-UI steht die Auswahl oben in der Kopfzeile.
+
+### Die `config.yaml` wird erzeugt, nicht getippt
+
+Die Firmware-Konfiguration ist kein Dokument, das man pflegt, sondern ein
+Erzeugnis derselben Beschreibung, mit der auch die Vorschau rechnet:
+
+```bash
+wallplotter-firmware config --location Keller --out config/fluidnc-wallplotter.yaml
+wallplotter-firmware pruefen config/fluidnc-wallplotter.yaml   # ohne Board
+wallplotter-firmware diff   config/fluidnc-wallplotter.yaml    # was hat sich geändert?
+wallplotter-firmware push   --host 192.168.1.42 --location Keller
+```
+
+Damit hängen drei Dinge nicht mehr davon ab, dass jemand daran denkt:
+
+* **Ankermaße.** Sie kommen aus dem eingemessenen Standort — derselben Rechnung,
+  die die Vorschau benutzt. Vorher standen sie an zwei Stellen und liefen
+  auseinander, ohne dass eine Meldung erschien; schief wurde nur das Bild.
+* **Schritte pro Millimeter.** Sie folgen aus Pulley, Riementeilung und
+  Mikroschritten. Wer im Treiberblock die Mikroschritte änderte und oben
+  `steps_per_mm` vergaß, fuhr um denselben Faktor daneben.
+* **Der Servoweg.** `speed_map` bildet auf das *Tastverhältnis* ab, nicht auf
+  einen Winkel. Bei 50 Hz will ein RC-Servo 1,0 bis 2,0 ms Impuls, also 5 bis
+  10 % — der Erzeuger rechnet das aus, statt es zu raten.
+
+`pruefen` schaut zweimal hin. Einmal wie ein YAML-Parser: jeder Schlüssel gegen
+eine Liste, die aus dem FluidNC-Quelltext gezogen ist — **ein einziger
+unbekannter Schlüssel setzt das Board in ConfigAlarm**, und dann fährt gar
+nichts. Und einmal wie FluidNCs eigener Tokenizer, der von YAML abweicht:
+
+```yaml
+idle_ms: 255 # Motoren gehalten lassen
+```
+
+Jeder YAML-Parser liest daraus `255`. FluidNC nimmt den ganzen Rest der Zeile
+als Wert, scheitert beim Umwandeln — und geht in ConfigAlarm. Die ausgelieferte
+Datei hatte elf solche Zeilen, vier davon tödlich; gefunden hat sie erst dieser
+zweite Blickwinkel. Ausführlich in der
+[Gegenprüfung](docs/firmware-gegenpruefung.md), Abschnitt 2.6.
+
+Mit `--host` holt `pruefen` die Datei vorher vom Board — der schnellste Weg zur
+Ursache, wenn ein Board nicht anläuft.
+
+`push` schreibt in den **Flash**, nicht auf die SD-Karte: dort liest FluidNC die
+Konfiguration nie. Die bisherige Fassung wird vorher heruntergeladen und
+gesichert.
 
 ### Fläche einmessen
 
@@ -204,9 +250,11 @@ wallplotter-doctor --host 192.168.1.42
 ```
 
 Geht die Kette einmal von vorn nach hinten durch: Installation, Kern,
-Standort, Firmware-Konfiguration, Board. Prüft dabei auch, ob die Ankermaße
-in der `config.yaml` noch zu denen des aktiven Standorts passen — genau da
-wird ein Wandbild unbemerkt schief.
+Standort, Firmware-Konfiguration, Board. Prüft dabei drei Dinge an der
+`config.yaml`: ob FluidNC jeden Schlüssel darin kennt, ob die Ankermaße noch zu
+denen des aktiven Standorts passen — genau da wird ein Wandbild unbemerkt
+schief — und ob die Datei noch das ist, was `wallplotter-firmware` schreiben
+würde.
 
 Wenn das Board zwischen zwei Farben aus war, ist der Nullpunkt weg — `G92`
 ist flüchtig. Zwei Wege zurück:
