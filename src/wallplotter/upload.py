@@ -49,6 +49,7 @@ __all__ = [
     "JOG_CANCEL",
     "SOFT_RESET",
     "FluidNCError",
+    "FluidNCRejected",
     "FluidNCClient",
     "MachineStatus",
     "TelnetChannel",
@@ -74,6 +75,18 @@ _ERROR_RE = re.compile(r"^(error:.*|ALARM:.*)$", re.IGNORECASE)
 
 class FluidNCError(RuntimeError):
     """Kommunikation mit dem Board fehlgeschlagen."""
+
+
+class FluidNCRejected(FluidNCError):
+    """Das Board hat geantwortet — mit ``error:`` oder ``ALARM:``.
+
+    Eigene Klasse, weil der Unterschied folgenreich ist: Ein Kanal, der nicht
+    aufgeht, darf über HTTP nachgereicht werden. Eine **Ablehnung** darf das
+    nicht — dann hat das Board die Frage schon beantwortet, und die Antwort war
+    nein. Sie über den zweiten Weg noch einmal zu stellen und den Erfolg zu
+    melden, wäre genau die Sorte stiller Fehlschlag, gegen die dieses Modul
+    geschrieben ist.
+    """
 
 
 @contextmanager
@@ -300,7 +313,7 @@ class TelnetChannel:
             if _OK_RE.match(answer):
                 return "\n".join(collected)
             if _ERROR_RE.match(answer):
-                raise FluidNCError(f"{line!r} abgelehnt: {answer}")
+                raise FluidNCRejected(f"{line!r} abgelehnt: {answer}")
             collected.append(answer)
 
     def send_realtime(self, byte: int) -> None:
@@ -388,6 +401,11 @@ class FluidNCClient:
         is_setting = stripped.startswith(("$", "[ESP"))
         try:
             return self.channel.send_line(stripped)
+        except FluidNCRejected:
+            # Das Board hat geantwortet, und zwar mit nein. Dieselbe Frage über
+            # den zweiten Weg noch einmal zu stellen, änderte an der Antwort
+            # nichts — es verstecke sie nur.
+            raise
         except FluidNCError:
             if not is_setting:
                 raise
@@ -433,7 +451,10 @@ class FluidNCClient:
                 files={"file": (remote_path, payload, "text/plain")},
                 timeout=self.config.timeout_s,
             )
-        self._text_or_raise(response, f"Upload von {filename!r} fehlgeschlagen")
+        self._upload_geglueckt(
+            self._text_or_raise(response, f"Upload von {filename!r} fehlgeschlagen"),
+            f"Upload von {filename!r} fehlgeschlagen",
+        )
         return remote_path
 
     def upload_local(self, data: bytes | str, remote_path: str = "/config.yaml") -> str:
@@ -472,7 +493,10 @@ class FluidNCClient:
                 files={"file": (path, payload, "text/plain")},
                 timeout=self.config.timeout_s,
             )
-        self._text_or_raise(response, f"Schreiben von {path!r} in den Flash fehlgeschlagen")
+        self._upload_geglueckt(
+            self._text_or_raise(response, f"Schreiben von {path!r} in den Flash fehlgeschlagen"),
+            f"Schreiben von {path!r} in den Flash fehlgeschlagen",
+        )
         return path
 
     def download_local(self, remote_path: str = "/config.yaml") -> str:
@@ -508,7 +532,12 @@ class FluidNCClient:
         """
         try:
             return self.send_command("$Bye")
+        except FluidNCRejected:
+            # Das Board läuft weiter und liest die neue Datei nicht ein. Das
+            # als „Neustart angestoßen" zu melden, wäre schlicht falsch.
+            raise
         except FluidNCError as exc:
+            # Die Verbindung bricht ab, WEIL das Board neu startet — Normalfall.
             return f"Neustart angestoßen; das Board hat nicht mehr geantwortet ({exc})"
 
     def download(self, remote_path: str) -> str:
@@ -666,6 +695,31 @@ class FluidNCClient:
         if status_code >= 400:
             raise FluidNCError(f"{message} (HTTP {status_code})")
         return getattr(response, "text", "")
+
+    @staticmethod
+    def _upload_geglueckt(antwort: str, message: str) -> str:
+        """Den Rumpf einer Upload-Antwort ansehen — HTTP 200 heißt hier nichts.
+
+        ``handleFileOps()`` antwortet auch im Fehlerfall mit **HTTP 200** und
+        trägt das Ergebnis nur in den JSON-Rumpf ein::
+
+            std::string sstatus("Ok");
+            if (_upload_status == UploadStatus::FAILED) {
+                sstatus = "Upload failed";
+            }
+
+        (``WebUI/WebUIServer.cpp:1220-1224``, ausgeliefert über
+        ``create_file_list_response``). Wer nur den Statuscode ansieht, meldet
+        „geschrieben" und startet ein Board neu, in dessen Flash unverändert
+        die alte Datei liegt — derselbe Fehlertyp, den dieses Modul an anderer
+        Stelle anprangert.
+        """
+        if "upload failed" in antwort.lower():
+            raise FluidNCError(
+                f"{message}: Das Board meldet »Upload failed« (mit HTTP 200). "
+                "Häufigste Gründe: kein Platz oder die Datei ließ sich nicht anlegen."
+            )
+        return antwort
 
 
 def upload_and_run(

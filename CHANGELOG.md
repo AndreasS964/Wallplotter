@@ -1,5 +1,100 @@
 # Änderungen
 
+## Unveröffentlicht — die Gegenlesung und was sie fand
+
+Der Erzeuger ist von 54 Agenten gegengelesen worden, in sechs Sichten und mit
+adversarischer Nachprüfung jedes einzelnen Fundes: 48 gemeldet, **31 bestätigt,
+17 widerlegt**. Die bestätigten sind behoben, jeder mit einem Test, der ohne die
+Behebung rot wird.
+
+### Der Prüfer meldete gültige Dateien als kaputt
+
+Der schwerste Fund war eine Falschmeldung — die unangenehmere Richtung: In YAML
+ist ein Abschnitt ohne Unterschlüssel `None` und sah damit aus wie ein Schlüssel.
+
+```yaml
+kinematics:
+  Cartesian:        # die Standardkinematik jeder kartesischen FluidNC-Maschine
+probe:              # Abschnitt ohne Inhalt
+```
+
+Beides meldete `pruefen` als »unbekannter Schlüssel → ConfigAlarm«, Rückgabecode
+1. FluidNC kennt den Fall ausdrücklich (`ParserHandler.h:35`: *„If thisIndent <=
+entryIndent, the section is empty"*), und `Parser::is()` setzt den Token schon
+beim Namen auf Matched — »Ignored key« wird dort nie protokolliert. Leere
+Abschnitte sind die übliche Schreibweise für alles, dessen `group()` leer ist:
+`Cartesian:`, `null_motor:`, `probe:`.
+
+Dazu fehlten der Tabelle zwanzig echte Schlüssel (die sieben Rohregister des
+`tmc_5160Pro`, die zehn Registerbefehle der VFD-Spindeln, drei von Dynamixel2),
+`tool_num` klemmte bei 100 statt bei `MaxToolNumber` = 99999999, `stallguard`
+kannte nur den SPI-Bereich −64…63 und nicht die 0…255 des TMC2209, und
+`homing.cycle` verbot die −1 (`set_mpos_only`).
+
+### Die Tabelle prüfte sich selbst nicht
+
+Bisher hielten die Tests nur *eine* Richtung fest: Schreibt der Erzeuger nur
+Bekanntes? Die gefährlichere Richtung — **steht in der Tabelle nur, was FluidNC
+wirklich kennt?** — prüfte nichts. Ein erfundener Eintrag wäre durch jede
+Prüfung gegangen und hätte das Board in ConfigAlarm gesetzt.
+
+`tools/fluidnc_keys.py` zieht die Namen jetzt mechanisch aus dem Quelltext —
+`handler.item()`, `handler.section()`, die Fabriken, dazu die Control-Pins und
+Makros, die über Schleifen registriert werden und in keinem `item("…")` stehen.
+Das Ergebnis liegt als `tests/fluidnc-schluessel.txt` daneben: ein Abzug mit
+Datum, kein Orakel. Zwei Tests halten die Tabelle dagegen; die Mutationsprobe
+(zwei erfundene Einträge) macht beide rot.
+
+### Stille Fehlschläge auf dem Weg zum Board
+
+* **`upload_local` hielt HTTP 200 für Erfolg.** `handleFileOps()` antwortet auch
+  im Fehlerfall mit 200 und trägt das Ergebnis nur in den JSON-Rumpf ein
+  (`"status":"Upload failed"`, `WebUIServer.cpp:1220`). `push` meldete
+  »Geschrieben«, startete neu und gab 0 zurück, während im Flash die alte Datei
+  lag — derselbe Fehlertyp, den dieses Projekt am HTTP-Weg aufgedeckt hat.
+  Jetzt wird der Rumpf gelesen **und** nach dem Schreiben zurückgelesen, vor
+  dem Neustart.
+* **`pruefen` sprach ohne PyYAML einen Freispruch aus**, den es nicht decken
+  konnte: »FluidNC kennt jeden Schlüssel«, Rückgabecode 0 — obwohl genau diese
+  Prüfung ausgefallen war. Jetzt sagt es »unvollständig geprüft« und gibt 4
+  zurück.
+* **Eine Ablehnung des Boards wurde als Erfolg gemeldet.** `send_command` fiel
+  bei jedem Fehler auf HTTP zurück, auch bei einem `error:` — dieselbe Frage
+  über den zweiten Weg zu stellen, ändert an der Antwort nichts. Neu ist
+  `FluidNCRejected`: Ein Kanal, der nicht aufgeht, darf nachgereicht werden,
+  eine Ablehnung nicht.
+* **Der zweite `push` überschrieb die einzige echte Sicherung.** Sie ging immer
+  auf denselben Namen; der zweite Lauf sicherte damit die Datei, die der erste
+  gerade geschrieben hatte. Jetzt wird nie überschrieben (`config.yaml.bak.1`,
+  `.2`, …), und wenn auf dem Board bereits genau diese Datei liegt, entsteht gar
+  keine Sicherung.
+
+### Kleinere Schärfen
+
+Der Aufruf in der Kopfzeile erzeugte eine **andere Datei**, sobald
+`--microsteps` den Wert des Standorts überschrieb — Faktor zwei auf beiden
+Achsen. Eine `0` auf der Kommandozeile fiel bei fünf Optionen still auf die
+Vorgabe zurück (`or` statt `is not None`). `--acceleration 0` und ein negativer
+Vorschub endeten im Stapelabzug statt in einer Meldung. `--location` zusammen
+mit `--kein-standort` wurde kommentarlos verworfen. `--out -` legte eine Datei
+namens `-` an. `segment_length` wurde gar nicht geprüft, `hold_amps` hatte keine
+Obergrenze, und ein Zeilenumbruch im Standortnamen brach die erzeugte Datei auf.
+
+### Zwei Stellen, an denen die Doku übertrieb
+
+Die Formel für `steps_per_mm` stand in drei Dokumenten **invertiert**: »Pulley ×
+Riementeilung ÷ Mikroschritte« — richtig ist Vollschritte × Mikroschritte ÷
+(Zähne × Riementeilung), also 200 × 16 ÷ 40 = 80. Nach der falschen Fassung
+hätten mehr Mikroschritte *weniger* Schritte/mm bedeutet; wer damit nachrechnete,
+korrigierte in die falsche Richtung — ausgerechnet in der Zeile, die diesen
+Fehler erklären sollte.
+
+Und viermal stand, das Auseinanderlaufen von `config.yaml` und Standort sei
+früher »ohne jede Meldung« geblieben. Das stimmte nicht: `wallplotter-doctor`
+prüfte die Ankerwerte schon vorher und warnte. Die echte Verbesserung ist eine
+andere — die Meldung kam nur, wenn jemand den Selbsttest aufrief, und ihr Rat
+verwies auf einen Befehl, der nur den Kinematikblock liefert.
+
 ## Unveröffentlicht — ein Aussehen statt drei
 
 Die Web-UI sah nach Standard-Quasar aus: blauer Riegel oben, graue Fläche
@@ -126,11 +221,12 @@ Karte**, zwei GCode-Dateien hochgeladen und gestartet, `$Bye` geschickt.
 Bis hierher gab es **zwei** Beschreibungen derselben Maschine: die Python-Seite
 (Anker aus `location.py`, Motor aus `kinematics.py`, Grenzen aus `timing.py`,
 Servowerte aus `toolhead.py`) und eine 300 Zeilen lange YAML-Datei, die jemand
-von Hand nachzog. Zwei Beschreibungen laufen auseinander, und zwar lautlos: Die
-Vorschau rechnet mit den gemessenen Ankermaßen, das Board mit denen von vor drei
-Wochen, und das Bild an der Wand ist verzerrt, ohne dass irgendwo eine Meldung
-erscheint. Fast alle Funde der Gegenprüfung an dieser Datei waren im Kern
-Abschreibfehler.
+von Hand nachzog. Zwei Beschreibungen laufen auseinander: Die Vorschau rechnet
+mit den gemessenen Ankermaßen, das Board mit denen von vor drei Wochen, und das
+Bild an der Wand ist verzerrt. `wallplotter-doctor` hat das schon vorher
+angemerkt — aber eben nur, wenn man ihn aufrief, und sein Rat verwies auf
+`wallplotter-location config`, das nur den Kinematikblock liefert. Fast alle
+Funde der Gegenprüfung an dieser Datei waren im Kern Abschreibfehler.
 
 ### Neu: `wallplotter-firmware`
 
@@ -155,7 +251,7 @@ Erzeuger:
 | Was | Folgt woraus |
 | --- | --- |
 | `left_anchor_*` / `right_anchor_*` | den drei Maßen des Standorts, per Trilateration — dieselbe Rechnung wie in der Vorschau |
-| `steps_per_mm` | Pulley × Riementeilung ÷ Mikroschritte; wer die Mikroschritte änderte und die Schritte vergaß, fuhr um denselben Faktor daneben |
+| `steps_per_mm` | Vollschritte × Mikroschritte ÷ (Zähne × Riementeilung), also 200 × 16 ÷ 40 = 80; wer die Mikroschritte änderte und die Schritte vergaß, fuhr um denselben Faktor daneben |
 | `speed_map` | Impulsfenster ÷ PWM-Periode; hier stand einmal `0=0.000% 100=100.000%`, womit der ganze Servoweg zwischen S5 und S10 lag |
 
 ### Fund 40, gefunden beim Bauen: der Kommentar hinter dem Wert

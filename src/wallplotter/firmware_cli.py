@@ -169,12 +169,35 @@ def build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
+def _gebaut(bau, was: str):
+    """Etwas bauen, das sich selbst prüft — und im Fehlerfall eine Meldung geben.
+
+    ``MotionLimits`` und ``ServoSpindle`` weisen unsinnige Werte mit einer
+    Ausnahme zurück. Auf der Kommandozeile ist das ein Tippfehler und kein
+    Programmfehler; ein Stapelabzug wäre die falsche Antwort darauf.
+    """
+    try:
+        return bau()
+    except (ValueError, FirmwareError) as exc:
+        raise FirmwareError(f"{was}: {exc}") from exc
+
+
 def config_from_args(args: argparse.Namespace) -> tuple[FirmwareConfig, list[str]]:
     """Die Konfiguration aus den Argumenten — samt Hinweisen für die Ausgabe."""
     from .location import LocationBook, LocationError  # noqa: PLC0415
 
     notes: list[str] = []
     config = FirmwareConfig(board=board_by_name(args.board))
+
+    if args.kein_standort and args.location:
+        # Beides zusammen ist keine Feinheit, sondern ein Widerspruch: Der eine
+        # Schalter verlangt genau diese Ankermaße, der andere ausdrücklich die
+        # Beispielwerte. Stillschweigend einen zu gewinnen, hieße: Die Datei
+        # trägt andere Maße als der Aufruf verlangt hat.
+        raise FirmwareError(
+            f"--location {args.location} und --kein-standort widersprechen sich. "
+            "Eines von beidem."
+        )
 
     if not args.kein_standort:
         try:
@@ -192,32 +215,47 @@ def config_from_args(args: argparse.Namespace) -> tuple[FirmwareConfig, list[str
     if args.microsteps is not None:
         motor = dataclasses.replace(motor, microsteps=args.microsteps)
 
+    # Überall `is not None` statt `or`: Eine 0 auf der Kommandozeile ist eine
+    # Angabe, kein fehlender Wert. Mit `or` fiele sie still auf die Vorgabe
+    # zurück — und `--acceleration 0` bekäme klaglos 200 statt einer Meldung.
     limits = config.limits
     if args.max_rate is not None or args.acceleration is not None:
-        limits = MotionLimits(
-            acceleration_mm_s2=args.acceleration or limits.acceleration_mm_s2,
-            max_rate_mm_min=args.max_rate or limits.max_rate_mm_min,
-            junction_deviation_mm=limits.junction_deviation_mm,
+        limits = _gebaut(
+            lambda: MotionLimits(
+                acceleration_mm_s2=(
+                    args.acceleration
+                    if args.acceleration is not None
+                    else limits.acceleration_mm_s2
+                ),
+                max_rate_mm_min=(
+                    args.max_rate if args.max_rate is not None else limits.max_rate_mm_min
+                ),
+                junction_deviation_mm=limits.junction_deviation_mm,
+            ),
+            "Bewegungsgrenzen",
         )
 
     servo = config.servo
     if args.servo_hz is not None or args.servo_impuls is not None:
         low, high = args.servo_impuls or (servo.min_pulse_ms, servo.max_pulse_ms)
-        servo = ServoSpindle(
-            pwm_hz=args.servo_hz or servo.pwm_hz,
-            min_pulse_ms=low,
-            max_pulse_ms=high,
-            s_min=servo.s_min,
-            s_max=servo.s_max,
-            tool_num=servo.tool_num,
+        servo = _gebaut(
+            lambda: ServoSpindle(
+                pwm_hz=args.servo_hz if args.servo_hz is not None else servo.pwm_hz,
+                min_pulse_ms=low,
+                max_pulse_ms=high,
+                s_min=servo.s_min,
+                s_max=servo.s_max,
+                tool_num=servo.tool_num,
+            ),
+            "Stiftservo",
         )
 
     laser = config.laser
-    if args.laser or args.laser_pin or args.laser_hz or args.laser_smax:
+    if args.laser or args.laser_pin or args.laser_hz is not None or args.laser_smax is not None:
         laser = LaserSpindle(
             enabled=args.laser or laser.enabled,
-            pwm_hz=args.laser_hz or laser.pwm_hz,
-            s_max=args.laser_smax or laser.s_max,
+            pwm_hz=args.laser_hz if args.laser_hz is not None else laser.pwm_hz,
+            s_max=args.laser_smax if args.laser_smax is not None else laser.s_max,
             tool_num=laser.tool_num,
             output_pin=args.laser_pin or laser.output_pin,
             air_assist=laser.air_assist,
@@ -245,7 +283,12 @@ def config_from_args(args: argparse.Namespace) -> tuple[FirmwareConfig, list[str
     if args.taster_aktiv_high:
         changes["control_active_low"] = False
 
-    return dataclasses.replace(config, **changes), notes
+    try:
+        return dataclasses.replace(config, **changes), notes
+    except (ValueError, FirmwareError) as exc:
+        # MotionLimits und ServoSpindle prüfen sich selbst. Ein negativer
+        # Vorschub soll deshalb eine Meldung geben und keinen Stapelabzug.
+        raise FirmwareError(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +328,15 @@ def report(config: FirmwareConfig, text: str) -> tuple[int, list[str]]:
         )
         return errors, lines
 
-    for finding in check_mapping(yaml.safe_load(text)):
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        # Kann der Erzeuger eigentlich nicht bauen — aber „eigentlich nicht"
+        # ist kein Grund für einen Stapelabzug mitten im Schreiben.
+        lines.append(f"{_MARK[ERROR]} Erzeugte Datei ist kein gültiges YAML: {exc}")
+        return errors + 1, lines
+
+    for finding in check_mapping(data):
         lines.append(f"{_MARK[finding.level]} {finding}")
         errors += finding.level == ERROR
 
@@ -321,11 +372,17 @@ def cmd_config(args: argparse.Namespace) -> int:
         )
         return 2
 
-    if args.out:
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(text, encoding="utf-8")
+    if args.out and str(args.out) != "-":
+        try:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(text, encoding="utf-8")
+        except OSError as exc:
+            print(f"Schreiben nach {args.out} fehlgeschlagen: {exc}", file=sys.stderr)
+            return 4
         print(f"Geschrieben: {args.out} ({len(text.splitlines())} Zeilen)", file=sys.stderr)
     else:
+        # `-` ist die übliche Schreibweise für die Standardausgabe; ohne diesen
+        # Zweig entstünde eine Datei mit dem Namen „-".
         sys.stdout.write(text)
     return 0
 
@@ -352,10 +409,15 @@ def cmd_pruefen(args: argparse.Namespace) -> int:
     # genau das, was ein YAML-Parser übersieht — etwa den Kommentar hinter einem
     # Wert, den FluidNC nicht abschneidet.
     findings = list(check_lines(text))
+    vollstaendig = True
 
     try:
         import yaml  # noqa: PLC0415
     except ImportError:
+        # Kein Freispruch für etwas, das gar nicht geprüft wurde. Die
+        # Zeilenprüfung findet FluidNCs Tokenizer-Eigenheiten — unbekannte
+        # Schlüssel und kaputtes YAML findet sie ausdrücklich nicht.
+        vollstaendig = False
         print(
             "PyYAML fehlt — geprüft wurde nur, wie FluidNCs Tokenizer die Zeilen liest, "
             "nicht ob es die Schlüssel kennt (pip install pyyaml).",
@@ -378,10 +440,20 @@ def cmd_pruefen(args: argparse.Namespace) -> int:
     if errors:
         print(f"{quelle}: {errors} Fehler — mit dieser Datei fährt das Board nicht.")
         return 1
+    if not vollstaendig:
+        print(
+            f"{quelle}: unvollständig geprüft. Jede Zeile ist so lesbar, wie sie gemeint "
+            "ist — ob FluidNC aber jeden Schlüssel darin kennt, konnte ohne PyYAML "
+            "niemand feststellen."
+        )
+        return 4
     if findings:
         print(f"{quelle}: nichts Tödliches; die Hinweise oben ansehen.")
     else:
-        print(f"{quelle}: FluidNC kennt jeden Schlüssel und liest jede Zeile so, wie sie gemeint ist.")
+        print(
+            f"{quelle}: FluidNC kennt jeden Schlüssel und liest jede Zeile so, "
+            "wie sie gemeint ist."
+        )
     return 0
 
 
@@ -411,6 +483,28 @@ def cmd_diff(args: argparse.Namespace) -> int:
     return 1
 
 
+def _freier_name(ziel: Path) -> Path:
+    """Einen Pfad finden, der noch nichts überschreibt.
+
+    ``push`` ruft man beim Einrichten mehrmals auf. Ginge die Sicherung immer
+    auf denselben Namen, sicherte der zweite Lauf die Datei, die der erste
+    gerade geschrieben hat — und die von Hand gepflegte Originalfassung wäre
+    weder auf dem Board noch auf der Platte. Deshalb wird nie überschrieben.
+    """
+    if not ziel.exists():
+        return ziel
+    for nummer in range(1, 1000):
+        kandidat = ziel.with_name(f"{ziel.name}.{nummer}")
+        if not kandidat.exists():
+            return kandidat
+    raise FirmwareError(f"Zu viele Sicherungen neben {ziel} — bitte aufräumen.")
+
+
+def dialog_ja_ohne_sicherung(args: argparse.Namespace) -> bool:
+    """Ohne Sicherung weitermachen? Nur, wenn das ausdrücklich verlangt war."""
+    return bool(getattr(args, "trotzdem", False))
+
+
 def cmd_push(args: argparse.Namespace) -> int:
     from .config import FluidNCConfig  # noqa: PLC0415
     from .upload import FluidNCClient, FluidNCError  # noqa: PLC0415
@@ -431,17 +525,42 @@ def cmd_push(args: argparse.Namespace) -> int:
     client = FluidNCClient(FluidNCConfig(host=args.host))
 
     if not args.ohne_sicherung:
-        ziel = args.sicherung or Path("config.yaml.bak")
         try:
-            ziel.write_text(client.download_local(REMOTE_PATH), encoding="utf-8")
-            print(f"Bisherige Fassung gesichert: {ziel}")
+            vorher = client.download_local(REMOTE_PATH)
         except FluidNCError as exc:
             # Kein Abbruch: Auf einem frisch geflashten Board gibt es noch keine.
             print(f"Keine Sicherung möglich ({exc}) — weiter.", file=sys.stderr)
+        else:
+            if vorher == text:
+                print("Auf dem Board steht bereits genau diese Datei — keine Sicherung nötig.")
+            else:
+                try:
+                    ziel = _freier_name(args.sicherung or Path("config.yaml.bak"))
+                    ziel.parent.mkdir(parents=True, exist_ok=True)
+                    ziel.write_text(vorher, encoding="utf-8")
+                except OSError as exc:
+                    print(f"Sicherung nach {args.sicherung} fehlgeschlagen: {exc}", file=sys.stderr)
+                    if not dialog_ja_ohne_sicherung(args):
+                        return 4
+                else:
+                    print(f"Bisherige Fassung gesichert: {ziel}")
 
     try:
         pfad = client.upload_local(text, REMOTE_PATH)
-        print(f"Geschrieben: {args.host}{pfad} ({len(text.encode('utf-8'))} Bytes)")
+        # Gegenprobe, bevor irgendetwas neu startet: Der Endpunkt quittiert
+        # auch im Fehlerfall mit HTTP 200, und die Antwort zu glauben, ohne
+        # nachzusehen, ist genau das, was dieses Projekt anderswo anprangert.
+        zurueck = client.download_local(REMOTE_PATH)
+        if zurueck != text:
+            print(
+                f"Das Board hat den Upload angenommen, liefert aber etwas anderes zurück "
+                f"({len(zurueck.encode('utf-8'))} statt {len(text.encode('utf-8'))} Bytes). "
+                "Nicht neu gestartet — im Flash steht nicht, was hier steht.",
+                file=sys.stderr,
+            )
+            return 5
+        print(f"Geschrieben und zurückgelesen: {args.host}{pfad} "
+              f"({len(text.encode('utf-8'))} Bytes)")
         if args.kein_neustart:
             print("Kein Neustart — die Datei wird erst beim nächsten Einschalten gelesen.")
         else:

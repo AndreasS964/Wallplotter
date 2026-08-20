@@ -15,6 +15,7 @@ gebaut aus der Python-Konfiguration.
 from __future__ import annotations
 
 import dataclasses
+import re
 import shlex
 import sys
 from pathlib import Path
@@ -560,13 +561,16 @@ def test_push_sichert_erst_und_schreibt_dann(tmp_path, monkeypatch, capsys):
     assert "$Bye" in sock.lines
 
 
-def test_push_uebertraegt_nichts_wenn_die_pruefung_fehler_findet(monkeypatch):
+def test_push_uebertraegt_nichts_wenn_die_pruefung_fehler_findet(tmp_path, monkeypatch):
     sitzung = FakeSession(flash={"/config.yaml": "board: alt\n"})
 
     monkeypatch.setattr(
         "wallplotter.upload.FluidNCClient",
         lambda config: FluidNCClient(config, sitzung, None),
     )
+    # In tmp_path: Schlägt die Prüfung wider Erwarten nicht an, landet die
+    # Sicherung sonst im Arbeitsverzeichnis des Repos.
+    monkeypatch.chdir(tmp_path)
     code = firmware_cli.main(
         [
             "push",
@@ -580,6 +584,7 @@ def test_push_uebertraegt_nichts_wenn_die_pruefung_fehler_findet(monkeypatch):
     )
     assert code == 2
     assert sitzung.flash["/config.yaml"] == "board: alt\n"
+    assert list(tmp_path.iterdir()) == []
 
 
 # ---------------------------------------------------------------------------
@@ -610,11 +615,14 @@ def test_erzeugen_geht_auch_ohne_pyyaml(tmp_path, monkeypatch, capsys):
     assert "PyYAML fehlt" in capsys.readouterr().err
 
 
-def test_pruefen_kommt_ohne_pyyaml_bis_zur_zeilenpruefung(monkeypatch, capsys):
+def test_pruefen_spricht_ohne_pyyaml_keinen_freispruch_aus(monkeypatch, capsys):
     """Die Sicht des Tokenizers braucht keinen YAML-Parser — die geht immer.
 
-    Was ohne PyYAML wegfällt, ist der Abgleich der Schlüssel. Und genau das
-    muss dastehen.
+    Was ohne PyYAML wegfällt, ist der Abgleich der Schlüssel. Und dann darf das
+    Urteil nicht »FluidNC kennt jeden Schlüssel« lauten und schon gar nicht 0
+    zurückgeben: Ein Skript, das darauf baut, hielte eine ungeprüfte Datei für
+    geprüft. Rückgabe 4 heißt hier »konnte nicht abschließend beurteilt
+    werden«, nicht »kaputt«.
     """
     import builtins
 
@@ -626,10 +634,12 @@ def test_pruefen_kommt_ohne_pyyaml_bis_zur_zeilenpruefung(monkeypatch, capsys):
         return echt(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", ohne_yaml)
-    assert firmware_cli.main(["pruefen", str(CONFIG_PATH)]) == 0
+    assert firmware_cli.main(["pruefen", str(CONFIG_PATH)]) == 4
     ausgabe = capsys.readouterr()
     assert "PyYAML fehlt" in ausgabe.err
     assert "nicht ob es die Schlüssel kennt" in ausgabe.err
+    assert "unvollständig geprüft" in ausgabe.out
+    assert "kennt jeden Schlüssel und liest jede Zeile" not in ausgabe.out
 
 
 def test_pruefen_findet_den_kommentar_hinter_dem_wert_auch_ohne_pyyaml(
@@ -769,3 +779,374 @@ def test_ein_zeilenumbruch_im_namen_wird_abgelehnt():
     config = dataclasses.replace(FirmwareConfig(), name="zwei\nZeilen")
     with pytest.raises(FirmwareError):
         config.render()
+
+
+# ---------------------------------------------------------------------------
+# Die Tabelle selbst gegen den Firmware-Quelltext
+# ---------------------------------------------------------------------------
+
+SCHLUESSEL_ABZUG = Path(__file__).resolve().parent / "fluidnc-schluessel.txt"
+
+
+def _abzug() -> dict[str, set[str]]:
+    """Der Abzug aus dem FluidNC-Quelltext, nach Registrierungsart sortiert.
+
+    Erzeugt von ``tools/fluidnc_keys.py``; die Kopfzeile der Datei nennt den
+    Stand. Ohne diesen Abzug prüfen die Tests die Tabelle nur in eine Richtung
+    — »schreibt der Erzeuger nur Bekanntes?« —, und die gefährlichere Richtung
+    bliebe offen: **Steht in der Tabelle nur, was FluidNC wirklich kennt?**
+    Ein erfundener Eintrag dort ginge sonst durch jede Prüfung und setzte das
+    Board in ConfigAlarm, aus dem es nur die serielle Schnittstelle zurückholt.
+    """
+    gefunden: dict[str, set[str]] = {}
+    for zeile in SCHLUESSEL_ABZUG.read_text(encoding="utf-8").splitlines():
+        if not zeile.strip() or zeile.startswith("#"):
+            continue
+        art, _, name = zeile.partition("\t")
+        gefunden.setdefault(art, set()).add(name)
+    return gefunden
+
+
+def test_der_abzug_ist_da_und_plausibel():
+    abzug = _abzug()
+    assert len(abzug["item"]) > 150, "der Abzug wirkt unvollständig"
+    assert "steps_per_mm" in abzug["item"]
+    assert "reset_pin" in abzug["controlpin"]
+    assert "WallPlotter" in abzug["factory"]
+
+
+def test_kein_schluessel_der_tabelle_ist_erfunden():
+    """Die Gegenrichtung — und die eigentlich gefährliche.
+
+    Mutationsprobe: Trägt man hier einen Fantasienamen in NODES ein, wird
+    dieser Test rot. Ohne ihn überlebte jeder erfundene Eintrag außer dem
+    einen, der namentlich in einem anderen Test steht.
+    """
+    from wallplotter.fluidnc_schema import NODES
+
+    bekannt = _abzug()
+    # Kleingeschrieben verglichen, weil FluidNC es genauso tut: `Parser::is()`
+    # vergleicht mit `strncasecmp` (Configuration/Parser.cpp:27). Die Makros
+    # heißen im Quelltext »Macro0«, in jeder Beispieldatei »macro0«.
+    echte = {
+        name.lower()
+        for art in ("item", "controlpin", "macro")
+        for name in bekannt.get(art, set())
+    }
+    erfunden = sorted(
+        {
+            name
+            for knoten in NODES.values()
+            for name in knoten.items
+            if name.lower() not in echte
+        }
+    )
+    assert erfunden == [], f"in der Tabelle, aber nicht im Quelltext: {erfunden}"
+
+
+def test_kein_abschnittsname_der_tabelle_ist_erfunden():
+    from wallplotter.fluidnc_schema import NODES
+
+    bekannt = _abzug()
+    # Achsnamen und motorN entstehen in Schleifen (Axes.cpp:196, Axis.cpp:64)
+    # und stehen deshalb in keinem section("…")-Aufruf.
+    erzeugt = {"x", "y", "z", "a", "b", "c", "u", "v", "w", "motor0", "motor1"}
+    echte = {n.lower() for n in bekannt["section"] | bekannt["factory"] | erzeugt}
+    erfunden = sorted(
+        {
+            name
+            for knoten in NODES.values()
+            for name in list(knoten.children) + [n for n, _ in knoten.pattern_children]
+            if name.lower() not in echte
+        }
+    )
+    assert erfunden == [], f"als Abschnitt geführt, aber nicht im Quelltext: {erfunden}"
+
+
+def test_jede_fundstelle_zeigt_auf_eine_datei_mit_zeilennummer():
+    """Eine Fundstelle ohne Zeile ist eine Behauptung ohne Beleg."""
+    from wallplotter.fluidnc_schema import NODES
+
+    schlecht = [
+        f"{name}: {item.source!r}"
+        for knoten in NODES.values()
+        for name, item in knoten.items.items()
+        if not re.fullmatch(r"[\w/.]+\.(cpp|h):\d+", item.source)
+    ]
+    assert schlecht == [], schlecht
+
+
+# ---------------------------------------------------------------------------
+# Was die Gegenlesung gefunden hat
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text, was",
+    [
+        ("kinematics:\n  Cartesian:\n", "Standardkinematik jeder kartesischen Maschine"),
+        ("probe:\n", "Abschnitt ohne Inhalt"),
+        ("axes:\n  x:\n    motor0:\n      null_motor:\n", "unbenutzter Treiberplatz"),
+    ],
+)
+def test_ein_leerer_abschnitt_ist_kein_configalarm(text, was):
+    """FluidNC kennt den Fall ausdrücklich (ParserHandler.h:35).
+
+    In YAML ist ein Abschnitt ohne Unterschlüssel `None` und sähe damit aus wie
+    ein Schlüssel. Wer das nicht unterscheidet, meldet eine völlig gültige,
+    vom Board geholte Datei als eine, die das Board stilllegt.
+    """
+    assert [str(f) for f in check_mapping(yaml.safe_load(text))] == [], was
+
+
+def test_die_rohregister_des_tmc5160pro_sind_bekannt():
+    """Sie sind der ganze Sinn des Abschnitts `tmc_5160Pro:`."""
+    data = yaml.safe_load(
+        "axes:\n  x:\n    motor0:\n      tmc_5160Pro:\n"
+        "        CHOPCONF: 322994520\n        GCONF: 4\n        IHOLD_IRUN: 61441\n"
+    )
+    assert [str(f) for f in check_mapping(data)] == []
+
+
+def test_die_registerbefehle_der_vfd_spindeln_sind_bekannt():
+    data = yaml.safe_load("Huanyang:\n  model: H100\n  min_RPM: 6000\n  set_rpm_cmd: 0x05\n")
+    assert [str(f) for f in check_mapping(data)] == []
+
+
+def test_tool_num_darf_bis_zu_maxtoolnumber_gehen():
+    """GCode.h:189 — MaxToolNumber ist 99999999, nicht 100."""
+    assert [str(f) for f in check_mapping(yaml.safe_load("pwm:\n  tool_num: 12345\n"))] == []
+
+
+def test_stallguard_deckt_beide_treiberfamilien_ab():
+    """SPI-Trinamics nehmen -64..63, der TMC2209 dagegen 0..255."""
+    for wert in (-64, 0, 63, 255):
+        data = yaml.safe_load(
+            f"axes:\n  x:\n    motor0:\n      tmc_2209:\n        stallguard: {wert}\n"
+        )
+        assert [str(f) for f in check_mapping(data)] == [], wert
+
+
+def test_homing_cycle_minus_eins_ist_erlaubt():
+    """-1 ist `set_mpos_only` (Homing.h:40): nicht fahren, nur mpos setzen."""
+    data = yaml.safe_load("axes:\n  x:\n    homing:\n      cycle: -1\n")
+    assert [str(f) for f in check_mapping(data)] == []
+
+
+def test_die_drei_stufen_bleiben_unterscheidbar():
+    """Fielen ERROR, WARN und INFO zusammen, wäre die ganze Unterscheidung
+    zwischen »Board steht« und »Board warnt« still verschwunden."""
+    assert len({ERROR, WARN, INFO}) == 3
+
+
+def test_der_befehl_stimmt_auch_wenn_er_den_standort_ueberschreibt(tmp_path):
+    """Der Fall, der Faktor zwei auf beide Achsen gebracht hätte.
+
+    Steht im Standort 32 und jemand gibt zusätzlich `--microsteps 16` an, wäre
+    der Wert gleich der Klassenvorgabe — die Option fiele aus der Kopfzeile,
+    und der genannte Aufruf zöge die 32 aus dem Standort zurück.
+    """
+    buch = tmp_path / "standorte.json"
+    LocationBook(
+        locations={
+            "Keller": Location(
+                name="Keller",
+                anchor_span_mm=2300.0,
+                left_belt_zero_mm=1450.0,
+                right_belt_zero_mm=1470.0,
+                microsteps=32,
+            )
+        },
+        active="Keller",
+    ).save(buch)
+
+    args = firmware_cli.build_parser().parse_args(
+        ["config", "--standorte", str(buch), "--location", "Keller", "--microsteps", "16"]
+    )
+    config, _notizen = firmware_cli.config_from_args(args)
+    assert config.motor.microsteps == 16
+
+    befehl = shlex.split(config.command_line())
+    ziel = tmp_path / "wieder.yaml"
+    assert firmware_cli.main(befehl[1:] + ["--standorte", str(buch), "--out", str(ziel)]) == 0
+    assert ziel.read_text(encoding="utf-8") == config.render()
+    assert yaml.safe_load(ziel.read_text(encoding="utf-8"))["axes"]["x"]["steps_per_mm"] == 80.0
+
+
+def test_ein_zeilenumbruch_im_standortnamen_bricht_die_datei_nicht_auf(tmp_path):
+    """Die zweite Zeile stünde ohne `#` da — und wäre für FluidNC ein Schlüssel."""
+    standort = Location(
+        name="Keller\nzweite Zeile",
+        anchor_span_mm=2300.0,
+        left_belt_zero_mm=1450.0,
+        right_belt_zero_mm=1470.0,
+    )
+    text = FirmwareConfig.from_location(standort).render()
+    assert [str(f) for f in check_lines(text)] == []
+    assert yaml.safe_load(text)["kinematics"]["WallPlotter"]
+
+
+@pytest.mark.parametrize(
+    "option, wert, feld",
+    [
+        ("--segment-length", "0", None),
+        ("--idle-ms", "0", None),
+    ],
+)
+def test_die_null_auf_der_kommandozeile_ist_eine_angabe(option, wert, feld, tmp_path):
+    """Mit `or` statt `is not None` fiele sie still auf die Vorgabe zurück."""
+    args = firmware_cli.build_parser().parse_args(
+        ["config", "--kein-standort", option, wert]
+    )
+    config, _ = firmware_cli.config_from_args(args)
+    if option == "--segment-length":
+        assert config.segment_length_mm == 0
+        assert any("segment_length" in p.text for p in config.check())
+    else:
+        assert config.idle_ms == 0
+
+
+def test_ein_grober_segmentwert_wird_gemeldet():
+    config = dataclasses.replace(FirmwareConfig(), segment_length_mm=25.0)
+    assert any("grob" in p.text for p in config.check())
+
+
+def test_haltestrom_ueber_dem_nennwert_wird_gemeldet():
+    """Im Stillstand steht der Strom dauerhaft an — der Fall, in dem ein Motor
+    wirklich heiß wird."""
+    config = dataclasses.replace(FirmwareConfig(), hold_amps=2.0)
+    assert any("hold_amps" in p.text and "Nennstrom" in p.text for p in config.check())
+
+
+def test_widerspruechliche_standortangaben_werden_abgelehnt(capsys):
+    """`--location X --kein-standort`: Der eine Schalter verlangt genau diese
+    Ankermaße, der andere ausdrücklich die Beispielwerte."""
+    assert firmware_cli.main(["config", "--location", "X", "--kein-standort"]) == 3
+    assert "widersprechen sich" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "argumente, erwartet",
+    [
+        (["--acceleration", "0"], "Beschleunigung"),
+        (["--max-rate", "-5"], "Höchstgeschwindigkeit"),
+        (["--servo-impuls", "2", "1"], "Impulsfenster"),
+    ],
+)
+def test_unsinnige_werte_geben_eine_meldung_und_keinen_stapelabzug(argumente, erwartet, capsys):
+    assert firmware_cli.main(["config", "--kein-standort", *argumente]) == 3
+    assert erwartet in capsys.readouterr().err
+
+
+def test_out_strich_geht_auf_die_standardausgabe(tmp_path, capsys, monkeypatch):
+    """Sonst entsteht eine Datei mit dem Namen »-«."""
+    monkeypatch.chdir(tmp_path)
+    assert firmware_cli.main(["config", "--kein-standort", "--out", "-"]) == 0
+    assert capsys.readouterr().out.startswith("# FluidNC-Konfiguration")
+    assert not (tmp_path / "-").exists()
+
+
+def test_ein_gescheiterter_upload_wird_nicht_als_erfolg_gemeldet():
+    """FluidNC quittiert auch den Fehlerfall mit HTTP 200.
+
+    ``handleFileOps()`` trägt das Ergebnis nur in den JSON-Rumpf ein
+    (``WebUIServer.cpp:1220``). Wer nur den Statuscode ansieht, meldet
+    »geschrieben« und startet ein Board neu, in dessen Flash unverändert die
+    alte Datei liegt — derselbe Fehlertyp, den dieses Projekt am HTTP-Weg
+    aufgedeckt hat.
+    """
+    from wallplotter.upload import FluidNCError
+
+    client, session, _sock = _client(upload_scheitert=True)
+    with pytest.raises(FluidNCError, match="Upload failed"):
+        client.upload_local("board: neu\n", "/config.yaml")
+    assert session.flash == {}
+
+
+def test_ein_gescheiterter_sd_upload_ebenso():
+    from wallplotter.upload import FluidNCError
+
+    client, _session, _sock = _client(upload_scheitert=True)
+    with pytest.raises(FluidNCError, match="Upload failed"):
+        client.upload("G0 X0\n", "plot.gcode")
+
+
+def test_eine_abgelehnte_neustartanweisung_wird_weitergereicht():
+    """Verbindungsabbruch heißt »startet neu«, `error:` heißt »tut es nicht«."""
+    from wallplotter.upload import FluidNCError
+
+    session = FakeSession()
+    sock = FakeFluidNCSocket(errors={"$Bye": "error:9"})
+    config = FluidNCConfig(host="wandplotter.local")
+    channel = TelnetChannel(config.hostname, config.telnet_port, 5.0, opener_for(sock))
+    client = FluidNCClient(config, session, channel)
+    with pytest.raises(FluidNCError):
+        client.restart()
+
+
+def test_push_liest_zurueck_und_startet_nicht_neu_wenn_es_abweicht(tmp_path, monkeypatch):
+    """Die Gegenprobe gehört vor den Neustart, nicht in die Schlussausgabe."""
+    sitzung = FakeSession(flash={"/config.yaml": "board: alt\n"}, upload_scheitert=True)
+    sock = FakeFluidNCSocket()
+
+    def fabrik(config):
+        channel = TelnetChannel(config.hostname, config.telnet_port, 5.0, opener_for(sock))
+        return FluidNCClient(config, sitzung, channel)
+
+    monkeypatch.setattr("wallplotter.upload.FluidNCClient", fabrik)
+    code = firmware_cli.main(
+        ["push", "--host", "h", "--kein-standort", "--sicherung", str(tmp_path / "b.yaml")]
+    )
+    assert code == 5
+    assert "$Bye" not in sock.lines, "nicht neu starten, wenn der Flash etwas anderes trägt"
+    assert sitzung.flash["/config.yaml"] == "board: alt\n"
+
+
+def test_der_zweite_push_ueberschreibt_die_sicherung_nicht(tmp_path, monkeypatch):
+    """Der erste push sichert die von Hand gepflegte Fassung.
+
+    Ginge der zweite auf denselben Namen, sicherte er die Datei, die der erste
+    gerade geschrieben hat — und das Original wäre weder auf dem Board noch auf
+    der Platte. push ist der Befehl, den man beim Einrichten mehrfach aufruft.
+    """
+    sitzung = FakeSession(flash={"/config.yaml": "board: DIE ECHTE ALTE FASSUNG\n"})
+    sock = FakeFluidNCSocket()
+
+    def fabrik(config):
+        channel = TelnetChannel(config.hostname, config.telnet_port, 5.0, opener_for(sock))
+        return FluidNCClient(config, sitzung, channel)
+
+    monkeypatch.setattr("wallplotter.upload.FluidNCClient", fabrik)
+    ziel = tmp_path / "config.yaml.bak"
+    for _ in range(2):
+        assert firmware_cli.main(
+            ["push", "--host", "h", "--kein-standort", "--sicherung", str(ziel)]
+        ) == 0
+
+    assert ziel.read_text(encoding="utf-8") == "board: DIE ECHTE ALTE FASSUNG\n"
+    # Der zweite Lauf findet auf dem Board bereits genau diese Datei vor und
+    # legt deshalb gar keine zweite Sicherung an.
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["config.yaml.bak"]
+
+
+def test_eine_geaenderte_fassung_wird_daneben_gesichert(tmp_path, monkeypatch):
+    sitzung = FakeSession(flash={"/config.yaml": "board: erste\n"})
+    sock = FakeFluidNCSocket()
+
+    def fabrik(config):
+        channel = TelnetChannel(config.hostname, config.telnet_port, 5.0, opener_for(sock))
+        return FluidNCClient(config, sitzung, channel)
+
+    monkeypatch.setattr("wallplotter.upload.FluidNCClient", fabrik)
+    ziel = tmp_path / "config.yaml.bak"
+    assert firmware_cli.main(
+        ["push", "--host", "h", "--kein-standort", "--sicherung", str(ziel)]
+    ) == 0
+    # Von Hand etwas anderes aufs Board legen, dann noch einmal
+    sitzung.flash["/config.yaml"] = "board: zweite\n"
+    assert firmware_cli.main(
+        ["push", "--host", "h", "--kein-standort", "--sicherung", str(ziel)]
+    ) == 0
+
+    assert ziel.read_text(encoding="utf-8") == "board: erste\n"
+    assert (tmp_path / "config.yaml.bak.1").read_text(encoding="utf-8") == "board: zweite\n"

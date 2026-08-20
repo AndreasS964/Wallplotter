@@ -152,7 +152,10 @@ Damit hängen drei Dinge nicht mehr davon ab, dass jemand daran denkt:
 
 * **Ankermaße.** Sie kommen aus dem eingemessenen Standort — derselben Rechnung,
   die die Vorschau benutzt. Vorher standen sie an zwei Stellen und liefen
-  auseinander, ohne dass eine Meldung erschien; schief wurde nur das Bild.
+  auseinander. Aufgefallen wäre das nur dem, der `wallplotter-doctor` aufrief —
+  der prüft die Ankerwerte gegen den aktiven Standort und tut es weiterhin.
+  Nur ist eine Prüfung, die man aufrufen muss, keine, die einen erreicht: Wer
+  sie ausließ, plottete schief.
 * **Schritte pro Millimeter.** Sie folgen aus Pulley, Riementeilung und
   Mikroschritten. Wer im Treiberblock die Mikroschritte änderte und oben
   `steps_per_mm` vergaß, fuhr um denselben Faktor daneben.

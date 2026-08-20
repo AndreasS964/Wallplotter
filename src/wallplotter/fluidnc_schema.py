@@ -129,7 +129,7 @@ class Node:
 # ---------------------------------------------------------------------------
 
 _AXIS_NAMES = ("x", "y", "z", "a", "b", "c", "u", "v", "w")
-"""``Machine/Axes.cpp:20`` — mehr Achsnamen kennt FluidNC nicht."""
+"""``Machine/Axes.cpp:21`` — mehr Achsnamen kennt FluidNC nicht."""
 
 _SPINDLE_SECTIONS = (
     "PWM",
@@ -178,7 +178,8 @@ _KINEMATICS_SECTIONS = ("Cartesian", "CoreXY", "WallPlotter", "midtbot", "parall
 
 # Was jede Spindel gemeinsam hat: Spindles/Spindle.h:112ff
 _SPINDLE_COMMON = {
-    "tool_num": Item("Spindles/Spindle.h:112", 0, 100),
+    # MaxToolNumber steht in GCode.h:189 und ist 99999999 — nicht 100.
+    "tool_num": Item("Spindles/Spindle.h:112", 0, 99999999),
     "speed_map": Item("Spindles/Spindle.h:122"),
     "off_on_alarm": Item("Spindles/Spindle.h:129"),
     "atc": Item("Spindles/Spindle.h:137"),
@@ -265,7 +266,7 @@ NODES: dict[str, Node] = {
     "kinematics": Node(children={name: "kinematic" for name in _KINEMATICS_SECTIONS}),
     "kinematic": Node(
         items={
-            # WallPlotter — Kinematics/WallPlotter.cpp:20ff. Keiner der sechs
+            # WallPlotter — Kinematics/WallPlotter.cpp:20ff. Keiner der sieben
             # Werte ist begrenzt; left_axis/right_axis sind int32_t und meinen
             # den Achsindex (0 = X), nicht den Achsbuchstaben.
             "left_axis": Item("Kinematics/WallPlotter.cpp:20"),
@@ -310,7 +311,8 @@ NODES: dict[str, Node] = {
     ),
     "homing": Node(
         items={
-            "cycle": Item("Machine/Homing.h:80"),
+            # -1 ist `set_mpos_only` (Homing.h:40): nicht fahren, nur mpos setzen.
+            "cycle": Item("Machine/Homing.h:80", -1, 9),
             "allow_single_axis": Item("Machine/Homing.h:88"),
             "positive_direction": Item("Machine/Homing.h:95"),
             "mpos_mm": Item("Machine/Homing.h:103"),
@@ -350,7 +352,12 @@ NODES: dict[str, Node] = {
             "spi_index": Item("Motors/TrinamicSpiDriver.h:72", -1, 127),
             "run_mode": Item("Motors/TrinamicSpiDriver.h:79"),
             "homing_mode": Item("Motors/TrinamicSpiDriver.h:85"),
-            "stallguard": Item("Motors/TrinamicSpiDriver.h:92", -64, 63),
+            # Bereichsunion über die Treiberklassen: SPI-Trinamics nehmen
+            # -64..63 (TrinamicSpiDriver.h:92), der TMC2209 dagegen 0..255
+            # (TMC2209Driver.h:65). Welcher gilt, hängt am Abschnittsnamen —
+            # hier steht deshalb der weitere Bereich, damit kein gültiger Wert
+            # fälschlich beanstandet wird.
+            "stallguard": Item("Motors/TrinamicSpiDriver.h:92", -64, 255),
             "stallguard_debug": Item("Motors/TrinamicSpiDriver.h:98"),
             "toff_coolstep": Item("Motors/TrinamicSpiDriver.h:103", 2, 15),
             "diag0_error": Item("Motors/TrinamicSpiDriver.h:109"),
@@ -358,6 +365,19 @@ NODES: dict[str, Node] = {
             "diag0_int_pushpull": Item("Motors/TrinamicSpiDriver.h:121"),
             # TMC5160Driver — genau der Treiber, unter dem der Rodent läuft
             "tpfd": Item("Motors/TMC5160Driver.h:34", 0, 15),
+            # TMC5160ProDriver: die sieben Rohregister sind der ganze Sinn des
+            # Abschnitts `tmc_5160Pro:`
+            "CHOPCONF": Item("Motors/TMC5160ProDriver.h:75"),
+            "COOLCONF": Item("Motors/TMC5160ProDriver.h:80"),
+            "THIGH": Item("Motors/TMC5160ProDriver.h:85"),
+            "TCOOLTHRS": Item("Motors/TMC5160ProDriver.h:90"),
+            "GCONF": Item("Motors/TMC5160ProDriver.h:95"),
+            "PWMCONF": Item("Motors/TMC5160ProDriver.h:100"),
+            "IHOLD_IRUN": Item("Motors/TMC5160ProDriver.h:106"),
+            # Dynamixel2 — `id` ist dort Pflicht, validate() besteht darauf
+            "id": Item("Motors/Dynamixel2.h:141"),
+            "count_min": Item("Motors/Dynamixel2.h:147"),
+            "count_max": Item("Motors/Dynamixel2.h:153"),
             # TrinamicUartDriver
             "addr": Item("Motors/TrinamicUartDriver.h:41"),
             "uart_num": Item("Motors/TrinamicUartDriver.h:57"),
@@ -370,6 +390,8 @@ NODES: dict[str, Node] = {
             "reset_pin": Item("Motors/StepStick.cpp:52"),
             # RcServo / Solenoid
             "output_pin": Item("Motors/RcServo.h:54"),
+            # RcServo.h:61 lässt 50..200 zu, Solenoid.h:60 dagegen
+            # 1000..100000 — kein gemeinsamer Bereich, also keiner.
             "pwm_hz": Item("Motors/RcServo.h:61"),
             "min_pulse_us": Item("Motors/RcServo.h:67", 500, 2500),
             "max_pulse_us": Item("Motors/RcServo.h:74", 500, 2500),
@@ -401,6 +423,17 @@ NODES: dict[str, Node] = {
             "debug": Item("Spindles/VFDSpindle.cpp:260", 0, 5),
             "poll_ms": Item("Spindles/VFDSpindle.cpp:265", 250, 20000),
             "retries": Item("Spindles/VFDSpindle.cpp:270"),
+            # ModbusVFD — die Registerbefehle der VFD-Spindeln
+            "model": Item("Spindles/VFD/ModbusVFD.h:87"),
+            "min_RPM": Item("Spindles/VFD/ModbusVFD.h:95"),
+            "max_RPM": Item("Spindles/VFD/ModbusVFD.h:103"),
+            "cw_cmd": Item("Spindles/VFD/ModbusVFD.h:110"),
+            "ccw_cmd": Item("Spindles/VFD/ModbusVFD.h:117"),
+            "off_cmd": Item("Spindles/VFD/ModbusVFD.h:124"),
+            "set_rpm_cmd": Item("Spindles/VFD/ModbusVFD.h:131"),
+            "get_min_rpm_cmd": Item("Spindles/VFD/ModbusVFD.h:139"),
+            "get_max_rpm_cmd": Item("Spindles/VFD/ModbusVFD.h:147"),
+            "get_rpm_cmd": Item("Spindles/VFD/ModbusVFD.h:162"),
         },
         children={"uart": "uart"},
     ),
@@ -570,9 +603,19 @@ def check_mapping(data: Any, node_name: str = "root", path: str = "") -> list[Fi
     for key, value in data.items():
         key = str(key)
         here = f"{path}/{key}" if path else key
+        child = resolve(node_name, key)
+
+        # Ein Abschnitt ohne Unterschlüssel ist in YAML `None` und sähe damit
+        # aus wie ein Schlüssel. FluidNC kennt den Fall ausdrücklich —
+        # ParserHandler.h:35: „If thisIndent <= entryIndent, the section is
+        # empty" — und `Parser::is()` setzt den Token schon beim Namen auf
+        # Matched, protokolliert also nie „Ignored key". Leere Abschnitte sind
+        # dort nicht exotisch, sondern die übliche Schreibweise für alles,
+        # dessen `group()` leer ist: `Cartesian:`, `null_motor:`, `probe:`.
+        if value is None and child is not None:
+            continue
 
         if isinstance(value, dict):
-            child = resolve(node_name, key)
             if child is not None:
                 findings += check_mapping(value, child, here)
                 continue

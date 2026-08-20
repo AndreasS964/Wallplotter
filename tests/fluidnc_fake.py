@@ -73,6 +73,7 @@ class FakeSession:
         files: dict[str, str] | None = None,
         blocked: bool = False,
         flash: dict[str, str] | None = None,
+        upload_scheitert: bool = False,
     ) -> None:
         self.calls: list[tuple[str, str, dict | None]] = []
         self.timeouts: list[float | None] = []
@@ -85,6 +86,12 @@ class FakeSession:
         self.blocked = blocked
         """``$HTTP/BlockDuringMotion``: dann antworten ``/command`` und das
         Ausliefern von Flash-Dateien mit 503."""
+
+        self.upload_scheitert = upload_scheitert
+        """Der Upload misslingt — und zwar so, wie er es beim echten Board tut:
+        mit **HTTP 200** und ``"status":"Upload failed"`` im Rumpf
+        (``WebUIServer.cpp:1220-1224``). Wer nur den Statuscode ansieht, hält
+        das für einen Erfolg."""
 
     # -- Hilfsmittel ------------------------------------------------------
 
@@ -146,6 +153,9 @@ class FakeSession:
         ablage = {"/upload": self.card, "/files": self.flash}.get(path)
         if ablage is None:
             return FakeResponse("Not found", 404)
+        if self.upload_scheitert:
+            # Nichts wird abgelegt — aber quittiert wird trotzdem mit 200.
+            return FakeResponse('{"files":[],"status":"Upload failed"}')
         for _field, (filename, payload, *_rest) in (files or {}).items():
             body = payload.decode("utf-8") if isinstance(payload, bytes) else payload
             ablage[filename if filename.startswith("/") else f"/{filename}"] = body

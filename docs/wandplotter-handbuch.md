@@ -224,16 +224,17 @@ wallplotter-firmware push   --host <ip> --location Keller
 Der Grund ist nicht Bequemlichkeit, sondern dass es vorher **zwei**
 Beschreibungen derselben Maschine gab: die Python-Seite und eine YAML-Datei,
 die jemand von Hand nachzog. Zwei Beschreibungen laufen auseinander, und zwar
-lautlos — die Vorschau rechnet mit den gemessenen Ankermaßen, das Board mit
-denen von vor drei Wochen, und das Bild an der Wand ist verzerrt, ohne dass
-irgendwo eine Meldung erscheint.
+— die Vorschau rechnet mit den gemessenen Ankermaßen, das Board mit denen von
+vor drei Wochen, und das Bild an der Wand ist verzerrt. `wallplotter-doctor`
+merkte das schon vorher an; nur muss man ihn dafür aufrufen, und sein Rat
+verwies auf `wallplotter-location config`, das nur den Kinematikblock liefert.
 
 Drei Kopplungen hält der Erzeuger fest, die von Hand schon danebengegangen sind:
 
 | Was | Folgt woraus | Was von Hand schiefging |
 | --- | --- | --- |
 | `left_anchor_*` / `right_anchor_*` | den drei Maßen des Standorts | zwei Stellen, die auseinanderliefen |
-| `steps_per_mm` | Pulley × Riementeilung ÷ Mikroschritte | Mikroschritte geändert, Schritte vergessen — Faktor daneben |
+| `steps_per_mm` | Vollschritte × Mikroschritte ÷ (Zähne × Riementeilung), also 200 × 16 ÷ 40 = 80 | Mikroschritte geändert, Schritte vergessen — Faktor daneben |
 | `speed_map` | Impulsfenster ÷ PWM-Periode | `0=0.000% 100=100.000%` — der ganze Servoweg lag zwischen S5 und S10 |
 
 `pruefen` schaut mit zwei Blickwinkeln auf die Datei.

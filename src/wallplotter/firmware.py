@@ -4,10 +4,12 @@ Bis hierher gab es zwei Beschreibungen derselben Maschine: die Python-Seite
 (Anker aus :mod:`wallplotter.location`, Motor und Auflösung aus
 :mod:`wallplotter.kinematics`, Grenzen aus :mod:`wallplotter.timing`, Servo-
 Werte aus :mod:`wallplotter.toolhead`) und eine 300 Zeilen lange YAML-Datei,
-die jemand von Hand nachzog. Zwei Beschreibungen laufen auseinander — und zwar
-lautlos: Die Vorschau rechnet mit den gemessenen Ankermaßen, das Board mit
-denen von vor drei Wochen, und das Bild an der Wand ist verzerrt, ohne dass
-irgendwo eine Meldung erscheint.
+die jemand von Hand nachzog. Zwei Beschreibungen laufen auseinander: Die
+Vorschau rechnet mit den gemessenen Ankermaßen, das Board mit denen von vor
+drei Wochen, und das Bild an der Wand ist verzerrt.
+:func:`wallplotter.doctor.check_firmware_config` merkt das an — aber nur, wenn
+jemand den Selbsttest aufruft. Eine Prüfung, die man aufrufen muss, erreicht
+nicht den, der nicht daran denkt.
 
 Deshalb ist die Python-Seite jetzt die Quelle und die YAML-Datei das Erzeugnis:
 
@@ -44,6 +46,7 @@ der Wand.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field, replace
 
@@ -139,6 +142,16 @@ def _scalar(value: str) -> str:
         f"{text!r} enthält beide Anführungszeichen — FluidNCs Tokenizer kennt keine "
         "Maskierung, das lässt sich nicht schreiben"
     )
+
+
+def _kommentar(text: str) -> str:
+    """Freitext, der in einer Kommentarzeile landet, auf eine Zeile zwingen.
+
+    Ein Zeilenumbruch im Standortnamen bräche die Datei auf: Die zweite Zeile
+    stünde ohne ``#`` da und wäre für FluidNC ein Schlüssel — also ConfigAlarm
+    an einer Stelle, an der niemand einen Schlüssel vermutet.
+    """
+    return " ".join(str(text).split())
 
 
 def _kv(indent: str, key: str, value: object, comment: str = "") -> list[str]:
@@ -565,7 +578,14 @@ class FirmwareConfig:
             parts += ["--name", self.name]
         if self.meta != default.meta:
             parts += ["--meta", self.meta]
-        if self.motor.microsteps != default.motor.microsteps:
+        # Bei gesetztem Standort IMMER mitschreiben: `from_location()` holt die
+        # Mikroschritte aus dem Standort, der Vergleich unten geht aber gegen
+        # die Klassenvorgabe. Steht im Standort 32 und jemand überschreibt mit
+        # `--microsteps 16`, wären beide Werte gleich der Vorgabe — die Option
+        # fiele weg, und der Aufruf in der Kopfzeile zöge die 32 zurück.
+        # Ergebnis wäre steps_per_mm 160 statt 80: Faktor zwei auf beiden
+        # Achsen, ohne dass irgendwo etwas gemeldet würde.
+        if self.location_name or self.motor.microsteps != default.motor.microsteps:
             parts += ["--microsteps", str(self.motor.microsteps)]
 
         # Der Haltestrom folgt in der CLI stillschweigend dem Laufstrom; steht
@@ -673,6 +693,15 @@ class FirmwareConfig:
                     "und heiß heißt Schrittverluste.",
                 )
             )
+        if self.hold_amps > self.rated_amps:
+            problems.append(
+                Problem(
+                    ERROR,
+                    f"hold_amps {self.hold_amps:g} A über dem Nennstrom des "
+                    f"{self.motor_label} ({self.rated_amps:g} A) — im Stillstand steht der "
+                    "Strom dauerhaft an, das ist der Fall, in dem ein Motor wirklich heiß wird.",
+                )
+            )
         if self.hold_amps < self.run_amps:
             problems.append(
                 Problem(
@@ -687,6 +716,26 @@ class FirmwareConfig:
                     WARN,
                     f"idle_ms {self.idle_ms} schaltet die Motoren nach dieser Zeit ab. "
                     "255 heißt \u201enie\u201c — alles andere lässt die Gondel irgendwann fallen.",
+                )
+            )
+
+        # -- Zerlegung gerader Strecken
+        if self.segment_length_mm <= 0 or not math.isfinite(self.segment_length_mm):
+            problems.append(
+                Problem(
+                    ERROR,
+                    f"segment_length {self.segment_length_mm} ist keine brauchbare Länge — "
+                    "FluidNC zerlegt gerade Strecken in Stücke dieser Größe, und bei 0 oder "
+                    "negativ wären es unendlich viele.",
+                )
+            )
+        elif self.segment_length_mm > 10:
+            problems.append(
+                Problem(
+                    WARN,
+                    f"segment_length {_de(self.segment_length_mm)} mm ist grob: Die Kinematik "
+                    "ist nichtlinear, und zwischen zwei Stützstellen fährt die Gondel gerade. "
+                    "Auf 2,5 m Wand fällt das als Beule in jeder Diagonalen auf.",
                 )
             )
 
@@ -806,7 +855,7 @@ class FirmwareConfig:
             f"# FluidNC-Konfiguration für den Wandplotter auf dem {self.board.long_name}",
             "#",
             "# ERZEUGT — nicht von Hand ändern. Wieder herstellen mit:",
-            f"#     {self.command_line()}",
+            f"#     {_kommentar(self.command_line())}",
             "#",
             "# Wer hier etwas ändern will, ändert es in der Python-Seite: Ankermaße über",
             "# `wallplotter-location`, Motor und Grenzen in wallplotter/firmware.py. Sonst",
@@ -841,8 +890,8 @@ class FirmwareConfig:
         anchors = self.anchors
         if self.location_name:
             origin = [
-                f"    # Standort: {self.location_name}",
-                f"    # gemessen: {self.location_measurements}",
+                f"    # Standort: {_kommentar(self.location_name)}",
+                f"    # gemessen: {_kommentar(self.location_measurements)}",
                 "    #",
                 "    # Erzeugt aus `wallplotter-location` — dieselben drei Maße, mit denen",
                 "    # auch die Vorschau rechnet. Ändert sich die Aufhängung, wird der",

@@ -505,7 +505,7 @@ Was das an den einzelnen Funden ändert:
 | 9 — `laser_mode` setzt das Board in ConfigAlarm | von Hand entfernt | kann nicht wieder hinein: jeder erzeugte Schlüssel wird gegen die Liste aus dem Quelltext gehalten |
 | 20 — `speed_map` fährt den Servo in den Anschlag | von Hand auf `0=5.000% 100=10.000%` gesetzt | aus PWM-Frequenz und Impulsfenster gerechnet; ein Test rechnet zurück auf 1,0 bis 2,0 ms |
 | Anker vs. Standort | in beiden Dateien gepflegt | `--location <Name>` nimmt die Trilateration aus demselben Standort, mit dem auch die Vorschau rechnet |
-| `steps_per_mm` vs. `microsteps` | zwei Zahlen, die zusammenpassen mussten | eine Rechnung: Pulley × Riementeilung ÷ Mikroschritte |
+| `steps_per_mm` vs. `microsteps` | zwei Zahlen, die zusammenpassen mussten | eine Rechnung: Vollschritte × Mikroschritte ÷ (Zähne × Riementeilung), also 200 × 16 ÷ 40 = 80 |
 
 ### Die Schlüsselliste
 
