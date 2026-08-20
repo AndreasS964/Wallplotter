@@ -44,6 +44,7 @@ der Wand.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, replace
 
 from .fluidnc_schema import ERROR, WARN
@@ -93,6 +94,51 @@ def _de(value: float, decimals: int = 2, minimum: int = 0) -> str:
     whole, _, frac = f"{value:.{decimals}f}".partition(".")
     frac = frac.rstrip("0").ljust(minimum, "0")
     return f"{whole},{frac}" if frac else whole
+
+
+_PLAIN_SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._/+()-]*$")
+"""Zeichen, mit denen ein YAML-Skalar ohne Anführungszeichen auskommt."""
+
+_YAML_KEYWORDS = {"true", "false", "yes", "no", "on", "off", "null", "none", "~"}
+
+
+def _looks_numeric(text: str) -> bool:
+    try:
+        float(text)
+        return True
+    except ValueError:
+        return False
+
+
+def _scalar(value: str) -> str:
+    """Freitext so schreiben, dass FluidNC **und** ein YAML-Parser dasselbe lesen.
+
+    Ohne das legt ein Maschinenname mit Doppelpunkt die Datei lahm — ``name:
+    Wand: groß`` ist kein gültiges YAML, und ``name: Keller #2`` verliert bei
+    jedem YAML-Parser alles ab der Raute.
+
+    Anführungszeichen sind hier enger begrenzt als in YAML, weil FluidNCs
+    Tokenizer **keine Maskierung kennt**: ``parseValue()`` liest bis zum ersten
+    passenden Zeichen und wirft den Rest der Zeile weg (Tokenizer.cpp:127ff).
+    Ein Backslash bleibt dort ein Backslash. Deshalb einfache Anführungszeichen
+    zuerst — die deutet auch YAML fast wörtlich —, doppelte nur, wenn kein
+    Backslash im Spiel ist, und beides zusammen im Text ist schlicht nicht
+    darstellbar.
+    """
+    text = str(value)
+    if "\n" in text or "\r" in text:
+        raise FirmwareError(f"Zeilenumbruch in {text!r} — eine YAML-Zeile trägt nur eine Zeile")
+    if _PLAIN_SAFE.match(text) and not text.endswith(" ") and text.lower() not in _YAML_KEYWORDS:
+        if not _looks_numeric(text):
+            return text
+    if "'" not in text:
+        return f"'{text}'"
+    if '"' not in text and "\\" not in text:
+        return f'"{text}"'
+    raise FirmwareError(
+        f"{text!r} enthält beide Anführungszeichen — FluidNCs Tokenizer kennt keine "
+        "Maskierung, das lässt sich nicht schreiben"
+    )
 
 
 def _kv(indent: str, key: str, value: object, comment: str = "") -> list[str]:
@@ -731,11 +777,11 @@ class FirmwareConfig:
             "#   wallplotter-firmware pruefen config/fluidnc-wallplotter.yaml",
             "#   wallplotter-kinematics --width 2000 --height 2500 --overhang 150 --above 150",
             "",
-            f"board: {self.board.name}",
-            f"name: {self.name}",
+            f"board: {_scalar(self.board.name)}",
+            f"name: {_scalar(self.name)}",
         ]
         if self.meta:
-            lines.append(f"meta: {self.meta}")
+            lines.append(f"meta: {_scalar(self.meta)}")
         return "\n".join(lines)
 
     def _kinematics(self) -> str:

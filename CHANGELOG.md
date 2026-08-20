@@ -99,6 +99,19 @@ reine Eingänge), eine Laserspindel mit Servotakt oder mit der `tool_num` des
 Stifts, `run_amps` über dem Motornennstrom, `idle_ms` unter 255 (die Gondel
 hängt am Riemen), ein Impuls, der nicht in die PWM-Periode passt.
 
+### Freitext im Kopf
+
+`board`, `name` und `meta` werden jetzt in Anführungszeichen gesetzt, sobald sie
+welche brauchen. Ohne das legte ein Maschinenname mit Doppelpunkt die Datei lahm
+(`name: Wand: groß` ist kein gültiges YAML), und eine Raute schnitt den Rest der
+Zeile ab.
+
+Enger als YAML ist das dabei aus einem Grund: FluidNCs Tokenizer kennt **keine
+Maskierung** — `parseValue()` liest bis zum ersten passenden Anführungszeichen
+und wirft den Rest der Zeile weg. Ein Backslash bleibt ein Backslash. Deshalb
+einfache Anführungszeichen zuerst, doppelte nur ohne Backslash, und ein Text mit
+beiden Sorten wird abgelehnt statt kaputt geschrieben.
+
 ### Flash statt SD-Karte
 
 `FluidNCClient` kann jetzt beides auseinanderhalten, weil FluidNC es

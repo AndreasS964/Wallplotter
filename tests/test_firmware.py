@@ -720,3 +720,52 @@ def test_ein_tabulator_als_einzug_wird_gemeldet():
 
 def test_ein_schluessel_ohne_doppelpunkt_wird_gemeldet():
     assert [f.level for f in check_lines("board BTT Rodent\n")] == [ERROR]
+
+
+# ---------------------------------------------------------------------------
+# Freitext im Kopf der Datei
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Wandplotter Keller",
+        "Wand: groß",  # Doppelpunkt — ohne Anführungszeichen kein gültiges YAML
+        "Keller #2",  # Raute — der Rest der Zeile ginge verloren
+        "*stern",  # YAML läse einen Anker
+        "'einfach'",
+        '"doppelt"',
+        "123",  # sonst eine Zahl statt eines Namens
+        "true",  # sonst ein Wahrheitswert
+        "  führend",
+        "Werkstatt — zweite Wand",
+    ],
+)
+def test_ein_maschinenname_kommt_heil_durch(name):
+    """Der Name ist Freitext und darf alles enthalten, was ein Mensch tippt.
+
+    Ohne Anführungszeichen legt ein Doppelpunkt die Datei lahm, und eine Raute
+    schneidet den Rest ab. Geprüft wird beides: dass ein YAML-Parser den Namen
+    unverändert zurückgibt und dass FluidNCs Tokenizer nichts zu beanstanden hat.
+    """
+    config = dataclasses.replace(FirmwareConfig(), name=name)
+    text = config.render()
+    assert yaml.safe_load(text)["name"] == name
+    assert [str(f) for f in check_lines(text)] == []
+
+
+def test_ein_name_mit_beiden_anfuehrungszeichen_wird_abgelehnt():
+    """FluidNCs Tokenizer kennt keine Maskierung — das ist nicht darstellbar.
+
+    Lieber laut ablehnen als eine Datei schreiben, die das Board nicht liest.
+    """
+    config = dataclasses.replace(FirmwareConfig(), name="beides ' und \" drin")
+    with pytest.raises(FirmwareError):
+        config.render()
+
+
+def test_ein_zeilenumbruch_im_namen_wird_abgelehnt():
+    config = dataclasses.replace(FirmwareConfig(), name="zwei\nZeilen")
+    with pytest.raises(FirmwareError):
+        config.render()
