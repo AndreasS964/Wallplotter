@@ -190,7 +190,10 @@ a:hover { text-decoration-thickness: 2px; }
 /* -- Inhalt -------------------------------------------------------------- */
 
 main { flex: 1 1 auto; min-width: 0; padding: 2.4rem clamp(1rem, 4vw, 3.5rem) 6rem; }
-article { max-width: 46rem; margin: 0 auto; }
+/* Lange nackte URLs (die Projektidee ist voll davon) schoben sonst auf dem
+   Handy die ganze Seite nach rechts. */
+article { max-width: 46rem; margin: 0 auto; overflow-wrap: break-word; }
+article a { overflow-wrap: anywhere; }
 
 h1, h2, h3, h4 { line-height: 1.25; margin: 2.2rem 0 .7rem; font-weight: 650; }
 h1 { font-size: 2.05rem; margin-top: 0; letter-spacing: -.02em; }
