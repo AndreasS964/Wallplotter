@@ -1,5 +1,63 @@
 # Änderungen
 
+## Unveröffentlicht — geführte Einrichtung
+
+`wallplotter-setup`: acht Schritte von der leeren Wand bis zum ersten Strich.
+
+```bash
+wallplotter-setup            # dort weiter, wo es aufgehört hat
+wallplotter-setup --status   # nur nachsehen, was noch fehlt
+wallplotter-setup --ab servo # gezielt einen Abschnitt
+```
+
+Jeder einzelne Schritt ging vorher auch schon — `wallplotter-location`,
+`wallplotter-firmware`, `wallplotter-calibrate`, `plot`. Was fehlte, war die
+**Reihenfolge**, und die verzeiht an drei Stellen keinen Fehler:
+
+* Die Ankermaße müssen **nach einem Neustart am Referenzpunkt** genommen werden.
+  FluidNC friert die Riemenlängen für (0,0) in `WallPlotter::init()` ein; wer
+  erst joggt und dann nullt, misst Maße, die um die Jog-Strecke danebenliegen —
+  und bekommt eine verzerrte Zeichnung ohne jede Meldung.
+* Die `config.yaml` muss **vor** dem Einmessen der Fläche im Board stehen, sonst
+  fährt die Kalibrierung in einem anderen Koordinatensystem als der spätere Plot.
+* Der Stifttest geht **erst nach** dem Einmessen, weil das Muster eine Fläche
+  braucht.
+
+Der Wizard kennt diese Reihenfolge, prüft nach jedem Schritt nach und begründet
+jeden Schritt an Ort und Stelle. Abbrechen und fortsetzen geht jederzeit: Jeder
+Schritt sagt selbst, ob er erledigt ist — und wo das keine Software wissen kann
+(hängt die Gondel am Anschlag?), steht `nicht prüfbar` statt einer Behauptung.
+
+Ohne Board läuft die halbe Vorbereitung trotzdem: messen, rechnen, `config.yaml`
+schreiben und prüfen. Die Schritte, die die Maschine fahren lassen, werden
+sauber übersprungen und stehen am Ende als Liste da — statt einer Fehlermeldung
+pro Schritt.
+
+### Wie er prüfbar bleibt
+
+Die Schritte wissen nichts über die Oberfläche, über die sie fragen; das läuft
+über ein schmales `Dialog`-Protokoll. Damit läuft derselbe Ablauf im Terminal,
+kann später in der Web-UI laufen, und im Test gegen ein Skript aus vorbereiteten
+Antworten. Das Skript ist streng: Geht ihm die Antwort aus, nennt es die
+unbeantwortete Frage — jede Änderung am Ablauf fällt im Test auf, statt still
+eine Vorgabe zu nehmen.
+
+Der Test fährt den ganzen Weg gegen ein Fake-Board, das sich zwischen den Ecken
+tatsächlich bewegt (eine Attrappe mit fester Position hätte eine Fläche der
+Größe null ergeben und nichts geprüft) und schaut danach nach, was wirklich
+passiert ist: Standort gespeichert, `config.yaml` **im Flash und nicht auf der
+Karte**, zwei GCode-Dateien hochgeladen und gestartet, `$Bye` geschickt.
+
+### Nebenher
+
+* `Location` hat einen optionalen `servo`-Block bekommen (`ServoSettings`:
+  `down_value`, `up_value`, `dwell_s`). Der Stiftkatalog liefert nur
+  Schätzungen; was am eigenen Aufbau herauskommt, bleibt jetzt stehen und
+  erscheint in `wallplotter-location show` samt der passenden `plot`-Schalter.
+* Der Nullpunkt-Schritt liest nach dem Neustart die Maschinenposition zurück und
+  schlägt an, wenn sie nicht auf 0/0 steht — dann wurde nicht am Referenzpunkt
+  neu gestartet.
+
 ## Unveröffentlicht — die `config.yaml` wird erzeugt, nicht getippt
 
 Bis hierher gab es **zwei** Beschreibungen derselben Maschine: die Python-Seite

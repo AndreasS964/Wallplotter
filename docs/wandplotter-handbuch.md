@@ -482,6 +482,20 @@ Selbst nachsehen: `wallplotter-doctor`.
 
 ### Erstinbetriebnahme
 
+Geführt in einem Aufwasch:
+
+```bash
+wallplotter-setup --host <ip>
+```
+
+Acht Schritte, jeder mit Begründung, jeder nachgeprüft, jederzeit abbrechbar und
+fortsetzbar (`--status`, `--ab <schritt>`). Der Ablauf steht in
+`wallplotter/wizard.py` und weiß nichts von einem Terminal — er redet über ein
+schmales `Dialog`-Protokoll mit der Welt, damit derselbe Ablauf später auch in
+der Web-UI laufen kann und im Test gegen ein Skript aus Antworten prüfbar ist.
+
+Von Hand ist es dieselbe Reihenfolge:
+
 1. Board flashen, `config.yaml` erzeugen und in den Flash laden
    (`wallplotter-firmware push --host <ip>`), WLAN einrichten
 2. `wallplotter-doctor --host <ip>` — sagt, was noch fehlt

@@ -464,6 +464,25 @@ mit HTTP 200 quittiert, ohne dass irgendetwas passiert — der Not-Halt meldete
 so lange Zeit Erfolg. Belege in der
 [Gegenprüfung](firmware-gegenpruefung.md), Abschnitt 2.3.
 
+### 8.2a Alles ab hier geführt: `wallplotter-setup`
+
+Die folgenden Abschnitte beschreiben jeden Schritt einzeln — das braucht man,
+wenn etwas klemmt. Für den geraden Weg gibt es sie auch geführt:
+
+```bash
+wallplotter-setup --host <ip>
+```
+
+Der Wizard geht dieselben acht Schritte durch, prüft nach jedem nach und sagt
+bei jedem dazu, warum er dort steht. Abbrechen und später fortsetzen geht
+jederzeit (`--status` zeigt den Stand, `--ab <schritt>` setzt fort). Ohne Board
+erledigt er, was ohne Board geht, und listet den Rest am Ende auf.
+
+Was er einem vor allem abnimmt, ist die **Reihenfolge**: Ankermaße erst nach
+einem Neustart am Referenzpunkt, `config.yaml` vor dem Einmessen der Fläche,
+Stifttest erst danach. Alle drei verzeihen keinen Fehler, und keiner davon
+meldet sich von selbst.
+
 ### 8.3 Konfiguration hochladen
 
 Die Datei wird **erzeugt, nicht getippt**:

@@ -89,6 +89,7 @@ jobs:
           wallplotter-kinematics --help > /dev/null
           wallplotter-location --help > /dev/null
           wallplotter-resume --help > /dev/null
+          wallplotter-setup --help > /dev/null
 
   # Die ausgelieferte config.yaml gegen zwei Dinge halten: gegen das, was FluidNC
   # wirklich kennt (ein unbekannter Schlüssel setzt das Board in ConfigAlarm), und

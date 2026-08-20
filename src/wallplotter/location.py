@@ -28,13 +28,48 @@ from .calibration import AreaCalibration, CalibrationError
 from .config import PlotConfig
 from .kinematics import Anchors, Gondola, Motor, WallPlotterKinematics, analyze_area
 
-__all__ = ["Location", "LocationBook", "LocationError", "DEFAULT_PATH"]
+__all__ = ["Location", "LocationBook", "LocationError", "ServoSettings", "DEFAULT_PATH"]
 
 DEFAULT_PATH = Path("standorte.json")
 
 
 class LocationError(RuntimeError):
     """Standort unvollständig oder geometrisch unmöglich."""
+
+
+@dataclass(frozen=True)
+class ServoSettings:
+    """Die drei Zahlen, die den Stiftheber beschreiben.
+
+    Sie gehören eigentlich zur Gondel und nicht zur Wand — aber die Gondel ist
+    das, was von Standort zu Standort mitwandert, und der Standort ist der
+    einzige Ort, an dem dieses Projekt etwas dauerhaft ablegt. Wer die Gondel
+    umbaut, misst sie neu; wer nur die Wand wechselt, kopiert sie mit.
+
+    Ermittelt werden sie mit ``--pattern pen-test``, geführt von
+    ``wallplotter-setup``. Die Werte im Stiftkatalog sind Schätzungen.
+    """
+
+    down_value: int
+    up_value: int
+    dwell_s: float
+
+    def __post_init__(self) -> None:
+        for label, value in (("down_value", self.down_value), ("up_value", self.up_value)):
+            if not 0 <= value <= 100:
+                raise LocationError(
+                    f"{label}={value} liegt außerhalb von 0…100 — die speed_map der "
+                    "config.yaml bildet nur diesen Bereich ab"
+                )
+        if self.dwell_s < 0:
+            raise LocationError("dwell_s kann nicht negativ sein")
+
+    def as_plot_options(self) -> str:
+        """Die passenden Schalter für ``plot``."""
+        return (
+            f"--pen-down {self.down_value} --pen-up {self.up_value} "
+            f"--pen-dwell {self.dwell_s:g}"
+        )
 
 
 @dataclass
@@ -75,6 +110,9 @@ class Location:
     microsteps: int = 16
     note: str = ""
     calibration: AreaCalibration = field(default_factory=AreaCalibration)
+
+    servo: ServoSettings | None = None
+    """Gemessene Stiftheber-Werte, sobald es sie gibt."""
 
     def __post_init__(self) -> None:
         span, left, right = self.anchor_span_mm, self.left_belt_zero_mm, self.right_belt_zero_mm
@@ -162,6 +200,11 @@ class Location:
             f"  Anker relativ zum Nullpunkt: links X{anchors.left_x:.1f}, "
             f"rechts X{anchors.right_x:.1f}, beide Y{anchors.y:.1f}",
         ]
+        if self.servo:
+            lines.append(
+                f"  Stiftheber: unten S{self.servo.down_value}, oben S{self.servo.up_value}, "
+                f"{self.servo.dwell_s:g} s Wartezeit"
+            )
         if self.note:
             lines.append(f"  Notiz: {self.note}")
         if not self.calibration.complete:
@@ -209,6 +252,17 @@ class Location:
             "gondola_mass_g": self.gondola_mass_g,
             "microsteps": self.microsteps,
             "note": self.note,
+            **(
+                {
+                    "servo": {
+                        "down_value": self.servo.down_value,
+                        "up_value": self.servo.up_value,
+                        "dwell_s": self.servo.dwell_s,
+                    }
+                }
+                if self.servo
+                else {}
+            ),
             "calibration": {
                 "points": {k: list(v) for k, v in self.calibration.points.items()},
                 "note": self.calibration.note,
@@ -226,6 +280,16 @@ class Location:
                 },
                 note=str(calibration_data.get("note", "")),
             )
+            servo_data = data.get("servo")
+            servo = (
+                ServoSettings(
+                    down_value=int(servo_data["down_value"]),
+                    up_value=int(servo_data["up_value"]),
+                    dwell_s=float(servo_data["dwell_s"]),
+                )
+                if servo_data
+                else None
+            )
             return cls(
                 name=str(data["name"]),
                 anchor_span_mm=float(data["anchor_span_mm"]),
@@ -235,6 +299,7 @@ class Location:
                 microsteps=int(data.get("microsteps", 16)),
                 note=str(data.get("note", "")),
                 calibration=calibration,
+                servo=servo,
             )
         except (KeyError, TypeError, ValueError, IndexError) as exc:
             raise LocationError(f"Standort nicht lesbar: {exc}") from exc

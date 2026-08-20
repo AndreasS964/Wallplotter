@@ -32,6 +32,12 @@ Zollstock**, den Rest rechnet die Software.
 </p>
 
 ```bash
+wallplotter-setup                      # geführt, von der leeren Wand bis zum ersten Strich
+```
+
+Oder einzeln, wenn man weiß, was man will:
+
+```bash
 wallplotter-location new Keller --span 2300 --left 1450 --right 1470
 wallplotter-location show              # Auflösung, Riemenkräfte, Riemenlänge
 wallplotter-firmware config --location Keller --out config.yaml
@@ -95,6 +101,39 @@ die Ankerkoordinaten per Trilateration heraus — die kommen in die
 
 `wallplotter-location list` zeigt alle Aufhängungen, `use <Name>` wechselt.
 In der Web-UI steht die Auswahl oben in der Kopfzeile.
+
+### Geführt: `wallplotter-setup`
+
+Alles Folgende geht auch einzeln. Der Wizard nimmt einem vor allem eine Sache
+ab: **die Reihenfolge**, und die verzeiht an drei Stellen keinen Fehler.
+
+```bash
+wallplotter-setup            # dort weiter, wo es aufgehört hat
+wallplotter-setup --status   # nur nachsehen, was noch fehlt
+wallplotter-setup --ab servo # gezielt einen Abschnitt
+```
+
+Acht Schritte: Installation → Board erreichen → Aufhängung einmessen →
+`config.yaml` erzeugen und übertragen → Nullpunkt → Fläche abstecken →
+Stiftheber einstellen → erster Plot. Jeder sagt dazu, **warum** er hier steht
+und nicht später; jeder prüft nach; abbrechen und fortsetzen geht jederzeit,
+weil jeder Schritt selbst weiß, ob er schon erledigt ist.
+
+Ohne Board läuft die halbe Vorbereitung trotzdem — messen, rechnen, die
+`config.yaml` schreiben und prüfen. Was die Maschine braucht, steht am Ende als
+Liste da:
+
+```
+[5/8] Nullpunkt setzen: übersprungen, kein Board
+
+Noch offen:
+  * config.yaml liegt in config/fluidnc-wallplotter.yaml, ist aber noch nicht
+    auf dem Board: wallplotter-firmware push --host <ip> --location Keller
+  * Fläche abstecken braucht die Maschine: wallplotter-setup --ab flaeche
+```
+
+Die Servowerte, die dabei herauskommen, bleiben im Standort stehen — der
+Stiftkatalog liefert nur Schätzungen, und die liegen an jedem Aufbau anders.
 
 ### Die `config.yaml` wird erzeugt, nicht getippt
 

@@ -43,6 +43,7 @@ wallplotter-firmware = "wallplotter.firmware_cli:main"
 wallplotter-kinematics = "wallplotter.kinematics:main"
 wallplotter-location = "wallplotter.location_cli:main"
 wallplotter-resume = "wallplotter.resume_cli:main"
+wallplotter-setup = "wallplotter.wizard_cli:main"
 wallplotter-web = "wallplotter.webapp:_cli"
 
 [project.urls]
