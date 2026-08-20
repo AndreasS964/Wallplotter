@@ -8,7 +8,9 @@ name: Pages
 # Kein Jekyll, kein Theme von der Stange — was hier herauskommt, lässt sich
 # vorher auf dem eigenen Rechner ansehen.
 #
-# Einmalig im Repo einzustellen: Settings → Pages → Source = "GitHub Actions".
+# Pages schaltet sich beim ersten Lauf selbst frei (`enablement: true` unten).
+# Falls das an einer Organisationsregel scheitert, geht es von Hand:
+# Settings → Pages → Source = "GitHub Actions".
 
 on:
   push:
@@ -70,6 +72,13 @@ jobs:
           PY
 
       - uses: actions/configure-pages@v5
+        with:
+          # Ohne das scheitert der erste Lauf mit „Get Pages site failed", weil
+          # Pages im Repo noch gar nicht eingeschaltet ist — und zwar erst
+          # NACH dem Bauen, was den Eindruck macht, die Website sei kaputt.
+          # Mit `enablement` schaltet die Action es über die API frei; die
+          # dafür nötige Berechtigung steht oben unter `permissions`.
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
