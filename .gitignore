@@ -21,6 +21,9 @@ out/
 *.gcode
 *.nc
 
+# Gebaute Website (entsteht mit tools/build_site.py, wird von der CI gebaut)
+site/
+
 # Editor / OS
 .vscode/
 .idea/

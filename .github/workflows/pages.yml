@@ -1,0 +1,86 @@
+name: Pages
+
+# Baut die Dokumentation zu einer statischen Website und veröffentlicht sie
+# unter https://andreass964.github.io/Wallplotter/.
+#
+# Der Bau ist derselbe wie lokal:
+#     python tools/build_site.py && python -m http.server -d site
+# Kein Jekyll, kein Theme von der Stange — was hier herauskommt, lässt sich
+# vorher auf dem eigenen Rechner ansehen.
+#
+# Einmalig im Repo einzustellen: Settings → Pages → Source = "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Nur lesen, was nötig ist; schreiben darf der Job ausschließlich auf Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Ein laufender Deploy wird nicht abgebrochen — sonst steht die Seite
+# womöglich halb da. Neuere Läufe warten.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Werkzeuge
+        run: pip install markdown pygments
+
+      - name: Website bauen
+        run: python tools/build_site.py --out site
+
+      - name: Interne Verweise prüfen
+        # Eine tote Verknüpfung zwischen zwei Dokumenten fällt sonst erst dem
+        # Leser auf. Der Bau biegt Markdown-Ziele auf HTML-Seiten um; wenn
+        # dabei etwas danebengeht, soll es hier auffallen und nicht online.
+        run: |
+          python - <<'PY'
+          import pathlib, re, sys
+          site = pathlib.Path("site")
+          vorhanden = {p.relative_to(site).as_posix() for p in site.rglob("*") if p.is_file()}
+          kaputt = []
+          for seite in sorted(site.glob("*.html")):
+              for treffer in re.finditer(r'(?:href|src)="([^"]+)"', seite.read_text(encoding="utf-8")):
+                  ziel = treffer.group(1)
+                  if ziel.startswith(("http", "#", "mailto:")):
+                      continue
+                  pfad = ziel.split("#")[0]
+                  if pfad and pfad not in vorhanden:
+                      kaputt.append(f"{seite.name} → {ziel}")
+          if kaputt:
+              print("::error::Tote Verweise in der gebauten Website")
+              print("\n".join(kaputt))
+              sys.exit(1)
+          print(f"{len(vorhanden)} Dateien, alle internen Verweise auflösbar")
+          PY
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

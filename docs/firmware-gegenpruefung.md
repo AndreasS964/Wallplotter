@@ -3,15 +3,22 @@
 *Stand: August 2026 · geprüft gegen FluidNC `main` sowie die Freigaben v4.0.4,
 v3.9.8 und v3.8.0, BTTs `rodent.yaml` und das Rodent-Handbuch V1.03*
 
-Bis hierhin war alles Board-nahe „nach Dokumentation gebaut". Diese Prüfung hat
-den Quelltext der Firmware gelesen statt ihre Doku, und das Ergebnis ist
-unangenehm: **die Endpunkte stimmen nicht, die ausgelieferte `config.yaml`
-hätte das Board gar nicht erst starten lassen, und der Not-Halt tut nichts.**
+Bis zu dieser Prüfung war alles Board-nahe „nach Dokumentation gebaut". Hier
+wurde stattdessen der Quelltext der Firmware gelesen, und das Ergebnis war
+unangenehm: **die Endpunkte stimmten nicht, die ausgelieferte `config.yaml`
+hätte das Board gar nicht erst starten lassen, und der Not-Halt tat nichts.**
+
+> **Alles davon ist inzwischen behoben** — wie, steht in
+> [Abschnitt 6](#6-wie-es-behoben-wurde), was sich sonst geändert hat im
+> [CHANGELOG](../CHANGELOG.md). Dieses Dokument bleibt trotzdem stehen, und
+> zwar vollständig: Die Begründungen sind der Grund, warum die Wege heute so
+> aussehen, wie sie aussehen. Ohne sie sieht `TelnetChannel` neben einem
+> vorhandenen HTTP-Client nach unnötigem Umweg aus — und jemand vereinfacht
+> ihn zurück.
 
 Die Zeilennummern der Firmware beziehen sich auf `FluidNC/src/…` im
-Repo [bdring/FluidNC](https://github.com/bdring/FluidNC).
-
----
+Repo [bdring/FluidNC](https://github.com/bdring/FluidNC). Die Zeiten unten
+stehen im Präsens, weil sie die Firmware beschreiben; die ist unverändert.
 
 ## 1. Was jetzt schon behoben ist
 
@@ -35,7 +42,7 @@ FluidNC-Quelltext gehalten und ist gültig: `stepping`, `axes`, `motor0`, alle
 
 ---
 
-## 2. Die fünf Dinge, die das Board heute blockieren
+## 2. Die fünf Dinge, die das Board blockiert hätten
 
 ### 2.1 Ein unbekannter Schlüssel ist kein Schönheitsfehler
 
@@ -359,22 +366,30 @@ Damit es niemand „repariert":
 
 ---
 
-## 6. Reihenfolge fürs Aufräumen
+## 6. Wie es behoben wurde
 
-1. `upload.py` auf die echten Endpunkte: `POST /upload` bzw. `PUT /sd/<pfad>`,
-   `GET /upload?path=/`, Pause/Weiter/Stopp auf `/feedhold_reload`,
-   `/cyclestart_reload`, `/restart_reload`.
-2. Status und `G92`/`G10 L20` über den WebSocket unter `/` führen — oder
-   ehrlich melden, dass es über HTTP nicht geht. Kein stiller Erfolg mehr.
-3. `webapp.main()` auf `ui.run(root=…)` bzw. `@ui.page('/')` umbauen,
-   `nicegui` in `pyproject.toml` eingrenzen.
-4. Kalibrierung und Anker auf **ein** Koordinatensystem festlegen und den
-   Neustart-am-Referenzpunkt in den Ablauf schreiben.
-5. Kommentarzeilen im GCode auf 127 Byte begrenzen.
-6. `test_firmware_config.py` gegen eine Schlüssel-Allowlist aus dem
-   FluidNC-Quelltext prüfen lassen, nicht gegen sich selbst. Attrappen, die
-   auch mal 404, 500 und 503 antworten.
+| Fund | Lösung |
+| --- | --- |
+| `/sdfiles` | `POST /upload` für die Karte, `GET /upload?path=/` fürs Listen, `GET /sd/<pfad>` fürs Lesen. Der Multipart-Dateiname trägt jetzt den vollen Zielpfad, damit er zum Größenfeld passt. |
+| Realtime über `plain=` | Halt, Pause und Weiter über `/feedhold_reload`, `/cyclestart_reload`, `/restart_reload`; die lösen das Firmware-Ereignis direkt aus und werden nicht von `BlockDuringMotion` blockiert. |
+| Status, `G92`, `G10 L20`, Jog-Abbruch | über den **TCP-Kanal auf Port 23** (`TelnetChannel`). Der ist ab Werk an und ein vollwertiger `Channel`. Kein Fremdpaket nötig — ein Socket aus der Standardbibliothek reicht, weil FluidNC keine Telnet-Optionen verhandelt. |
+| `$`-Kommandos | weiterhin über `/command?plain=`, aber nur als Rückfallebene, falls der Kanal nicht aufgeht. Für GCode gibt es **keinen** Rückfall — lieber laut scheitern. |
+| MPos/WPos | `parse_status` rechnet über `WCO` in Werkstückkoordinaten um. Das ist das System, in dem der GCode fährt. |
+| Anker vs. Bootzeitpunkt | in `location.py`, `calibrate_cli.py`, `config.yaml`, Handbuch und Bauanleitung richtiggestellt: Gondel an den Anschlag, **Board dort neu starten**, dann messen. |
+| Web-UI 500 | Aufbau in einer Wurzelfunktion (`ui.run(root=…)`), `nicegui<4.0`, Konsolenskript `wallplotter-web`, und ein Test, der die Seite wirklich über HTTP abholt. |
+| 127-Byte-Zeilen | `gcode.comment_lines()` bricht jeden Kommentar um; ein Test prüft **jede** Zeile jedes erzeugten Programms. |
+| `M0`-Wechseltext | `M0 (MSG,…)` statt `;`-Kommentar — Klammerkommentare mit MSG protokolliert FluidNC. |
+| Parkfahrt | an die untere linke Ecke der Zeichenfläche statt auf Maschinen-(0,0). |
+| `resolution_mm` | `Schrittweite / \|sin(Riemenwinkel)\|`, mit einem Test gegen die geschlossene Form. |
+| Resonanzprüfung | misst die **Bahnlänge** zwischen Umkehren, nicht den Bahnabstand. |
+| Ebenen gleicher Farbe | werden zusammengefasst, statt sich als Wörterbuchschlüssel zu überschreiben. |
+| Spirale | Schrittweite an die Wellenlänge gekoppelt, dazu eine Obergrenze für die Punktzahl. |
+| Laser-Riegel | greift über **alle** benutzten Köpfe, auch über die Ebenenzuordnung. |
+| Selbsttest | prüft erst HTTP, dann den Kanal — und meldet, welcher der beiden fehlt. |
+| Testattrappen | kennen nur die Endpunkte, die FluidNC registriert; alles andere ist 404. `/command?plain=` verhält sich wie `settings_execute_line()`. |
+| CI | installiert alle Extras und bricht ab, wenn sich ein Test wegen eines fehlenden Pakets überspringt. |
 
-Bis 1 bis 3 erledigt sind, läuft der Weg zum Board über das mitgelieferte
-FluidNC-WebUI im Browser. Wie das aussieht, steht in der
-[Bauanleitung](bauanleitung.md), Abschnitt „Was heute noch nicht geht".
+Was **nicht** behoben ist, weil es Hardware braucht: die Servo-Werte im
+Stiftkatalog, die Steckerbelegung am eigenen Board und der komplette
+Laserpfad. Die Reihenfolge zum Prüfen steht in der
+[Bauanleitung](bauanleitung.md), Abschnitt 10.

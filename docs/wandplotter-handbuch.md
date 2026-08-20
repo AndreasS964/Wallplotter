@@ -35,8 +35,8 @@ Aufhängung im Code.
 | FluidNC-Konfiguration | gegen den Quelltext geprüft und korrigiert, Servo-Pin geklärt |
 | Board | bestellt, noch nicht da |
 | Mechanik | noch nicht gedruckt |
-| Board-nah: `$SD/Run`, `$J=` | gegen den Quelltext geprüft, tragfähig |
-| Board-nah: Upload, Status, Pause/Stopp, `G92` | **nachgewiesen falscher Weg**, siehe [Gegenprüfung](firmware-gegenpruefung.md) |
+| Board-nah: Upload, Status, Halt, Jog, `G92` | auf die echten Wege umgestellt, gegen eine FluidNC-Gegenstelle getestet |
+| Board-nah an echter Hardware | **noch nicht gelaufen** — Prüfreihenfolge in der [Bauanleitung](bauanleitung.md), Abschnitt 10 |
 | Laser | nach Doku gebaut, nie an Hardware |
 
 ---
@@ -362,7 +362,8 @@ geschrieben; FluidNCs Webserver ist eine eigene Implementierung. Was
 | SD auflisten | `GET /upload?path=/` | `action=list` gibt es nicht |
 | Datei in den **Flash** | `POST /files` | |
 | `$`-Kommando senden | `GET /command?plain=$SD/Run=/x.gcode` | nur `$…` und `[ESP…]` |
-| GCode / Realtime senden | `GET /command?cmd=<x>` | braucht einen offenen WebSocket |
+| GCode / Realtime senden | **TCP-Kanal, Port 23** | ab Werk an (`$Telnet/Enable`) |
+| … alternativ über HTTP | `GET /command?cmd=<x>` | braucht einen offenen WebSocket |
 | Pause | `GET /feedhold_reload` | |
 | Weiter | `GET /cyclestart_reload` | |
 | Soft-Reset | `GET /restart_reload` | |
@@ -372,6 +373,12 @@ Es ist also genau umgekehrt zu dem, was oben stand: **`/files` ist der Flash,
 `settings_execute_line()` weiter, das nur `$name=wert` versteht — `?`, `G92`,
 `G10 L20` und die Realtime-Bytes kommen darüber nicht durch. Details:
 [Gegenprüfung](firmware-gegenpruefung.md), Abschnitt 2.3.
+
+`wallplotter.upload` ist danach gebaut: **Dateien über HTTP, Kommandos über den
+TCP-Kanal**. Der ist bei FluidNC ab Werk an (`DEFAULT_TELNET_STATE = 1`, Port
+23) und ein vollwertiger `Channel` — dort wirken Realtime-Zeichen, `?` liefert
+einen Statusbericht, GCode wird ausgeführt. Für `$`-Kommandos bleibt der
+HTTP-Weg als Rückfallebene, falls Telnet abgeschaltet wurde.
 
 Dazu: Solange `$HTTP/BlockDuringMotion` an ist (Werkszustand), antwortet
 `/command` während jeder Bewegung nur mit HTTP 503.
@@ -600,22 +607,24 @@ dunklen Stellen bedient. Die Statistik zeigt das vor jedem Plot an.
 
 **Bis das Board da ist — nichts davon ist an echter Hardware verifiziert:**
 
-**Nicht mehr offen, sondern widerlegt** (Belege in der
-[Gegenprüfung](firmware-gegenpruefung.md)):
+**Erledigt** (Belege in der [Gegenprüfung](firmware-gegenpruefung.md)):
 
-- Die Endpunkte stimmen nicht: `/sdfiles` gibt es nicht, `/upload` ist die
-  Karte, `/files` der Flash.
-- Die Realtime-Bytes über `?plain=` sind wirkungslos — schlimmer noch, sie
-  melden HTTP 200. Es gibt derzeit **keinen wirksamen Not-Halt über das
-  Netzwerk**; deshalb steht jetzt ein `control:`-Block mit drei Tastern in der
-  `config.yaml`.
+- Die Endpunkte stimmten nicht: `/sdfiles` gibt es nicht, `/upload` ist die
+  Karte, `/files` der Flash. Umgestellt.
+- Die Realtime-Bytes über `?plain=` waren wirkungslos und meldeten dabei
+  HTTP 200. Halt, Pause und Weiter laufen jetzt über `/feedhold_reload`,
+  `/cyclestart_reload` und `/restart_reload`, Status und GCode über den
+  TCP-Kanal. Zusätzlich steht ein `control:`-Block mit drei Tastern in der
+  `config.yaml` — ein Not-Halt, der WLAN und Browser braucht, ist keiner.
 - Der PWM-Pin ist geklärt: `gpio.25` = `Sp-Enable` (CN51), siehe Abschnitt 5.
-- `M0` versteht FluidNC als Pause (`ProgramFlow::Paused`). `M1` dagegen ist im
-  Quelltext ausdrücklich nicht implementiert und hält nicht an.
+- `M0` versteht FluidNC als Pause (`ProgramFlow::Paused`), und der Wechseltext
+  steht jetzt als `(MSG,…)` in der Zeile — so protokolliert die Firmware ihn.
+  `M1` dagegen ist im Quelltext ausdrücklich nicht implementiert.
 
-**Weiterhin offen:**
+**Weiterhin offen, weil es Hardware braucht:**
 
 - Servo-S-Werte für Pen-Up/Down und alle Werte im Stiftkatalog sind Platzhalter
+- Die Steckerbelegung am eigenen Board (Revision V1.0 gegen V1.1)
 - Der komplette Laserpfad
 
 **Danach zu bestimmen:**

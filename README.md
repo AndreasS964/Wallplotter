@@ -10,7 +10,7 @@
   <a href="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-426-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-460-brightgreen">
   <img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-lightgrey">
 </p>
 
@@ -38,6 +38,9 @@ wallplotter-location show              # Auflösung, Riemenkräfte, Riemenlänge
 ```
 
 ## Dokumentation
+
+Alles auch gesetzt und verlinkt unter
+**[andreass964.github.io/Wallplotter](https://andreass964.github.io/Wallplotter/)**.
 
 | Dokument | Inhalt |
 | --- | --- |
@@ -399,25 +402,27 @@ das Paket fehlt — der Rest läuft immer.
 
 ## Stand
 
-Board unterwegs, Mechanik noch nicht gedruckt — und seit der
-[Gegenprüfung gegen den FluidNC-Quelltext](docs/firmware-gegenpruefung.md)
-wissen wir, dass „nach Dokumentation gebaut" für die Board-Anbindung nicht
-gereicht hat.
+Board unterwegs, Mechanik noch nicht gedruckt. Die
+[Gegenprüfung gegen den FluidNC-Quelltext](docs/firmware-gegenpruefung.md) hat
+39 belegte Funde ergeben, davon fünf, die das Board blockiert hätten — die sind
+behoben.
 
 * **Verifiziert ohne Hardware:** Geometrie, GCode-Export, Kalibrierlogik,
-  Testmuster, Kinematikrechnung, UI-Verdrahtung — alles unter Test.
-* **Nachgewiesen kaputt:** `--upload` postet nach `/sdfiles`, das es in FluidNC
-  nicht gibt (die Karte hängt an `/upload`, der Flash an `/files`).
-  `/command?plain=` führt nur `$`-Kommandos aus — Statusabfrage, `G92`,
-  `G10 L20` und vor allem **Pause, Weiter und Stopp gehen ins Leere**; die
-  Realtime-Bytes melden dabei sogar Erfolg. Und `python -m wallplotter.webapp`
-  liefert mit NiceGUI ab 3.0 auf jede Anfrage HTTP 500.
-* **Behoben:** Die `config.yaml` hätte das Board mit `Laser: laser_mode` in
-  ConfigAlarm gesetzt; die `speed_map` hätte den Servo in den Anschlag gefahren;
-  der Servo-Pin ist jetzt belegt statt geraten (gpio.25 = `Sp-Enable`, CN51),
-  und ein `control:`-Block gibt der Maschine Taster für Halt, Pause und Weiter.
-* **Bis die Software nachgezogen ist** läuft der Weg zum Board über FluidNCs
-  eigenes WebUI im Browser. Was das praktisch heißt, steht in der
+  Testmuster, Kinematikrechnung, Bildverfahren, UI-Verdrahtung — 460 Tests.
+  Die board-nahen Tests laufen gegen eine Gegenstelle, die sich wie FluidNC
+  verhält: unbekannte Endpunkte sind 404, und `/command?plain=` versteht nur
+  `$`-Kommandos. Die alten Attrappen quittierten alles mit 200 — darüber sind
+  sechs Firmware-Fehler jahrelang grün geblieben.
+* **Behoben, mit Beleg aus dem Quelltext:** Die `config.yaml` hätte das Board
+  mit `Laser: laser_mode` in ConfigAlarm gesetzt und die `speed_map` den Servo
+  in den Anschlag gefahren. Der Upload ging an einen Endpunkt, den es nicht
+  gibt. Not-Halt, Pause und Statusabfrage liefen über `/command?plain=` und
+  meldeten Erfolg, ohne etwas zu tun — sie gehen jetzt über den TCP-Kanal auf
+  Port 23 bzw. über die Ereignis-Endpunkte der Firmware. Und die Web-UI
+  antwortete seit NiceGUI 3 auf jede Anfrage mit HTTP 500.
+* **Noch offen, weil es Hardware braucht:** die Servo-Werte im Stiftkatalog,
+  die Steckerbelegung am eigenen Board, der komplette Laserpfad. Die
+  Reihenfolge zum Prüfen steht in der
   [Bauanleitung](docs/bauanleitung.md), Abschnitt 10.
 
 ## Lizenz
