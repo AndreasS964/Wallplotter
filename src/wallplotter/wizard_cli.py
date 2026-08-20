@@ -20,6 +20,7 @@ import textwrap
 from collections.abc import Sequence
 from pathlib import Path
 
+from .design import Terminal
 from .wizard import (
     ERLEDIGT,
     OFFEN,
@@ -32,6 +33,7 @@ from .wizard import (
 )
 
 _MARK = {ERLEDIGT: "✓", OFFEN: "·", UNBEKANNT: "?"}
+_STIL = {ERLEDIGT: "ok", OFFEN: "leise", UNBEKANNT: "warn"}
 
 
 class KonsolenDialog:
@@ -47,33 +49,68 @@ class KonsolenDialog:
     laufen sie im Terminal zu einer einzigen Zeile zusammen und werden nicht
     gelesen."""
 
-    def __init__(self, eingabe=input, ausgabe=print) -> None:
+    def __init__(self, eingabe=input, ausgabe=print, stil: Terminal | None = None) -> None:
         self._eingabe = eingabe
         self._ausgabe = ausgabe
+        self.stil = stil or Terminal()
+        self._nach_kopf = False
+        """Ob die zuletzt ausgegebene Zeile eine Schrittüberschrift war — nur
+        deren Begründung darunter wird zurückgenommen, nicht jeder eingerückte
+        Text."""
 
     # -- Ausgabe ----------------------------------------------------------
 
     def _umbrechen(self, text: str, zusatz: str = "") -> list[str]:
-        """Absatz umbrechen und dabei die vorhandene Einrückung beibehalten."""
+        """Absatz umbrechen und dabei die vorhandene Einrückung beibehalten.
+
+        ``zusatz`` steht nur vor der **ersten** Zeile: Ein ``!`` vor jeder
+        Folgezeile sähe nach vier Warnungen aus, wo es eine ist.
+        """
         if not text.strip():
             return [""]
-        einzug = zusatz + " " * (len(text) - len(text.lstrip(" ")))
+        einzug = " " * (len(text) - len(text.lstrip(" ")))
+        folge = einzug + " " * len(zusatz)
+        if text.lstrip().startswith(("*", "-")):
+            folge += "  "
         return textwrap.wrap(
             text.strip(),
             width=self.BREITE,
-            initial_indent=einzug,
-            subsequent_indent=einzug + ("  " if text.lstrip().startswith(("*", "-")) else ""),
+            initial_indent=zusatz + einzug,
+            subsequent_indent=folge,
             break_long_words=False,
             break_on_hyphens=False,
         ) or [""]
 
     def sagen(self, text: str) -> None:
         for zeile in self._umbrechen(text):
-            self._ausgabe(zeile)
+            self._ausgabe(self._faerben(zeile))
 
     def warnen(self, text: str) -> None:
         for zeile in self._umbrechen(text, "! " if text.strip() else ""):
-            self._ausgabe(zeile)
+            self._ausgabe(self.stil(zeile, "warn"))
+
+    def _faerben(self, zeile: str) -> str:
+        """Die wenigen Zeilen hervorheben, die Struktur tragen.
+
+        Der Wizard schickt fertige Sätze; welche davon eine Überschrift sind,
+        steht ihm nicht an. Erkennbar sind sie an der Form — und nur diese
+        Handvoll Muster wird eingefärbt, damit nicht am Ende alles bunt ist und
+        nichts mehr auffällt.
+        """
+        blank = zeile.strip()
+        if blank.startswith("[") and "]" in blank:
+            nummer, _, rest = blank.partition("] ")
+            if rest.endswith(("übersprungen", "kein Board")):
+                self._nach_kopf = False
+                return self.stil(zeile, "leise")
+            self._nach_kopf = True
+            return f"{self.stil(nummer + ']', 'akzent')} {self.stil(rest, 'fett')}"
+        if self._nach_kopf and zeile.startswith("    ") and blank:
+            return self.stil(zeile, "leise")
+        self._nach_kopf = False
+        if blank in ("Noch offen:", "Durch. Ab hier ist es ein Plotter."):
+            return self.stil(zeile, "fett")
+        return zeile
 
     # -- Eingabe ----------------------------------------------------------
 
@@ -85,13 +122,16 @@ class KonsolenDialog:
             raise Abbruch("abgebrochen") from exc
 
     def frage(self, text: str, vorgabe: str = "") -> str:
-        hinweis = f" [{vorgabe}]" if vorgabe else ""
-        return self._lesen(f"{text}{hinweis}: ") or vorgabe
+        hinweis = self.stil(f" [{vorgabe}]", "leise") if vorgabe else ""
+        return self._lesen(f"{self.stil(text, 'akzent')}{hinweis}: ") or vorgabe
 
     def zahl(self, text: str, vorgabe: float | None = None, einheit: str = "mm") -> float:
         hinweis = f" [{vorgabe:g}]" if vorgabe is not None else ""
         while True:
-            roh = self._lesen(f"{text} in {einheit}{hinweis}: ")
+            roh = self._lesen(
+                f"{self.stil(text, 'akzent')} in {einheit}"
+                f"{self.stil(hinweis, 'leise')}: "
+            )
             if not roh and vorgabe is not None:
                 return float(vorgabe)
             try:
@@ -102,7 +142,9 @@ class KonsolenDialog:
     def ja(self, text: str, vorgabe: bool = True) -> bool:
         hinweis = "[J/n]" if vorgabe else "[j/N]"
         while True:
-            roh = self._lesen(f"{text} {hinweis} ").lower()
+            roh = self._lesen(
+                f"{self.stil(text, 'akzent')} {self.stil(hinweis, 'leise')} "
+            ).lower()
             if not roh:
                 return vorgabe
             if roh in ("j", "ja", "y", "yes"):
@@ -112,9 +154,9 @@ class KonsolenDialog:
             self.warnen("Bitte j oder n.")
 
     def auswahl(self, text: str, optionen: Sequence[tuple[str, str]]) -> str:
-        self._ausgabe(text)
+        self._ausgabe(self.stil(text, "akzent"))
         for nummer, (_key, beschreibung) in enumerate(optionen, 1):
-            self._ausgabe(f"  {nummer}) {beschreibung}")
+            self._ausgabe(f"  {self.stil(str(nummer) + ')', 'fett')} {beschreibung}")
         while True:
             roh = self._lesen("Auswahl [1]: ") or "1"
             if roh.isdigit() and 1 <= int(roh) <= len(optionen):
@@ -125,7 +167,7 @@ class KonsolenDialog:
             self.warnen(f"1 bis {len(optionen)}.")
 
     def weiter(self, text: str) -> None:
-        self._lesen(f"{text} [Enter] ")
+        self._lesen(f"{self.stil(text, 'akzent')} {self.stil('[Enter]', 'leise')} ")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -154,19 +196,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def zeige_status(ctx: Kontext, dialog: KonsolenDialog) -> int:
-    dialog.sagen("Einrichtung")
-    dialog.sagen("=" * 60)
+    stil = dialog.stil
+    print(stil.kopf("Wandplotter · Einrichtung", f"Board {ctx.host}", 60))
     for schritt in SCHRITTE:
         zustand = schritt.zustand(ctx)
-        dialog.sagen(f"{_MARK[zustand]} {schritt.titel:<36} {zustand}")
-    dialog.sagen("")
+        marke = stil(_MARK[zustand], _STIL[zustand])
+        titel = schritt.titel if zustand != ERLEDIGT else stil(schritt.titel, "leise")
+        breite = 36 + (len(titel) - len(schritt.titel))
+        print(f"{marke} {titel:<{breite}} {stil(zustand, _STIL[zustand])}")
+    print()
     offen = [s for s in SCHRITTE if s.zustand(ctx) != ERLEDIGT]
     if offen:
-        dialog.sagen(f"Weiter mit: wallplotter-setup --ab {offen[0].key}")
+        print("Weiter mit: " + stil(f"wallplotter-setup --ab {offen[0].key}", "akzent"))
     else:
-        dialog.sagen("Alles erledigt, soweit es sich ohne Nachfrage feststellen lässt.")
-    dialog.sagen("")
-    dialog.sagen("? heißt: das kann keine Software wissen — danach wird gefragt.")
+        print(stil("Alles erledigt, soweit es sich ohne Nachfrage feststellen lässt.", "ok"))
+    print()
+    print(stil("? heißt: das kann keine Software wissen — danach wird gefragt.", "leise"))
     return 0
 
 
@@ -190,6 +235,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(str(exc), file=sys.stderr)
                 return 2
 
+    print(
+        dialog.stil.kopf(
+            "Wandplotter · Einrichtung",
+            "von der leeren Wand bis zum ersten Strich · Abbruch mit Strg-C",
+        )
+    )
     try:
         return lauf(ctx, dialog, ab=args.ab, nur=args.nur, alle=args.alle)
     except Abbruch as exc:

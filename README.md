@@ -56,6 +56,7 @@ Alles auch gesetzt und verlinkt unter
 | [Projektidee](docs/projektidee.md) | Hardware, Mechanik, Entscheidungen |
 | [Software-Roadmap](docs/software-roadmap.md) | Stufenplan und UI-Architektur |
 | [Kinematik-Auswertung](docs/kinematik.md) | gerechnete Zahlen für eine Beispielaufhängung |
+| [Aussehen](src/wallplotter/design.py) | die eine Palette für Website, Web-UI und Terminal |
 | [FluidNC-Konfiguration](config/fluidnc-wallplotter.yaml) | kommentierte `config.yaml` fürs Rodent-Board — **erzeugt**, siehe unten |
 
 ## Warum eigener GCode-Export?

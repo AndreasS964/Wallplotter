@@ -1,5 +1,68 @@
 # Änderungen
 
+## Unveröffentlicht — ein Aussehen statt drei
+
+Die Web-UI sah nach Standard-Quasar aus: blauer Riegel oben, graue Fläche
+darunter, wie jedes Dashboard. Die Website hatte ihre eigene Palette, das
+Terminal gar keine. Drei Oberflächen, drei Erscheinungen — und beim nächsten
+Anfassen wären es vier gewesen.
+
+`wallplotter/design.py` ist jetzt die eine Beschreibung, aus der alle drei ihre
+Farben nehmen. Dieselbe Idee wie bei der `config.yaml`: zwei Beschreibungen
+derselben Sache laufen auseinander, und niemand merkt es.
+
+### Woher die Farben kommen
+
+Nicht aus einer Palette von der Stange. Die Maschine zieht Tinte über eine Wand:
+
+| Token | Hell | Warum |
+| --- | --- | --- |
+| `--bg` | `#fbfaf8` | Papier, nicht Weiß. Reines Weiß gibt es an einer Wand nicht. |
+| `--fg` | `#23201c` | Tinte, nicht Schwarz. |
+| `--accent` | `#1a4fd6` | **Die Stiftfarbe.** Steht seit jeher als Vorgabe in `PenToolhead.color` — der blaue Fineliner, mit dem das Projekt angefangen hat. |
+| `--raster` | `#efece5` | Die Linien des Zeichenbretts, blasser als `--line`. |
+
+Ein Test hält `--accent` gegen `PenToolhead().color`: Läuft das auseinander, hat
+die Oberfläche eine andere Farbe als der Strich, den sie ankündigt — und die
+Legende unter der Vorschau lügt.
+
+Dunkel ist kein invertiertes Hell, sondern die Werkstatt am Abend.
+
+### Web-UI
+
+Kopfzeile aus Papier mit einer Haarlinie statt eines blauen Balkens; Karten mit
+Kante statt Schlagschatten (technische Zeichnungen haben Kanten); Zahlen in
+fester Breite, damit die Positionsanzeige beim Aktualisieren nicht springt; die
+Vorschau als Zeichenbrett mit feinem Raster statt leerer Fläche; ein
+gestricheltes Ablegefeld statt eines blauen Riegels mit weißem Kasten darunter;
+Knopfbeschriftungen in Groß- und Kleinschreibung. Und Dunkelmodus, der dem Gerät
+folgt — an der Wand im Keller steht abends jemand mit dem Handy.
+
+**Zwei Dinge, die dabei nicht offensichtlich waren:**
+
+* Quasars Stylesheet wird **nach** dem eigenen geladen. Bei gleicher Spezifität
+  gewinnt das spätere, und `!important` hilft nicht, wenn beide es haben. Alle
+  Überschreibungen brauchen deshalb eine Stufe mehr (`body .q-card`). Ein Test
+  prüft das für jede Regel — die erste Fassung des Tests übersah die
+  einzeiligen, und genau die waren wirkungslos.
+* NiceGUI hängt an jeden Knopf ein `bg-primary`. Der blieb im Dunkelmodus im
+  hellen Blau stehen, bis der Knopf `color=None` bekam.
+
+### Terminal
+
+`wallplotter-setup` bekommt Farbe und Struktur: ein Kopf mit Linie, Schrittzahl
+im Akzent, die Begründung darunter zurückgenommen, Warnungen in Warnfarbe,
+erledigte Schritte leise. Die Statusliste zeigt ✓ grün, · grau, ? in Warnfarbe.
+
+Abgeschaltet wird das, wo niemand hinsieht: bei `NO_COLOR`, bei `TERM=dumb` und
+immer dann, wenn die Ausgabe kein Terminal ist. Sonst landen Steuerzeichen in
+jeder umgeleiteten Datei und in jedem CI-Protokoll.
+
+### Website
+
+`tools/build_site.py` zieht seine Palette aus demselben Modul. Ein Test baut die
+Website und prüft, dass jede Farbe darin auch wirklich die aus `design.py` ist.
+
 ## Unveröffentlicht — geführte Einrichtung
 
 `wallplotter-setup`: acht Schritte von der leeren Wand bis zum ersten Strich.
