@@ -164,10 +164,13 @@ und Riemenlänge für genau diese Fläche durch.
 ## Plotten
 
 ```bash
-plot bild.svg --out out/bild.gcode --preview out/bild.svg
+plot examples/testmuster.svg --out out/test.gcode --preview out/test-vorschau.svg
 plot bild.svg --location --upload --run
 plot foto.jpg --technique tsp
 ```
+
+Die erste Zeile läuft in einem frischen Klon sofort durch und schreibt GCode und
+Vorschau nach `out/`.
 
 Wichtige Optionen: `--width`, `--height`, `--margin` für die Fläche in mm,
 `--draw-feed` für den Vorschub, `--pen-down`/`--pen-up` für die S-Werte des
@@ -324,6 +327,15 @@ Dann liegt es an der Mechanik.
 Ein zweiter Effekt ist die Gondel selbst: sie pendelt mit 1,3 bis 2 Hz. Trifft
 die Umkehrfrequenz einer Schraffur diesen Bereich, werden die Linien wellig.
 `wallplotter.motion` warnt vorher und nennt zwei Auswege.
+
+Wo die Anker am besten sitzen, lässt sich vor dem Bohren durchrechnen:
+
+```bash
+wallplotter-kinematics --compare   # Überstand und Höhe gegeneinander stellen
+```
+
+Die Tabelle zeigt je Position Auflösung, Riemenwinkel, größte Zugkraft und
+Riemenbedarf. Anker höher zu setzen hilft dabei mehr, als sie weiter zu spreizen.
 
 ## Wenn etwas klemmt
 

@@ -1,5 +1,61 @@
 # Änderungen
 
+## Unveröffentlicht — das README aufgeräumt
+
+Von 2930 auf rund 2200 Wörter. Gestrichen ist nichts, was man zum Bedienen
+braucht; gestrichen sind die Erklärstrecken, die ausführlich in den Dokumenten
+stehen, auf die das README ohnehin verweist: die Tokenizer-Geschichte in der
+Gegenprüfung, das Fehlerbudget in der Kinematik-Auswertung, die Homing-Frage in
+der Bauanleitung.
+
+Neu geordnet nach dem, was ein Leser in welcher Reihenfolge tut: Was das ist,
+Installation, Schnellstart, dann die Arbeitsschritte, danach Aufbau, Tests,
+Doku, Stand. Die Dokumententabelle stand vorher vor der Installation, also vor
+allem, was man zuerst macht.
+
+### Sechs Sachfehler, fünf davon älter als diese Änderung
+
+Das neue README ist aus drei Blickwinkeln gegengelesen worden (Fakten, KI-Stil,
+was beim Kürzen verlorenging), 38 Funde, jeder einzeln adversarisch nachgeprüft.
+Vier haben standgehalten; zusammen mit zwei Funden aus der eigenen Prüfung:
+
+| Stelle | Was nicht stimmte |
+| --- | --- |
+| Modultabelle, `pipeline` | „SVG oder Bild → Linien" — die Pipeline kann kein Bild. `pipeline.image_to_lines` ist seit dem Umbau nur noch ein Grabstein mit `NotImplementedError`; Fotos laufen über `imaging`. |
+| Modultabelle, `config` | „Wandmaße, Vorschübe, Servowerte" — die Servowerte stehen in `toolhead`, `config.PenConfig` ist nur ein Alias. |
+| Web-UI-Vorschau | „Zeichenwege blau" — `webapp.py` übergibt `stroke=toolhead.color`, beim Fineliner also `#111111`. Blau ist die Vorgabe von `lines_to_svg` (die CLI-Vorschau) und das Legendenkästchen. Dieselbe Zeile stand im Projekthandbuch und ist dort mitkorrigiert. |
+| `wallplotter-location show` | Der Kommentar versprach Auflösung, Riemenkräfte und Riemenlänge. Direkt nach `new` sagt der Befehl „Fläche noch nicht eingemessen"; die Zahlen kommen erst mit kalibrierter Fläche. |
+| Fehlerbudget | „alles Elektronische zwei Größenordnungen darunter" — gegen 0,013 mm bei 0,12–0,83 mm Riemendehnung ist das am unteren Ende Faktor 9, nicht 100. Jetzt stehen die Zahlen da. |
+| Nullpunkt-Abschnitt | Ein Satz war zerrissen: „Das Rodent Richtigstellung dazu:" — Rest einer halb ausgeführten Änderung. |
+
+### Sonst
+
+`wallplotter-web` löst `python -m wallplotter.webapp` als dokumentierten
+Startbefehl ab; nur darüber lassen sich Port und Board setzen. Das
+Konsolenskript läuft jetzt im CI-Rauchtest mit, es kommt auch ohne NiceGUI bis
+zum `--help`.
+
+`wallplotter-kinematics` war der einzige der zehn Konsolenbefehle, den das
+README nirgends nannte. Er steht jetzt unter „Genauigkeit", wo er hingehört:
+Ankerposition durchrechnen, bevor gebohrt wird.
+
+Das erste Beispiel unter „Plotten" zeigt wieder `examples/testmuster.svg`. Die
+Datei liegt im Repo, die Zeile läuft in einem frischen Klon durch — ein
+Beispiel mit `bild.svg` tut das nicht.
+
+Die Extras werden als Tabelle erklärt statt als fünf `pip`-Zeilen; `site` fehlte
+in der Erklärung ganz.
+
+### Ton
+
+Warnungen sachlich statt dramatisch. Der Laser bleibt als ungeprüft
+gekennzeichnet und die Ablehnung von `--travel-as-g1` wird begründet, aber ohne
+Bilder vom Strahl quer über die Wand; ConfigAlarm wird genannt, nicht
+beschworen; „vier davon tödlich" ist raus.
+
+Dazu weniger Sprachtics: 48 Geviertstriche auf 4, Fettdruck von 25 auf 7
+Stellen, ein paar Antithesen und pointierte Schlusssätze weniger.
+
 ## Unveröffentlicht — die Gegenlesung und was sie fand
 
 Der Erzeuger ist von 54 Agenten gegengelesen worden, in sechs Sichten und mit
