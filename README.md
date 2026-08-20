@@ -239,7 +239,7 @@ wallplotter-web --board 192.168.1.42
 Erreichbar unter `http://<pc-ip>:8080`, auch vom Handy an der Wand. Drei Reiter:
 
 * **Plotten** — Upload oder Testmuster, Flächen- und Stiftparameter, Vorschau
-  (Zeichenwege blau, Leerwege rot gestrichelt), Plot starten
+  (Zeichenwege in der Stiftfarbe, Leerwege rot gestrichelt), Plot starten
 * **Kalibrieren** — Jog-Pad, Nullpunkt setzen, Ecken übernehmen und wieder
   anfahren, Schiefstandswarnung, Standort anlegen samt Kinematik-Urteil
 * **Maschine** — SD-Fortschritt, Pause, Weiter, Stopp
@@ -370,7 +370,7 @@ upload_and_run(gcode, "bild.gcode")
 
 | Modul | Aufgabe |
 | --- | --- |
-| `config` | Wandmaße, Vorschübe, Servowerte, FluidNC-Zugang |
+| `config` | Wandmaße, Vorschübe, FluidNC-Zugang |
 | `geometry` | Bounding-Box, Einpassen, Spiegeln, Längen- und Zeitschätzung |
 | `pipeline` | SVG → Linien in mm (vpype), plus SVG-Vorschau |
 | `imaging` | Fotos → Linien: hatch, stipple, tsp, spiral |
