@@ -78,7 +78,8 @@ Betrieb am Board.
 ### Noch zu beschaffen
 
 - Servo MG90S (Metallgetriebe) für den Pen-Lift
-- 24-V-Netzteil, ausreichend für 2× 1,2 A + Servo + Reserve
+- **ein** 24-V-Netzteil, 4–5 A: 2× 1,2 A Motoren plus Reserve. Servo, Endstops
+  und Logik kommen aus der Platine (Board nimmt DC 24–56 V)
 - Aderendhülsen, Motor-Verlängerungskabel
 - GT2-Riemen **mit Stahlkern** (siehe Abschnitt 8 — das ist der wichtigste Einkauf)
 
@@ -288,11 +289,23 @@ BTTs eigene Datei nutzt einen VFD über RS485 und belegt gar keinen PWM-Port. Zw
 es: `gpio.25` liegt als `Sp-Enable` auf dem 3-poligen Stecker CN51 heraus, über
 100 Ω und auf 3,3 V geklemmt — genau richtig für einen Servo-Signaleingang. Der
 Stecker mit der Aufschrift „PWM" ist dagegen ein analoger 3–10-V-Ausgang mit
-Trimmpoti und wäre falsch gewesen. Die Versorgung des Servos darf **nicht** vom
-+5-V-Pin desselben Steckers kommen (dort liegen ebenfalls 100 Ω); dafür braucht
-es ein eigenes Netzteil. Auch richtiggestellt: gpio.2, 4, 12 und 13 sind am
-Rodent gar nicht herausgeführt. Verdrahtung in der
-[Bauanleitung](bauanleitung.md), Abschnitt 7.4.
+Trimmpoti und wäre falsch gewesen.
+
+Die **Versorgung** des Servos darf nicht vom +5-V-Pin desselben Steckers kommen —
+dort liegen ebenfalls 100 Ω. Hier stand daraufhin „dafür braucht es ein eigenes
+Netzteil", und das war zu kurz gedacht: Unbrauchbar ist nur dieser eine Pin, nicht
+der 5-V-Zweig der Platine. Ohne Vorwiderstand kommt er am **OLED-Stecker** (Pin
+`+5V`) heraus und an jedem **Endstop-Stecker** (Pin `V-Lim`, wenn die
+`SW_VCC`-Brücke auf +5 V steckt). Dazu ein Elko an der Gondel — dann genügt **ein**
+Netzteil für die ganze Maschine. Verdrahtung und die Messung, mit der man das
+absichert, in der [Bauanleitung](bauanleitung.md), Abschnitt 7.4.
+
+Ebenfalls richtiggestellt, und diesmal in die andere Richtung: Hier stand, gpio.2,
+4, 12 und 13 seien am Rodent gar nicht herausgeführt. Für **gpio.2, gpio.4 und
+gpio.12 ist das falsch** — sie schalten die drei V-MOS-Leistungsausgänge
+(DC 12–36 V, bis 5 A). Als Servosignal taugen sie trotzdem nicht (Low-Side-MOSFETs,
+keine Logikausgänge), aber als Air Assist, Absaugung oder Arbeitslicht sehr wohl:
+`coolant: flood_pin: gpio.4`, geschaltet mit `M8`/`M9`.
 
 ### Nullpunkt und Homing — die wichtigste Firmware-Entscheidung
 

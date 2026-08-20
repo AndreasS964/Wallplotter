@@ -193,15 +193,39 @@ axes:
 #   CN51 Pin 3 --[R24 100R]-- gpio.25, ESD-Klemmdiode 3,3 V gegen GND
 #
 # Also: Signal an Pin 3, Masse an Pin 2 — aber die SERVOVERSORGUNG NICHT vom
-# +5-V-Pin abgreifen. Da liegen ebenfalls 100 Ohm in Reihe, an denen ein MG90S
-# (mehrere hundert mA im Anlauf) die Spannung vollständig zusammenbrechen
-# lässt. Eigenes 5-V-Netzteil, Masse mit dem Board zusammenlegen.
+# +5-V-Pin dieses Steckers abgreifen. Da liegen ebenfalls 100 Ohm in Reihe, an
+# denen ein MG90S (mehrere hundert mA im Anlauf) die Spannung vollständig
+# zusammenbrechen lässt.
+#
+# Ein zweites Netzteil braucht es dafür aber NICHT — das stand hier eine
+# Zeitlang und war zu kurz gedacht. Die Platine hat einen eigenen 5-V-Zweig,
+# und der kommt an zwei Stellen ohne Vorwiderstand heraus:
+#
+#   * OLED-Stecker, Pin +5V (neben SDA/SCL/GND)
+#   * jeder Endstop-Stecker, Pin V-Lim — wenn die SW_VCC-Brücke (CN44) auf +5V steckt
+#
+# Von dort die rote Servoleitung, Masse weiter an CN51 Pin 2. Dazu 470 bis
+# 1000 uF Elko plus 100 nF direkt an der Gondel: Ein Stiftheber zieht im Mittel
+# fast nichts, aber für rund 100 ms beim Hub einige hundert mA — der Puffer
+# nimmt genau diese Spitze auf, statt sie durch die Zuleitung zu holen.
+#
+# Wie viel der 5-V-Zweig hergibt, steht im Rodent-Handbuch nirgends. Also
+# nachmessen: Servo mehrfach heben und senken, dabei die 5 V beobachten. Sackt
+# sie unter etwa 4,5 V oder startet der ESP32 neu, kommt ein kleiner
+# Abwärtswandler an die Motorklemme (24 V auf 5 V, 2 bis 3 A). Auch das ist
+# kein zweites Netzteil, sondern ein Bauteil für wenige Euro am vorhandenen.
 #
 # Der Stecker mit der Aufschrift "PWM" ist NICHT der richtige: das ist ein
 # analoger 3-10-V-Drehzahlausgang mit Trimmpoti (VR-10K), für einen VFD
-# gedacht. Ebenfalls richtiggestellt: gpio.2, gpio.4, gpio.12 und gpio.13 sind
-# keine brauchbaren Alternativen — sie sind am Rodent nirgends herausgeführt,
-# und 2/12/13 sind ESP32-Strapping- bzw. JTAG-Pins.
+# gedacht.
+#
+# Ebenfalls richtiggestellt, und diesmal in die andere Richtung: gpio.2, gpio.4
+# und gpio.12 sind am Rodent SEHR WOHL herausgeführt — hier stand einmal das
+# Gegenteil. Sie schalten die drei V-MOS-Leistungsausgänge
+# (DC12V bis DC36V, bis 5 A je Ausgang). Für den Servo taugen sie trotzdem nicht: das
+# sind Low-Side-MOSFETs an einem eigenen Spannungseingang, keine
+# Logikausgänge.
+# Wofür sie taugen, steht beim Laserblock weiter unten.
 pwm:
   # Servo-Takt
   pwm_hz: 50
@@ -262,6 +286,12 @@ pwm:
 # Endwert als `--laser-smax` übernehmen. Steht dort 255 und die Software
 # rechnet mit 1000, kommt viermal zu wenig Leistung heraus — oder umgekehrt.
 #
+# Die Luft (M8) hängt an einem V-MOS-Ausgang. Genau dafür sind die drei da:
+# DC12V bis DC36V, bis 5 A je Ausgang, geschaltet von
+# gpio.12 (V-MOS 1), gpio.2 (V-MOS 2), gpio.4 (V-MOS 3).
+# Eigener Spannungseingang, also Pumpe oder Ventil direkt daran — kein
+# Relais, kein weiteres Netzteil. Dasselbe gilt für Absaugung oder Licht.
+#
 # Aus, solange kein Laser dranhängt — einschalten mit `--laser`.
 #
 # Laser:
@@ -279,8 +309,8 @@ pwm:
 #
 # coolant:
 #   mist_pin: NO_PIN
-#   # Air Assist, angesteuert mit M8 (aus: M9)
-#   flood_pin: NO_PIN
+#   # Air Assist über V-MOS, angesteuert mit M8 (aus: M9)
+#   flood_pin: gpio.4
 #   delay_ms: 500
 
 # ---------------------------------------------------------------------------
@@ -295,7 +325,14 @@ pwm:
 #
 # Die Eingänge sind frei: weil die WallPlotter-Kinematik nicht referenzieren
 # kann, wird kein einziger der fünf optogekoppelten Endstop-Eingänge gebraucht.
-# Taster gegen GND, Spannungswahl über die SW_VCC-Brücke (5 V bei 24-V-Board).
+# Taster gegen GND, Spannungswahl über die SW_VCC-Brücke (CN44) auf +5V.
+#
+# ACHTUNG, Steckbrücken abziehen: Auf denselben GPIOs liegen die
+# DIAG-Ausgänge der Treiber, wenn die Brücken gesteckt sind —
+# DIAGX auf gpio.35, DIAGY auf gpio.34, DIAGZ auf gpio.33, DIAGE auf gpio.32.
+# Bleibt eine davon drin, treibt der Treiber gegen den Taster. Für einen
+# Wandplotter sind sie ohnehin nutzlos: StallGuard-Homing kann diese
+# Kinematik nicht.
 #
 # `cycle_start_pin` ist zusätzlich der einzige heute funktionierende Weg, die
 # M0-Pause beim Stiftwechsel aufzulösen.

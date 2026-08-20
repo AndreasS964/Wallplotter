@@ -112,6 +112,40 @@ und wirft den Rest der Zeile weg. Ein Backslash bleibt ein Backslash. Deshalb
 einfache Anführungszeichen zuerst, doppelte nur ohne Backslash, und ein Text mit
 beiden Sorten wird abgelehnt statt kaputt geschrieben.
 
+### Zwei Netzteile waren einmal zu kurz gedacht
+
+Aus dem Rodent-Handbuch (Pinbild S. 6/7, Schaltpläne S. 8/9/12/13) noch einmal
+nachgeschlagen, weil die Empfehlung „der Servo braucht ein eigenes 5-V-Netzteil"
+schlicht unbequem war — und tatsächlich falsch:
+
+* Unbrauchbar ist nur der **+5-V-Pin am Spindelstecker** (100 Ω in Reihe, R25).
+  Der 5-V-Zweig der Platine selbst kommt ohne Vorwiderstand am **OLED-Stecker**
+  (Pin `+5V`) und an jedem **Endstop-Stecker** (Pin `V-Lim`, `SW_VCC`-Brücke auf
+  +5 V) heraus. Die 1 kΩ im Endstop-Schaltplan liegen in der LED-Strecke des
+  Optokopplers, nicht im Versorgungspin — sonst ließe sich dort auch kein
+  NPN-Näherungsschalter mit 12 V betreiben, wofür die Spannungswahl da ist.
+* Damit reicht **ein** Netzteil für die ganze Maschine. Der Rodent nimmt
+  DC 24–56 V und erzeugt daraus selbst +12 V und +5 V; für zwei NEMA17 mit
+  1,2 A Phasenstrom genügen 24 V bei 4–5 A. Weder Endstops noch Motoren brauchen
+  eine eigene Versorgung.
+* Dazu gehört ein Elko (470–1000 µF) plus 100 nF direkt an der Gondel. Ein
+  Stiftheber zieht im Mittel fast nichts, aber für rund 100 ms beim Hub einige
+  hundert Milliampere — der Puffer liefert genau diese Spitze vor Ort.
+* Wie viel der 5-V-Zweig hergibt, steht im Handbuch nirgends. Also nachmessen;
+  sackt die Spannung unter ~4,5 V, kommt ein Abwärtswandler (24 V → 5 V) an die
+  Motorklemme. Auch das ist kein zweites Netzteil.
+
+Und eine Richtigstellung in die andere Richtung: Hier stand, `gpio.2`, `gpio.4`
+und `gpio.12` seien am Rodent nirgends herausgeführt. **Falsch** — sie schalten
+die drei V-MOS-Leistungsausgänge (DC 12–36 V, bis 5 A). Für einen Servo bleiben
+sie ungeeignet (Low-Side-MOSFETs, keine Logikausgänge), aber der Air Assist des
+Lasers hängt jetzt dort statt an `NO_PIN`: `coolant: flood_pin: gpio.4`.
+
+Neu in der Bauanleitung außerdem: **die DIAG-Steckbrücken müssen ab**, wenn die
+Not-Halt-Taster benutzt werden. `DIAGX`→gpio.35, `DIAGY`→gpio.34, `DIAGZ`→gpio.33,
+`DIAGE`→gpio.32 liegen auf denselben Pins; bleibt eine drin, treibt der Treiber
+gegen den Taster.
+
 ### Flash statt SD-Karte
 
 `FluidNCClient` kann jetzt beides auseinanderhalten, weil FluidNC es

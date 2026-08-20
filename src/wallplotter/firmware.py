@@ -269,6 +269,34 @@ class BoardProfile:
 
     spare_drivers_note: str = ""
 
+    # -- Versorgung --------------------------------------------------------
+    input_voltage: str = ""
+    """Eingangsspannung der Platine, wie im Handbuch angegeben."""
+
+    five_volt_taps: tuple[str, ...] = ()
+    """Wo der **rohe** 5-V-Zweig herauskommt — ohne Vorwiderstand.
+
+    Der +5-V-Pin am Spindelstecker gehört ausdrücklich *nicht* dazu: dort
+    liegen 100 Ohm in Reihe. Diese Unterscheidung ist der Grund, warum in
+    diesem Projekt eine Zeitlang ein zweites Netzteil empfohlen wurde.
+    """
+
+    vmos_ports: tuple[tuple[str, str], ...] = ()
+    """Die schaltbaren Leistungsausgänge: (GPIO, Beschreibung).
+
+    Low-Side-MOSFETs an einem eigenen Eingang — kein Logikausgang. Für einen
+    Servo also unbrauchbar, für Luft, Absaugung oder Licht genau richtig.
+    """
+
+    vmos_voltage: str = ""
+
+    diag_jumpers: tuple[tuple[str, str], ...] = ()
+    """Steckbrücken, die einen Treiber-DIAG-Ausgang auf einen GPIO legen.
+
+    Sie sitzen auf denselben Pins wie die Endstop-Eingänge. Wer dort Taster
+    betreibt, muss sie abziehen — sonst treibt der Treiber gegen den Taster.
+    """
+
     def output_pins(self) -> dict[str, str]:
         """Alle Pins, auf denen das Board etwas *ausgibt* — für die Kollisionsprüfung."""
         return {
@@ -329,6 +357,23 @@ RODENT_V1 = BoardProfile(
     cycle_start_pin_note="Z-MAX-Stecker",
     spare_drivers_note=(
         "Die beiden freien Treiber (I2SO.10/9/8 und I2SO.13/12/15, spi_index 3 und 4)"
+    ),
+    input_voltage="DC24V bis DC56V",
+    five_volt_taps=(
+        "OLED-Stecker, Pin +5V (neben SDA/SCL/GND)",
+        "jeder Endstop-Stecker, Pin V-Lim — wenn die SW_VCC-Brücke (CN44) auf +5V steckt",
+    ),
+    vmos_ports=(
+        ("gpio.12", "V-MOS 1"),
+        ("gpio.2", "V-MOS 2"),
+        ("gpio.4", "V-MOS 3"),
+    ),
+    vmos_voltage="DC12V bis DC36V, bis 5 A je Ausgang",
+    diag_jumpers=(
+        ("DIAGX", "gpio.35"),
+        ("DIAGY", "gpio.34"),
+        ("DIAGZ", "gpio.33"),
+        ("DIAGE", "gpio.32"),
     ),
 )
 
@@ -488,6 +533,14 @@ class FirmwareConfig:
     @property
     def laser_pin(self) -> str:
         return self.laser.output_pin or self.board.laser_pin
+
+    @property
+    def air_assist_pin(self) -> str:
+        """Der V-MOS-Ausgang für die Luft — der letzte der drei, damit die
+        beiden vorderen für Absaugung und Licht frei bleiben."""
+        if not self.board.vmos_ports:
+            return "NO_PIN"
+        return self.board.vmos_ports[-1][0]
 
     def command_line(self) -> str:
         """Der Aufruf, der genau diese Datei wieder erzeugt.
@@ -1006,15 +1059,38 @@ class FirmwareConfig:
             f"#   CN51 Pin 3 --[R24 100R]-- {board.servo_pin}, ESD-Klemmdiode 3,3 V gegen GND",
             "#",
             "# Also: Signal an Pin 3, Masse an Pin 2 — aber die SERVOVERSORGUNG NICHT vom",
-            "# +5-V-Pin abgreifen. Da liegen ebenfalls 100 Ohm in Reihe, an denen ein MG90S",
-            "# (mehrere hundert mA im Anlauf) die Spannung vollständig zusammenbrechen",
-            "# lässt. Eigenes 5-V-Netzteil, Masse mit dem Board zusammenlegen.",
+            "# +5-V-Pin dieses Steckers abgreifen. Da liegen ebenfalls 100 Ohm in Reihe, an",
+            "# denen ein MG90S (mehrere hundert mA im Anlauf) die Spannung vollständig",
+            "# zusammenbrechen lässt.",
+            "#",
+            "# Ein zweites Netzteil braucht es dafür aber NICHT — das stand hier eine",
+            "# Zeitlang und war zu kurz gedacht. Die Platine hat einen eigenen 5-V-Zweig,",
+            "# und der kommt an zwei Stellen ohne Vorwiderstand heraus:",
+            "#",
+            *(f"#   * {tap}" for tap in board.five_volt_taps),
+            "#",
+            "# Von dort die rote Servoleitung, Masse weiter an CN51 Pin 2. Dazu 470 bis",
+            "# 1000 uF Elko plus 100 nF direkt an der Gondel: Ein Stiftheber zieht im Mittel",
+            "# fast nichts, aber für rund 100 ms beim Hub einige hundert mA — der Puffer",
+            "# nimmt genau diese Spitze auf, statt sie durch die Zuleitung zu holen.",
+            "#",
+            "# Wie viel der 5-V-Zweig hergibt, steht im Rodent-Handbuch nirgends. Also",
+            "# nachmessen: Servo mehrfach heben und senken, dabei die 5 V beobachten. Sackt",
+            "# sie unter etwa 4,5 V oder startet der ESP32 neu, kommt ein kleiner",
+            "# Abwärtswandler an die Motorklemme (24 V auf 5 V, 2 bis 3 A). Auch das ist",
+            "# kein zweites Netzteil, sondern ein Bauteil für wenige Euro am vorhandenen.",
             "#",
             "# Der Stecker mit der Aufschrift \"PWM\" ist NICHT der richtige: das ist ein",
             "# analoger 3-10-V-Drehzahlausgang mit Trimmpoti (VR-10K), für einen VFD",
-            "# gedacht. Ebenfalls richtiggestellt: gpio.2, gpio.4, gpio.12 und gpio.13 sind",
-            "# keine brauchbaren Alternativen — sie sind am Rodent nirgends herausgeführt,",
-            "# und 2/12/13 sind ESP32-Strapping- bzw. JTAG-Pins.",
+            "# gedacht.",
+            "#",
+            "# Ebenfalls richtiggestellt, und diesmal in die andere Richtung: gpio.2, gpio.4",
+            "# und gpio.12 sind am Rodent SEHR WOHL herausgeführt — hier stand einmal das",
+            "# Gegenteil. Sie schalten die drei V-MOS-Leistungsausgänge",
+            f"# ({board.vmos_voltage}). Für den Servo taugen sie trotzdem nicht: das",
+            "# sind Low-Side-MOSFETs an einem eigenen Spannungseingang, keine",
+            "# Logikausgänge.",
+            "# Wofür sie taugen, steht beim Laserblock weiter unten.",
             "pwm:",
             *_kv("  ", "pwm_hz", servo.pwm_hz, "Servo-Takt"),
             *_kv("  ", "output_pin", board.servo_pin, board.servo_pin_note),
@@ -1081,6 +1157,12 @@ class FirmwareConfig:
             "# Vor dem Einschalten: `speed_map` gegen das eigene Netzteil prüfen und den",
             "# Endwert als `--laser-smax` übernehmen. Steht dort 255 und die Software",
             "# rechnet mit 1000, kommt viermal zu wenig Leistung heraus — oder umgekehrt.",
+            "#",
+            "# Die Luft (M8) hängt an einem V-MOS-Ausgang. Genau dafür sind die drei da:",
+            f"# {board.vmos_voltage}, geschaltet von",
+            "# " + ", ".join(f"{pin} ({label})" for pin, label in board.vmos_ports) + ".",
+            "# Eigener Spannungseingang, also Pumpe oder Ventil direkt daran — kein",
+            "# Relais, kein weiteres Netzteil. Dasselbe gilt für Absaugung oder Licht.",
         ]
         lines += self._laser_block()
         return "\n".join(lines)
@@ -1110,7 +1192,12 @@ class FirmwareConfig:
                 "",
                 "coolant:",
                 "  mist_pin: NO_PIN",
-                *_kv("  ", "flood_pin", "NO_PIN", "Air Assist, angesteuert mit M8 (aus: M9)"),
+                *_kv(
+                    "  ",
+                    "flood_pin",
+                    self.air_assist_pin,
+                    "Air Assist über V-MOS, angesteuert mit M8 (aus: M9)",
+                ),
                 "  delay_ms: 500",
             ]
 
@@ -1172,7 +1259,14 @@ class FirmwareConfig:
                 "#",
                 "# Die Eingänge sind frei: weil die WallPlotter-Kinematik nicht referenzieren",
                 "# kann, wird kein einziger der fünf optogekoppelten Endstop-Eingänge gebraucht.",
-                "# Taster gegen GND, Spannungswahl über die SW_VCC-Brücke (5 V bei 24-V-Board).",
+                "# Taster gegen GND, Spannungswahl über die SW_VCC-Brücke (CN44) auf +5V.",
+                "#",
+                "# ACHTUNG, Steckbrücken abziehen: Auf denselben GPIOs liegen die",
+                "# DIAG-Ausgänge der Treiber, wenn die Brücken gesteckt sind —",
+                "# " + ", ".join(f"{name} auf {pin}" for name, pin in board.diag_jumpers) + ".",
+                "# Bleibt eine davon drin, treibt der Treiber gegen den Taster. Für einen",
+                "# Wandplotter sind sie ohnehin nutzlos: StallGuard-Homing kann diese",
+                "# Kinematik nicht.",
                 "#",
                 "# `cycle_start_pin` ist zusätzlich der einzige heute funktionierende Weg, die",
                 "# M0-Pause beim Stiftwechsel aufzulösen.",
