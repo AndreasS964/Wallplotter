@@ -90,7 +90,7 @@ Drei Maße pro Aufhängung, danach kennt die Software die Geometrie:
 ```bash
 wallplotter-calibrate --host 192.168.1.42 zero      # Gondel am Referenzpunkt
 wallplotter-location new Keller --span 2300 --left 1450 --right 1470
-wallplotter-location show                           # Auflösung, Riemenkräfte, Riemenlänge
+wallplotter-location show                           # Maße und Ankerkoordinaten nachsehen
 ```
 
 `--span` ist der Abstand der beiden Umlenkpunkte, `--left` und `--right` sind die
@@ -106,8 +106,8 @@ wallplotter-location push --host 192.168.1.42
 wallplotter-location pull --host 192.168.1.42
 ```
 
-Zusammengeführt wird dabei nichts automatisch: welcher von zwei auseinander
-gelaufenen Ständen der richtige ist, weiß nur, wer dabei war.
+Zusammengeführt wird dabei nichts automatisch. Sind zwei Stände auseinander
+gelaufen, entscheidet man selbst, welcher gilt.
 
 ## Die `config.yaml` erzeugen
 
@@ -318,8 +318,8 @@ plot bild.svg --correction korrektur.json
 ```
 
 Der Anpassungsschritt sagt, wieviel die Korrektur überhaupt wegnimmt. Wird der
-Fehler nicht deutlich kleiner, war zu grob gemessen oder das Modell passt nicht;
-dann hilft die Mechanik weiter und nicht die Software.
+Fehler nicht deutlich kleiner, war zu grob gemessen oder das Modell passt nicht.
+Dann liegt es an der Mechanik.
 
 Ein zweiter Effekt ist die Gondel selbst: sie pendelt mit 1,3 bis 2 Hz. Trifft
 die Umkehrfrequenz einer Schraffur diesen Bereich, werden die Linien wellig.
@@ -372,7 +372,7 @@ upload_and_run(gcode, "bild.gcode")
 | --- | --- |
 | `config` | Wandmaße, Vorschübe, Servowerte, FluidNC-Zugang |
 | `geometry` | Bounding-Box, Einpassen, Spiegeln, Längen- und Zeitschätzung |
-| `pipeline` | SVG oder Bild → Linien in mm (vpype), plus SVG-Vorschau |
+| `pipeline` | SVG → Linien in mm (vpype), plus SVG-Vorschau |
 | `imaging` | Fotos → Linien: hatch, stipple, tsp, spiral |
 | `gcode` | Linien → GCode (`G0`/`G1`, `M3`/`M5`) |
 | `toolhead` | Stiftkatalog: Servowerte, Vorschub, Strichbreite |
@@ -386,6 +386,7 @@ upload_and_run(gcode, "bild.gcode")
 | `upload` + `sdstore` | FluidNC-Web-API, Telnet-Kanal, Daten auf der SD-Karte |
 | `resume` | abgebrochenen Plot fortsetzen |
 | `patterns` | Testmuster für die Erstinbetriebnahme |
+| `doctor` | Selbsttest über Installation, Standort, Konfiguration, Board |
 | `wizard` | der geführte Ablauf, unabhängig von der Oberfläche |
 | `design` | eine Palette für Website, Web-UI und Terminal |
 | `cli`, `webapp`, `*_cli` | Kommandozeile und Web-Oberfläche |
@@ -399,8 +400,8 @@ pytest
 ```
 
 Tests, die vpype, NiceGUI, PyYAML oder `markdown` brauchen, überspringen sich
-selbst, wenn das Paket fehlt. In der CI ist alles installiert, und dort färbt ein
-übersprungener Test den Lauf rot.
+selbst, wenn das Paket fehlt. Im CI-Auftrag mit allen Extras ist dagegen alles
+installiert, und ein übersprungener Test färbt den Lauf dort rot.
 
 ## Dokumentation
 
