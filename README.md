@@ -10,7 +10,7 @@
   <a href="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-461-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-687-brightgreen">
   <img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-lightgrey">
 </p>
 
@@ -76,6 +76,7 @@ pip install -e ".[geometry,dev]"      # Kern + vpype + Tests
 pip install -e ".[web]"               # zusätzlich für die Web-UI
 pip install -e ".[photo]"             # zusätzlich für Fotos (nur Pillow)
 pip install -e ".[hatch]"             # zusätzlich für Schraffur (zieht vpype, OpenCV & Co. nach)
+pip install -e ".[site]"              # zusätzlich für tools/build_site.py
 ```
 
 Ohne die Extras funktionieren GCode-Export, Statistik, Vorschau und Upload —
@@ -494,8 +495,10 @@ Pipeline.
 pytest
 ```
 
-Tests, die vpype, NiceGUI oder PyYAML brauchen, überspringen sich selbst, wenn
-das Paket fehlt — der Rest läuft immer.
+Tests, die vpype, NiceGUI, PyYAML oder `markdown` brauchen, überspringen sich
+selbst, wenn das Paket fehlt — der Rest läuft immer. In der CI gilt das nicht:
+dort ist alles installiert, und ein übersprungener Test färbt den Lauf rot.
+Ein Test, der sich selbst überspringt, findet nichts.
 
 ## Stand
 
@@ -505,7 +508,7 @@ Board unterwegs, Mechanik noch nicht gedruckt. Die
 behoben.
 
 * **Verifiziert ohne Hardware:** Geometrie, GCode-Export, Kalibrierlogik,
-  Testmuster, Kinematikrechnung, Bildverfahren, UI-Verdrahtung — 461 Tests.
+  Testmuster, Kinematikrechnung, Bildverfahren, UI-Verdrahtung — 687 Tests.
   Die board-nahen Tests laufen gegen eine Gegenstelle, die sich wie FluidNC
   verhält: unbekannte Endpunkte sind 404, und `/command?plain=` versteht nur
   `$`-Kommandos. Die alten Attrappen quittierten alles mit 200 — darüber sind

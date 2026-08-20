@@ -95,6 +95,23 @@ prüfte die Ankerwerte schon vorher und warnte. Die echte Verbesserung ist eine
 andere — die Meldung kam nur, wenn jemand den Selbsttest aufrief, und ihr Rat
 verwies auf einen Befehl, der nur den Kinematikblock liefert.
 
+### Ein übersprungener Test ist kein grüner Test
+
+Der Test, der die Website gegen `design.py` hält, übersprang sich in der CI:
+`tools/build_site.py` braucht `markdown`, und das stand in keinem Extra — der
+Pages-Auftrag installierte es von Hand. Damit prüfte niemand mehr, ob Website
+und Web-UI dieselben Farben benutzen; genau die Drift, gegen die der Test
+gebaut wurde. Neu ist deshalb das Extra `site` (`markdown`, `pygments`), das
+beide Aufträge installieren.
+
+Dazu ein Fund aus dem eigenen Protokoll: Der Modulkopf von `fluidnc_schema.py`
+zeigt den `grep`-Aufruf, mit dem die Schlüsselliste entstand — mit `handler\.item(`
+darin. Python liest `\.` als ungültige Maskierung und warnt beim Übersetzen.
+Aufgefallen ist es erst in der CI, weil eine warme `__pycache__` die Warnung
+schluckt: Sie entsteht nur beim echten Übersetzen. `tests/test_quelltext.py`
+übersetzt jetzt jede Datei aus `src/`, `tests/` und `tools/` einzeln und lässt
+keine Warnung durch.
+
 ## Unveröffentlicht — ein Aussehen statt drei
 
 Die Web-UI sah nach Standard-Quasar aus: blauer Riegel oben, graue Fläche

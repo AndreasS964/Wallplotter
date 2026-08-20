@@ -1,4 +1,4 @@
-"""Welche Schlüssel FluidNC in der ``config.yaml`` kennt — und in welchem Abschnitt.
+r"""Welche Schlüssel FluidNC in der ``config.yaml`` kennt — und in welchem Abschnitt.
 
 Warum diese Tabelle überhaupt existiert: **ein einziger unbekannter Schlüssel
 legt das Board still.** FluidNC meldet ihn beim Einlesen als

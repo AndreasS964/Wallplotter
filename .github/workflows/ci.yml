@@ -32,7 +32,7 @@ jobs:
       - name: Install (alle Extras)
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[geometry,web,photo,hatch,dev]"
+          pip install -e ".[geometry,web,photo,hatch,dev,site]"
 
       - name: Lint
         run: ruff check .
