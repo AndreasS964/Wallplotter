@@ -413,8 +413,8 @@ Ohne Extras funktionieren GCode-Export, Kalibrierlogik, Testmuster und Upload.
 der Wand. Drei Reiter für die drei Situationen vor der Wand:
 
 - **Plotten** — Upload oder Testmuster, Verfahren für Fotos, Flächen- und
-  Stiftparameter, Vorschau (Zeichenwege blau, Leerwege rot gestrichelt),
-  Farbebenen einzeln startbar
+  Stiftparameter, Vorschau (Zeichenwege in der Stiftfarbe, Leerwege rot
+  gestrichelt), Farbebenen einzeln startbar
 - **Kalibrieren** — Jog-Pad, Nullpunkt, Ecken übernehmen und anfahren,
   Schiefstandswarnung, Standort anlegen samt Kinematik-Urteil
 - **Maschine** — SD-Fortschritt, Pause/Weiter/Stopp

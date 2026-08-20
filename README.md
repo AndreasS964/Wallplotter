@@ -1,9 +1,8 @@
 <h1 align="center">Wallplotter</h1>
 
 <p align="center">
-  Bild-zu-GCode-Toolchain für einen selbstgebauten V-Plotter, der Wandflächen bemalt.<br>
-  Läuft mit <b>FluidNC</b> auf einem BIGTREETECH-Rodent-Board — SVG oder Foto rein,
-  GCode auf die SD-Karte raus.
+  Bild-zu-GCode-Toolchain für einen selbstgebauten V-Plotter.<br>
+  SVG oder Foto rein, GCode für <b>FluidNC</b> auf dem BIGTREETECH-Rodent-Board raus.
 </p>
 
 <p align="center">
@@ -20,51 +19,27 @@
 
 ---
 
-## Die Idee in einem Bild
+## Was das ist
 
-Eine Gondel hängt an zwei Zahnriemen zwischen zwei Motoren. Wo genau die Anker
-sitzen, ist nicht fest — der Plotter soll an wechselnden Wänden hängen. Deshalb
-wird jede Aufhängung eingemessen statt angenommen: **drei Maße mit dem
-Zollstock**, den Rest rechnet die Software.
+Eine Gondel hängt an zwei Zahnriemen zwischen zwei Motoren und zieht einen Stift
+über die Wand. Diese Software erzeugt das GCode-Programm dazu, lädt es auf das
+Board und startet es.
+
+Der Plotter hängt nicht immer an derselben Wand. Ankerabstand und Ankerhöhe
+gehören deshalb zum Aufbau und nicht ins Programm: pro Standort drei Maße mit dem
+Zollstock, alles Weitere rechnet die Software.
 
 <p align="center">
   <img src="docs/images/geometrie.svg" alt="Geometrie: Anker, Riemen, Gondel, Zeichenfläche" width="620">
 </p>
 
-```bash
-wallplotter-setup                      # geführt, von der leeren Wand bis zum ersten Strich
-```
+Der erzeugte GCode ist GRBL, wie FluidNC ihn erwartet: `G0`/`G1` zum Fahren,
+`M3 S<wert>` und `M5` für den Servo am Stiftheber. Die Makelangelo-Software
+schreibt stattdessen Marlin-Dialekt mit `M280` und eigenen `D`-Codes, der auf
+diesem Board nicht läuft.
 
-Oder einzeln, wenn man weiß, was man will:
-
-```bash
-wallplotter-location new Keller --span 2300 --left 1450 --right 1470
-wallplotter-location show              # Auflösung, Riemenkräfte, Riemenlänge
-wallplotter-firmware config --location Keller --out config.yaml
-```
-
-## Dokumentation
-
-Alles auch gesetzt und verlinkt unter
-**[andreass964.github.io/Wallplotter](https://andreass964.github.io/Wallplotter/)**.
-
-| Dokument | Inhalt |
-| --- | --- |
-| **[Bauanleitung](docs/bauanleitung.md)** | **Vom Karton bis zum ersten Strich** — Stückliste, Mechanik, Verkabelung, Erstinbetriebnahme, Fehlersuche |
-| [Gegenprüfung](docs/firmware-gegenpruefung.md) | was der FluidNC-Quelltext sagt und wo das Repo danebenliegt |
-| [Projekthandbuch](docs/wandplotter-handbuch.md) | Alles an einer Stelle — Hardware, Kinematik, Firmware, Abläufe, Qualität, offene Punkte |
-| [Projektidee](docs/projektidee.md) | Hardware, Mechanik, Entscheidungen |
-| [Software-Roadmap](docs/software-roadmap.md) | Stufenplan und UI-Architektur |
-| [Kinematik-Auswertung](docs/kinematik.md) | gerechnete Zahlen für eine Beispielaufhängung |
-| [Aussehen](src/wallplotter/design.py) | die eine Palette für Website, Web-UI und Terminal |
-| [FluidNC-Konfiguration](config/fluidnc-wallplotter.yaml) | kommentierte `config.yaml` fürs Rodent-Board — **erzeugt**, siehe unten |
-
-## Warum eigener GCode-Export?
-
-Die Makelangelo-Software erzeugt einen Marlin-spezifischen Dialekt (`M280`,
-proprietäre `D`-Codes). FluidNC will GRBL: `G0`/`G1` zum Fahren, `M3 S<wert>` /
-`M5` für den Pen-Lift-Servo am PWM-Pin. Genau das erzeugt `wallplotter.gcode` —
-und sonst nichts.
+Wer den Plotter erst noch baut, fängt bei der
+**[Bauanleitung](docs/bauanleitung.md)** an.
 
 ## Installation
 
@@ -72,318 +47,205 @@ und sonst nichts.
 git clone https://github.com/AndreasS964/Wallplotter.git
 cd Wallplotter
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[geometry,dev]"      # Kern + vpype + Tests
-pip install -e ".[web]"               # zusätzlich für die Web-UI
-pip install -e ".[photo]"             # zusätzlich für Fotos (nur Pillow)
-pip install -e ".[hatch]"             # zusätzlich für Schraffur (zieht vpype, OpenCV & Co. nach)
-pip install -e ".[site]"              # zusätzlich für tools/build_site.py
+pip install -e ".[geometry,web,dev]"
 ```
 
-Ohne die Extras funktionieren GCode-Export, Statistik, Vorschau und Upload —
-nur das Einlesen von SVG/Bildern braucht vpype.
+| Extra | Wofür |
+| --- | --- |
+| `geometry` | SVG einlesen (vpype) |
+| `web` | Web-Oberfläche (NiceGUI) |
+| `photo` | Fotos rastern (Pillow) |
+| `hatch` | Schraffur; zieht vpype, OpenCV und matplotlib nach |
+| `dev` | Tests und Linter |
+| `site` | `tools/build_site.py` |
 
-## Benutzung
+GCode-Export, Vorschau, Kalibrierung und Upload laufen auch ganz ohne Extras.
 
-### Standort einrichten
+## Schnellstart
 
-Der Plotter soll an wechselnden Wänden hängen — Ankerabstand und -höhe sind
-deshalb keine Konstanten, sondern gehören zum jeweiligen Aufbau. Pro Standort
-drei Maße mit dem Zollstock, alles Weitere folgt daraus:
+```bash
+wallplotter-setup
+```
+
+Führt in acht Schritten von der leeren Wand zum ersten Strich: Installation
+prüfen, Board erreichen, Aufhängung einmessen, `config.yaml` erzeugen und
+übertragen, Nullpunkt setzen, Fläche abstecken, Stiftheber einstellen, Rahmen
+plotten. Jeder Schritt stellt selbst fest, ob er schon erledigt ist, deshalb
+lässt sich der Ablauf jederzeit abbrechen und später fortsetzen.
+
+```bash
+wallplotter-setup --status     # nur zeigen, was noch fehlt
+wallplotter-setup --ab servo   # ab einem bestimmten Schritt weitermachen
+```
+
+Ohne Board läuft die Hälfte trotzdem: messen, rechnen, `config.yaml` schreiben
+und prüfen. Was die Maschine braucht, steht am Ende als Liste offener Punkte da.
+
+Alles Folgende geht auch einzeln.
+
+## Standort einrichten
+
+Drei Maße pro Aufhängung, danach kennt die Software die Geometrie:
 
 ```bash
 wallplotter-calibrate --host 192.168.1.42 zero      # Gondel am Referenzpunkt
 wallplotter-location new Keller --span 2300 --left 1450 --right 1470
-wallplotter-firmware config --location Keller --out config.yaml
+wallplotter-location show                           # Maße und Ankerkoordinaten nachsehen
 ```
 
-`--span` ist der Abstand der beiden Umlenkpunkte, `--left`/`--right` die
+`--span` ist der Abstand der beiden Umlenkpunkte, `--left` und `--right` sind die
 Riemenlängen vom jeweiligen Umlenkpunkt zur Gondel am Nullpunkt. Daraus fallen
-die Ankerkoordinaten per Trilateration heraus — die kommen in die
-`config.yaml`, nicht ins Repo.
+die Ankerkoordinaten per Trilateration heraus.
 
-`wallplotter-location list` zeigt alle Aufhängungen, `use <Name>` wechselt.
-In der Web-UI steht die Auswahl oben in der Kopfzeile.
-
-### Geführt: `wallplotter-setup`
-
-Alles Folgende geht auch einzeln. Der Wizard nimmt einem vor allem eine Sache
-ab: **die Reihenfolge**, und die verzeiht an drei Stellen keinen Fehler.
+`wallplotter-location list` zeigt alle Aufhängungen, `use <Name>` wechselt. In
+der Web-UI steht die Auswahl oben in der Kopfzeile. Die Standortdaten wandern mit
+dem Plotter, wenn man sie auf die SD-Karte legt:
 
 ```bash
-wallplotter-setup            # dort weiter, wo es aufgehört hat
-wallplotter-setup --status   # nur nachsehen, was noch fehlt
-wallplotter-setup --ab servo # gezielt einen Abschnitt
+wallplotter-location push --host 192.168.1.42
+wallplotter-location pull --host 192.168.1.42
 ```
 
-Acht Schritte: Installation → Board erreichen → Aufhängung einmessen →
-`config.yaml` erzeugen und übertragen → Nullpunkt → Fläche abstecken →
-Stiftheber einstellen → erster Plot. Jeder sagt dazu, **warum** er hier steht
-und nicht später; jeder prüft nach; abbrechen und fortsetzen geht jederzeit,
-weil jeder Schritt selbst weiß, ob er schon erledigt ist.
+Zusammengeführt wird dabei nichts automatisch. Sind zwei Stände auseinander
+gelaufen, entscheidet man selbst, welcher gilt.
 
-Ohne Board läuft die halbe Vorbereitung trotzdem — messen, rechnen, die
-`config.yaml` schreiben und prüfen. Was die Maschine braucht, steht am Ende als
-Liste da:
+## Die `config.yaml` erzeugen
 
-```
-[5/8] Nullpunkt setzen: übersprungen, kein Board
-
-Noch offen:
-  * config.yaml liegt in config/fluidnc-wallplotter.yaml, ist aber noch nicht
-    auf dem Board: wallplotter-firmware push --host <ip> --location Keller
-  * Fläche abstecken braucht die Maschine: wallplotter-setup --ab flaeche
-```
-
-Die Servowerte, die dabei herauskommen, bleiben im Standort stehen — der
-Stiftkatalog liefert nur Schätzungen, und die liegen an jedem Aufbau anders.
-
-### Die `config.yaml` wird erzeugt, nicht getippt
-
-Die Firmware-Konfiguration ist kein Dokument, das man pflegt, sondern ein
-Erzeugnis derselben Beschreibung, mit der auch die Vorschau rechnet:
+Die Firmware-Konfiguration ist ein Erzeugnis derselben Beschreibung, mit der auch
+die Vorschau rechnet:
 
 ```bash
-wallplotter-firmware config --location Keller --out config/fluidnc-wallplotter.yaml
-wallplotter-firmware pruefen config/fluidnc-wallplotter.yaml   # ohne Board
-wallplotter-firmware diff   config/fluidnc-wallplotter.yaml    # was hat sich geändert?
-wallplotter-firmware push   --host 192.168.1.42 --location Keller
+wallplotter-firmware config  --location Keller --out config/fluidnc-wallplotter.yaml
+wallplotter-firmware pruefen config/fluidnc-wallplotter.yaml
+wallplotter-firmware diff    config/fluidnc-wallplotter.yaml
+wallplotter-firmware push    --host 192.168.1.42 --location Keller
 ```
 
-Damit hängen drei Dinge nicht mehr davon ab, dass jemand daran denkt:
+Drei Werte hängen damit nicht mehr daran, dass jemand sie von Hand nachzieht:
+die Ankermaße folgen aus dem eingemessenen Standort, `steps_per_mm` aus Pulley,
+Riementeilung und Mikroschritten, und die `speed_map` aus dem Impulsfenster des
+Servos (bei 50 Hz will ein RC-Servo 1,0 bis 2,0 ms, also 5 bis 10 % Tastverhältnis).
 
-* **Ankermaße.** Sie kommen aus dem eingemessenen Standort — derselben Rechnung,
-  die die Vorschau benutzt. Vorher standen sie an zwei Stellen und liefen
-  auseinander. Aufgefallen wäre das nur dem, der `wallplotter-doctor` aufrief —
-  der prüft die Ankerwerte gegen den aktiven Standort und tut es weiterhin.
-  Nur ist eine Prüfung, die man aufrufen muss, keine, die einen erreicht: Wer
-  sie ausließ, plottete schief.
-* **Schritte pro Millimeter.** Sie folgen aus Pulley, Riementeilung und
-  Mikroschritten. Wer im Treiberblock die Mikroschritte änderte und oben
-  `steps_per_mm` vergaß, fuhr um denselben Faktor daneben.
-* **Der Servoweg.** `speed_map` bildet auf das *Tastverhältnis* ab, nicht auf
-  einen Winkel. Bei 50 Hz will ein RC-Servo 1,0 bis 2,0 ms Impuls, also 5 bis
-  10 % — der Erzeuger rechnet das aus, statt es zu raten.
-
-`pruefen` schaut zweimal hin. Einmal wie ein YAML-Parser: jeder Schlüssel gegen
-eine Liste, die aus dem FluidNC-Quelltext gezogen ist — **ein einziger
-unbekannter Schlüssel setzt das Board in ConfigAlarm**, und dann fährt gar
-nichts. Und einmal wie FluidNCs eigener Tokenizer, der von YAML abweicht:
+`pruefen` liest die Datei zweimal: einmal als YAML, mit jedem Schlüssel gegen eine
+Liste aus dem FluidNC-Quelltext, und einmal mit den Regeln von FluidNCs eigenem
+Tokenizer. Der zweite Blick lohnt sich, weil die Firmware Kommentare am
+Zeilenende nicht abschneidet. Aus
 
 ```yaml
 idle_ms: 255 # Motoren gehalten lassen
 ```
 
-Jeder YAML-Parser liest daraus `255`. FluidNC nimmt den ganzen Rest der Zeile
-als Wert, scheitert beim Umwandeln — und geht in ConfigAlarm. Die ausgelieferte
-Datei hatte elf solche Zeilen, vier davon tödlich; gefunden hat sie erst dieser
-zweite Blickwinkel. Ausführlich in der
+liest jeder YAML-Parser `255`, FluidNC dagegen die ganze Zeile. Die ausgelieferte
+Datei hatte elf solche Zeilen; Details in der
 [Gegenprüfung](docs/firmware-gegenpruefung.md), Abschnitt 2.6.
 
-Mit `--host` holt `pruefen` die Datei vorher vom Board — der schnellste Weg zur
-Ursache, wenn ein Board nicht anläuft.
+Mit `--host` holt `pruefen` die Datei vorher vom Board. `push` schreibt in den
+Flash, denn von der SD-Karte liest FluidNC die Konfiguration nicht, und sichert
+die bisherige Fassung vorher.
 
-`push` schreibt in den **Flash**, nicht auf die SD-Karte: dort liest FluidNC die
-Konfiguration nie. Die bisherige Fassung wird vorher heruntergeladen und
-gesichert.
+## Fläche einmessen
 
-### Fläche einmessen
-
-Wie groß die bemalbare Fläche ist, hängt ebenfalls am Aufbau — also nicht
-messen, sondern anfahren:
+Wie groß die bemalbare Fläche ist, hängt am Aufbau. Statt zu messen, fährt man
+die Ecken an:
 
 ```bash
-wallplotter-calibrate --host 192.168.1.42 jog --dx -100 # Gondel bewegen
+wallplotter-calibrate --host 192.168.1.42 jog --dx -100
 wallplotter-calibrate --host 192.168.1.42 record bottom-left
 # ... die übrigen drei Ecken, dann:
 wallplotter-calibrate show
-plot bild.svg --location --upload --run
 ```
 
-Die Ecken landen im aktiven Standort. Vier sind ideal (dann warnt das Tool auch
-bei schiefer Aufhängung), zwei diagonale reichen. Das Ergebnis ist bewusst das
-größte Rechteck *innerhalb* der angefahrenen Punkte: lieber etwas kleiner als
-neben der Wand. `wallplotter-location show` rechnet dann Auflösung, Riemenkräfte
+Die Ecken landen im aktiven Standort. Vier sind ideal, dann meldet das Tool auch
+eine schiefe Aufhängung; zwei diagonale reichen. Das Ergebnis ist das größte
+Rechteck innerhalb der angefahrenen Punkte, also eher etwas kleiner als die
+tatsächliche Fläche. `wallplotter-location show` rechnet Auflösung, Riemenkräfte
 und Riemenlänge für genau diese Fläche durch.
+
+## Plotten
+
+```bash
+plot examples/testmuster.svg --out out/test.gcode --preview out/test-vorschau.svg
+plot bild.svg --location --upload --run
+plot foto.jpg --technique tsp
+```
+
+Die erste Zeile läuft in einem frischen Klon sofort durch und schreibt GCode und
+Vorschau nach `out/`.
+
+Wichtige Optionen: `--width`, `--height`, `--margin` für die Fläche in mm,
+`--draw-feed` für den Vorschub, `--pen-down`/`--pen-up` für die S-Werte des
+Servos, `--travel-as-g1` für langsame Leerwege, falls die Riemen springen, und
+`--occult` zum Entfernen verdeckter Linien. `plot --help` zeigt den Rest.
+
+vpypes `reloop` würfelt den Startpunkt geschlossener Kurven, damit der
+Stiftansatz nicht als Punktmuster sichtbar wird. Derselbe Input ergibt dadurch
+nicht denselben GCode; zum Vergleichen zweier Läufe hilft `--no-reloop`.
 
 ### Werkzeug wählen
 
-Was unten an der Gondel hängt, ist keine Konstante. Der Katalog liefert
-Startwerte je Stiftsorte:
-
 ```bash
-plot --list-toolheads                  # was es gibt und mit welchen Werten
-plot bild.svg --toolhead marker        # dickerer Strich, längere Servo-Wartezeit
-plot bild.svg --toolhead pinsel --pen-dwell 0.6   # Katalogwert nachjustieren
+plot --list-toolheads
+plot bild.svg --toolhead marker
+plot bild.svg --toolhead pinsel --pen-dwell 0.6
 ```
 
-Die Zahlen sind **geschätzte Startwerte**, keine Messwerte — Servohebel,
-Federweg und Halter sind an jedem Aufbau anders. Nachgezogen wird mit
-`plot --pattern pen-test`: fehlende Strichanfänge heißen zu kurze Wartezeit,
+Im Katalog stehen `fineliner`, `fineliner-rot`, `kugelschreiber`, `marker`,
+`kreide`, `pinsel` und `laser`. Die Servowerte darin sind geschätzte Startwerte,
+weil Hebel, Federweg und Halter an jedem Aufbau anders sind. Nachgezogen wird mit
+`plot --pattern pen-test`: fehlende Strichanfänge bedeuten zu kurze Wartezeit,
 ausgefranste Enden zu viel Anpressdruck.
 
-### Mehrfarbig plotten
+### Mehrfarbig
 
 ```bash
 plot bild.svg --layers                 # je Strichfarbe eine GCode-Datei
-plot bild.svg --layers --one-file      # eine Datei, M0-Pause zum Stiftwechsel
+plot bild.svg --layers --one-file      # eine Datei mit M0-Pause zum Stiftwechsel
 plot bild.svg --layers --pen-for '#000000=fineliner' --pen-for '#e02020=marker'
 ```
 
-Getrennt ist für mehrstündige Plots das Vernünftige: Schwarz heute, Rot
-morgen. Alle Ebenen werden *gemeinsam* eingepasst — würde jede für sich
-skaliert, fiele die Zeichnung auseinander. Mit `--pen-for` bekommt jede Farbe
-ihren eigenen Stift samt Servo-Werten und Vorschub; die `M0`-Pause nennt dann
-Farbe *und* Stift.
-
-### Laser
-
-Vorbereitet, aber an keiner Hardware erprobt — vor dem ersten scharfen Schuss
-gehört das erzeugte Programm gelesen, nicht geglaubt.
-
-```bash
-plot bild.svg --toolhead laser --laser-verstanden \
-     --laser-smax 1000 --laser-power 35 --laser-passes 2
-```
-
-`--laser-smax` steht in der `speed_map` der `config.yaml` und ist je nach
-Aufbau 255 oder 1000; die Leistung wird in Prozent davon gerechnet. Ohne
-`--laser-verstanden` entsteht kein Laser-GCode, und `--travel-as-g1` wird
-zusammen mit einem Laser *verweigert* statt bloß bemängelt: ein G1-Leerweg
-führte mit eingeschaltetem Strahl quer über die Wand.
-
-Stift und Laser können nicht denselben Pin und nicht dieselbe PWM-Frequenz
-benutzen (50 Hz gegen Kilohertz). Die `config.yaml` trägt den zweiten
-Spindelblock auskommentiert bei.
-
-### Abgebrochenen Plot fortsetzen
-
-Ein Wandbild läuft Stunden; irgendwann bricht ein Lauf ab.
-
-```bash
-wallplotter-resume wand.gcode --from-board --host 192.168.1.42
-wallplotter-resume wand.gcode --percent 42        # oder von Hand geschätzt
-```
-
-Angesetzt wird am Anfang des angefangenen Strichs, nicht exakt an der
-Abbruchstelle: FluidNC meldet den Fortschritt als Prozent der gelesenen
-Bytes (`SD:<prozent>,<pfad>`, zwei Nachkommastellen), und der
-Planer liest der Mechanik voraus — lieber einen Strich doppelt als einen gar
-nicht. Vor dem Start muss der Nullpunkt wieder stehen.
-
-### Nachmessen und gegenrechnen
-
-Über drei Meter Länge ist ein GT2-Riemen eine Feder. Was davon übrig bleibt,
-lässt sich messen und vorverzerren:
-
-```bash
-wallplotter-correct raster --steps 4 -o raster.gcode   # 16 Kreuze plotten
-wallplotter-correct messen --steps 4                   # Vorlage zum Eintragen
-# Ist-Werte mit dem Zollstock nachtragen, dann:
-wallplotter-correct anpassen                           # → korrektur.json
-plot bild.svg --correction korrektur.json
-```
-
-Der Anpassungsschritt sagt, wieviel die Korrektur überhaupt wegnimmt. Wird der
-Fehler nicht deutlich kleiner, war zu grob gemessen oder das Modell passt
-nicht — dann ist die Mechanik die richtige Antwort, nicht die Software.
-
-### Wenn etwas nicht geht
-
-```bash
-wallplotter-doctor --host 192.168.1.42
-```
-
-Geht die Kette einmal von vorn nach hinten durch: Installation, Kern,
-Standort, Firmware-Konfiguration, Board. Prüft dabei drei Dinge an der
-`config.yaml`: ob FluidNC jeden Schlüssel darin kennt, ob die Ankermaße noch zu
-denen des aktiven Standorts passen — genau da wird ein Wandbild unbemerkt
-schief — und ob die Datei noch das ist, was `wallplotter-firmware` schreiben
-würde.
-
-Wenn das Board zwischen zwei Farben aus war, ist der Nullpunkt weg — `G92`
-ist flüchtig. Zwei Wege zurück:
-
-```bash
-# sofort: kalibrierte Ecke anfahren und den Nullpunkt darüber wiederherstellen
-wallplotter-calibrate goto bottom-left
-wallplotter-calibrate zero --corner bottom-left
-
-# dauerhaft: als G54-Versatz ablegen, der im NVS des ESP32 überlebt
-wallplotter-calibrate zero --persistent
-```
-
-Der G54-Weg trägt allerdings nur zusammen mit einer *reproduzierbaren*
-Referenzfahrt — ohne Homing ist die Maschinenposition nach dem Einschalten
-willkürlich, und ein gespeicherter Versatz zeigt dann ins Leere. Das Rodent
-Richtigstellung dazu: Die früher hier empfohlene Referenzfahrt per StallGuard
-gibt es nicht. `WallPlotter::canHome()` in FluidNC gibt `false` zurück — `$H`
-endet mit „This kinematic system cannot home", mit Endschalter wie ohne.
-Reproduzierbar wird die Referenz nur mechanisch: Gondel an den Anschlag und
-**das Board dort neu starten**, denn FluidNC friert die Riemenlängen für
-kartesisch (0,0) beim Booten ein. Erst danach trägt ein G54-Versatz. Alles
-dazu in der [Bauanleitung](docs/bauanleitung.md), Abschnitt 9.4.
-
-In der Web-UI erscheinen die Farbebenen mit Farbfeld unter der Vorschau, jede
-einzeln startbar.
-
-### Daten auf der SD-Karte
-
-Der Plotter wandert zwischen Wänden — dann sollen die Standortdaten
-mitwandern statt auf einem Rechner zu liegen:
-
-```bash
-wallplotter-location push --host 192.168.1.42   # Standorte auf die Karte
-wallplotter-location pull --host 192.168.1.42   # und wieder zurück
-```
-
-Bewusst ohne automatisches Zusammenführen: Welcher von zwei auseinander
-gelaufenen Ständen der richtige ist, kann nur entscheiden, wer dabei war.
+Getrennte Dateien sind bei mehrstündigen Plots das Praktischere: Schwarz heute,
+Rot morgen. Alle Ebenen werden gemeinsam eingepasst, sonst fiele die Zeichnung
+auseinander. Mit `--pen-for` bekommt jede Farbe ihren eigenen Stift samt
+Servowerten und Vorschub, und die `M0`-Pause nennt Farbe und Stift.
 
 ### Testmuster
 
 ```bash
 plot --list-patterns
 plot --pattern frame --location --upload --run
-plot --pattern feed-ramp --out out/tempo.gcode
 ```
 
 ![Testmuster](docs/images/muster.png)
 
-`frame` (Rahmen, Diagonalen, Eckkreuze), `grid` (Maßstab nachmessen),
-`circles` (Verzerrung), `pen-test` (Servo-Wartezeit), `feed-ramp` (Tempo bis
-zum Riemenspringen).
+`frame` (Rahmen, Diagonalen, Eckkreuze), `grid` (Maßstab nachmessen), `circles`
+(Verzerrung), `pen-test` (Servo-Wartezeit), `feed-ramp` (Tempo bis zum
+Riemenspringen).
 
-### CLI
-
-```bash
-plot examples/testmuster.svg --out out/test.gcode --preview out/test-preview.svg
-plot examples/testmuster.svg --host 192.168.1.42 --upload --run
-plot foto.jpg --technique tsp                      # Foto-Zweig
-```
-
-Wichtige Optionen: `--width/--height/--margin` (Fläche in mm), `--draw-feed`,
-`--pen-down/--pen-up` (S-Werte des Servos), `--travel-as-g1` (Leerwege langsam
-fahren, falls die Riemen springen), `--occult` (verdeckte Linien entfernen).
-`plot --help` zeigt alles.
-
-Standardmäßig würfelt vpypes `reloop` den Startpunkt geschlossener Kurven, damit
-der Stiftansatz nicht als Punktmuster sichtbar wird — derselbe Input ergibt
-dadurch nicht denselben GCode. Zum Vergleichen zweier Läufe `--no-reloop`.
-
-### Web-UI
+### Abgebrochenen Plot fortsetzen
 
 ```bash
-python -m wallplotter.webapp
+wallplotter-resume wand.gcode --from-board --host 192.168.1.42
+wallplotter-resume wand.gcode --percent 42
 ```
 
-Erreichbar unter `http://<pc-ip>:8080` — auch vom Handy an der Wand. Drei
-Reiter für die drei Situationen vor der Wand:
+Angesetzt wird am Anfang des angefangenen Strichs. FluidNC meldet den Fortschritt
+als Prozent der gelesenen Bytes, und der Planer liest der Mechanik voraus; ein
+doppelt gezogener Strich fällt weniger auf als ein fehlender. Wer es genauer
+will, nimmt `--exact`. Vor dem Start muss der Nullpunkt wieder stehen.
+
+## Web-UI
+
+```bash
+wallplotter-web --board 192.168.1.42
+```
+
+Erreichbar unter `http://<pc-ip>:8080`, auch vom Handy an der Wand. Drei Reiter:
 
 * **Plotten** — Upload oder Testmuster, Flächen- und Stiftparameter, Vorschau
-  (Zeichenwege blau, Leerwege rot gestrichelt), Plot starten
+  (Zeichenwege in der Stiftfarbe, Leerwege rot gestrichelt), Plot starten
 * **Kalibrieren** — Jog-Pad, Nullpunkt setzen, Ecken übernehmen und wieder
   anfahren, Schiefstandswarnung, Standort anlegen samt Kinematik-Urteil
-* **Maschine** — SD-Fortschritt, Pause/Weiter/Stopp
+* **Maschine** — SD-Fortschritt, Pause, Weiter, Stopp
 
 Auf dem Handy stapeln sich die Karten, das Jog-Pad steht dabei oben.
 
@@ -398,7 +260,114 @@ Auf dem Handy stapeln sich die Karten, das Jog-Pad steht dabei oben.
 </tr>
 </table>
 
-### Als Bibliothek
+## Fotos
+
+```bash
+plot --list-techniques
+plot foto.jpg --technique spiral --pitch 25
+```
+
+| Verfahren | Charakter | Stifthübe | Stand |
+| --- | --- | --- | --- |
+| `stipple` | Punktraster, fotografisch | einer je Punkt | läuft |
+| `tsp` | dieselben Punkte als eine durchgehende Linie | keine | läuft |
+| `spiral` | Spirale mit dunkelheitsabhängiger Auslenkung | keine | läuft |
+| `hatch` | Schraffur nach Helligkeitsstufen, grafisch | viele | fällt derzeit aus |
+
+![Vergleich der Bildverfahren](docs/images/verfahren.png)
+
+`tsp` und `spiral` zeichnen ohne abzusetzen, damit entfallen Servo-Artefakte und
+Pendelstöße durch Leerfahrten. `hatch` hängt am Fremdpaket `hatched`, dessen
+letzte Veröffentlichung (0.2.0) mit Shapely 2 nicht mehr läuft; der Aufruf meldet
+das im Klartext samt Ausweg. Die Zeitangaben im Bild gelten für 2 × 2,5 m bei
+1500 mm/min.
+
+## Laser
+
+Der Laserpfad ist umgesetzt, aber an keiner Hardware erprobt. Vor dem ersten
+Einsatz gehört das erzeugte Programm durchgesehen.
+
+```bash
+plot bild.svg --toolhead laser --laser-verstanden \
+     --laser-smax 1000 --laser-power 35 --laser-passes 2
+```
+
+`--laser-smax` steht in der `speed_map` der `config.yaml` und ist je nach Aufbau
+255 oder 1000; die Leistung wird in Prozent davon gerechnet. Ohne
+`--laser-verstanden` entsteht kein Laser-GCode. `--travel-as-g1` lehnt der
+Export zusammen mit einem Laser ab, weil der Strahl auf einem G1-Leerweg
+anbliebe.
+
+Stift und Laser teilen sich weder Pin noch PWM-Frequenz (50 Hz gegen Kilohertz).
+Die `config.yaml` trägt den zweiten Spindelblock auskommentiert bei.
+
+## Genauigkeit
+
+Nachgerechnet mit der eigenen Kinematik ([`docs/kinematik.md`](docs/kinematik.md))
+liegt der Flaschenhals bei der **Riemendehnung**: 0,12 bis 0,83 mm über die
+Fläche. Die Motorauflösung liegt mit 0,013 mm weit darunter, die Segmentierung
+noch weiter.
+
+Der wirksamste Hebel wird beim Einkauf entschieden: GT2 mit Stahlkern statt
+Glasfaser drückt die Dehnung auf 0,17 mm und schiebt die Längsresonanz von 22 auf
+50 Hz, weg von der Anregung durch typische Vorschübe. Was danach übrig bleibt,
+rechnet `wallplotter-correct` gegen:
+
+```bash
+wallplotter-correct raster --steps 4 -o raster.gcode   # 16 Kreuze plotten
+wallplotter-correct messen --steps 4                   # Vorlage zum Eintragen
+wallplotter-correct anpassen                           # → korrektur.json
+plot bild.svg --correction korrektur.json
+```
+
+Der Anpassungsschritt sagt, wieviel die Korrektur überhaupt wegnimmt. Wird der
+Fehler nicht deutlich kleiner, war zu grob gemessen oder das Modell passt nicht.
+Dann liegt es an der Mechanik.
+
+Ein zweiter Effekt ist die Gondel selbst: sie pendelt mit 1,3 bis 2 Hz. Trifft
+die Umkehrfrequenz einer Schraffur diesen Bereich, werden die Linien wellig.
+`wallplotter.motion` warnt vorher und nennt zwei Auswege.
+
+Wo die Anker am besten sitzen, lässt sich vor dem Bohren durchrechnen:
+
+```bash
+wallplotter-kinematics --compare   # Überstand und Höhe gegeneinander stellen
+```
+
+Die Tabelle zeigt je Position Auflösung, Riemenwinkel, größte Zugkraft und
+Riemenbedarf. Anker höher zu setzen hilft dabei mehr, als sie weiter zu spreizen.
+
+## Wenn etwas klemmt
+
+```bash
+wallplotter-doctor --host 192.168.1.42
+```
+
+Geht die Kette von vorn nach hinten durch: Installation, Kern, Standort,
+Firmware-Konfiguration, Board. An der `config.yaml` prüft es drei Dinge — ob
+FluidNC jeden Schlüssel darin kennt, ob die Ankermaße zum aktiven Standort
+passen und ob die Datei noch das ist, was `wallplotter-firmware` schreiben würde.
+
+War das Board zwischen zwei Farben aus, ist der Nullpunkt weg, denn `G92` ist
+flüchtig:
+
+```bash
+# sofort: kalibrierte Ecke anfahren, Nullpunkt darüber wiederherstellen
+wallplotter-calibrate goto bottom-left
+wallplotter-calibrate zero --corner bottom-left
+
+# dauerhaft: als G54-Versatz ablegen, der im NVS des ESP32 überlebt
+wallplotter-calibrate zero --persistent
+```
+
+Der G54-Weg trägt nur zusammen mit einer reproduzierbaren Referenz. Eine
+Referenzfahrt per `$H` gibt es hier nicht: `WallPlotter::canHome()` liefert in
+FluidNC `false`, mit Endschalter wie ohne. Reproduzierbar wird die Referenz
+mechanisch, indem man die Gondel an den Anschlag fährt und das Board dort neu
+startet; FluidNC friert die Riemenlängen für kartesisch (0,0) beim Booten ein.
+Ausführlich in der [Bauanleitung](docs/bauanleitung.md), Abschnitt 9.4.
+
+## Als Bibliothek
 
 ```python
 from wallplotter import PlotConfig, lines_to_gcode, upload_and_run
@@ -409,85 +378,32 @@ gcode = lines_to_gcode(lines, PlotConfig(width_mm=2000, height_mm=2500, margin_m
 upload_and_run(gcode, "bild.gcode")
 ```
 
-## Druckqualität
-
-Nachgerechnet mit der eigenen Kinematik (`docs/kinematik.md`): Die Auflösung
-(0,013 mm) und die Segmentierung (0,0003 mm) sind *nicht* der Flaschenhals —
-die **Riemendehnung** ist es, mit 0,12 bis 0,83 mm über die Fläche. Daraus
-folgt:
-
-* **Riemen mit Stahlkern** statt Glasfaser drückt das um Faktor 5 (0,83 → 0,17 mm).
-  Der billigste und wirksamste Hebel, und einer, der vor dem Kauf entschieden
-  werden will. Steifer geht immer — HTD 5M oder Stahlseil kämen auf 0,06 bzw.
-  0,02 mm — lohnt aber nicht: der Rest liegt längst unter der Strichbreite
-  eines Filzstifts, und Seil auf Trommel handelt sich veränderlichen
-  Wickelradius und Schlupf ein.
-* Nebenwirkung, die genauso zählt: Der Riemen bildet mit der Gondel einen
-  **Längsschwinger**. Glasfaser landet bei rund 22 Hz — und 1500 mm/min bei
-  1 mm Segmentlänge regen mit 25 Hz genau dort an. Stahlkern verschiebt das
-  auf 50 Hz. Zusätzlich hilft `segment_length: 2` in der Firmware: kostet nur
-  1 µm Bahntreue und halbiert die Anregung.
-* `wallplotter.correction` rechnet den Rest gegen: entweder physikalisch aus
-  den Zugkräften (`StretchCorrection`, ein Materialwert, aus Messpunkten
-  bestimmbar) oder empirisch aus einem nachgemessenen Raster
-  (`MeasuredCorrection`, Polynom bis Grad 3). Das Modell gewinnt deutlich —
-  ein angepasster Materialwert schlägt zehn Polynomkoeffizienten.
-* Die Gondel ist ein **Pendel** mit 1,3–2 Hz. Trifft die Umkehrfrequenz einer
-  Schraffur diesen Bereich, werden die Linien wellig; `wallplotter.motion`
-  warnt vorher und nennt zwei Auswege.
-
-### Verfahren für Fotos
-
-Für Bildvorlagen entscheidet das Verfahren mehr als die Mechanik:
-
-```bash
-plot --list-techniques
-plot foto.jpg --technique spiral --pitch 25
-```
-
-| Verfahren | Charakter | Stifthübe | Stand |
-| --- | --- | --- | --- |
-| `hatch` | Schraffur nach Helligkeitsstufen, grafisch | viele | **fällt derzeit aus, siehe unten** |
-| `stipple` | Punktraster, fotografisch | einer je Punkt | läuft |
-| `tsp` | dieselben Punkte als eine durchgehende Linie | keine | läuft |
-| `spiral` | Spirale mit dunkelheitsabhängiger Auslenkung | keine | läuft |
-
-`hatch` liegt an dem Fremdpaket `hatched`, und dessen letzte Veröffentlichung
-(0.2.0) ist mit Shapely 2 nicht mehr lauffähig — sie baut ein leeres
-`MultiLineString` aus einem numpy-Array, was Shapely 2 ablehnt. Der Aufruf
-meldet das im Klartext samt Ausweg. Die drei übrigen Verfahren brauchen nur
-Pillow, und `tsp` wie `spiral` sind an einer Wand ohnehin die ruhigeren.
-
-![Vergleich der Bildverfahren](docs/images/verfahren.png)
-
-`tsp` und `spiral` zeichnen ohne abzusetzen — damit entfallen Servo-Artefakte
-und die Pendelstöße durch Leerfahrten ganz. Die Zeitangaben gelten für
-2 × 2,5 m bei 1500 mm/min.
-
 ## Aufbau
 
 | Modul | Aufgabe |
 | --- | --- |
-| `wallplotter.config` | Wandmaße, Vorschübe, Pen-Servo-Werte, FluidNC-Zugang |
-| `wallplotter.geometry` | Bounding-Box, Einpassen, Spiegeln, Längen-/Zeitschätzung (ohne vpype) |
-| `wallplotter.pipeline` | SVG/Bild → Linien in mm (vpype), plus SVG-Vorschau |
-| `wallplotter.gcode` | Linien → GCode (`G0`/`G1`, `M3`/`M5`) |
-| `wallplotter.upload` | FluidNC-Web-API: Upload, `$SD/Run`, Status, Pause/Stop |
-| `wallplotter.kinematics` | Auflösung, Riemenlängen, Zugkräfte nachrechnen |
-| `wallplotter.calibration` | angefahrene Ecken → nutzbare Fläche mit Versatz |
-| `wallplotter.location` | Standorte: Ankermaße + Fläche je Aufhängung |
-| `wallplotter.sdstore` | Standortdaten auf der SD-Karte des Boards |
-| `wallplotter.patterns` | Testmuster für die Erstinbetriebnahme |
-| `wallplotter.imaging` | Fotos → Linien: hatch, stipple, tsp, spiral |
-| `wallplotter.correction` | Vorverzerrung gegen Riemendehnung und Messfehler |
-| `wallplotter.motion` | Pendelresonanz, positionsabhängiger Vorschub |
-| `wallplotter.cli` | Stufe 2 der Roadmap |
-| `wallplotter.calibrate_cli` | Jog, Nullpunkt, Ecken aufnehmen |
-| `wallplotter.location_cli` | Standorte anlegen, wechseln, Kinematikblock ausgeben |
-| `wallplotter.webapp` | Stufen 3–6 der Roadmap (NiceGUI) |
+| `config` | Wandmaße, Vorschübe, FluidNC-Zugang |
+| `geometry` | Bounding-Box, Einpassen, Spiegeln, Längen- und Zeitschätzung |
+| `pipeline` | SVG → Linien in mm (vpype), plus SVG-Vorschau |
+| `imaging` | Fotos → Linien: hatch, stipple, tsp, spiral |
+| `gcode` | Linien → GCode (`G0`/`G1`, `M3`/`M5`) |
+| `toolhead` | Stiftkatalog: Servowerte, Vorschub, Strichbreite |
+| `kinematics` | Auflösung, Riemenlängen, Zugkräfte |
+| `calibration` | angefahrene Ecken → nutzbare Fläche mit Versatz |
+| `location` | Standorte: Ankermaße und Fläche je Aufhängung |
+| `correction` | Vorverzerrung gegen Riemendehnung und Messfehler |
+| `motion` | Pendelresonanz, positionsabhängiger Vorschub |
+| `timing` | Beschleunigung, Vorschubgrenzen, Laufzeitschätzung |
+| `firmware` + `fluidnc_schema` | `config.yaml` erzeugen und gegen FluidNC halten |
+| `upload` + `sdstore` | FluidNC-Web-API, Telnet-Kanal, Daten auf der SD-Karte |
+| `resume` | abgebrochenen Plot fortsetzen |
+| `patterns` | Testmuster für die Erstinbetriebnahme |
+| `doctor` | Selbsttest über Installation, Standort, Konfiguration, Board |
+| `wizard` | der geführte Ablauf, unabhängig von der Oberfläche |
+| `design` | eine Palette für Website, Web-UI und Terminal |
+| `cli`, `webapp`, `*_cli` | Kommandozeile und Web-Oberfläche |
 
-CLI und Web-UI nutzen dieselben Funktionen — es gibt bewusst keine zweite
-Pipeline.
+CLI und Web-UI nutzen dieselben Funktionen; eine zweite Pipeline gibt es nicht.
 
 ## Tests
 
@@ -496,35 +412,41 @@ pytest
 ```
 
 Tests, die vpype, NiceGUI, PyYAML oder `markdown` brauchen, überspringen sich
-selbst, wenn das Paket fehlt — der Rest läuft immer. In der CI gilt das nicht:
-dort ist alles installiert, und ein übersprungener Test färbt den Lauf rot.
-Ein Test, der sich selbst überspringt, findet nichts.
+selbst, wenn das Paket fehlt. Im CI-Auftrag mit allen Extras ist dagegen alles
+installiert, und ein übersprungener Test färbt den Lauf dort rot.
+
+## Dokumentation
+
+Alles gesetzt und verlinkt unter
+**[andreass964.github.io/Wallplotter](https://andreass964.github.io/Wallplotter/)**.
+
+| Dokument | Inhalt |
+| --- | --- |
+| **[Bauanleitung](docs/bauanleitung.md)** | vom Karton bis zum ersten Strich: Stückliste, Mechanik, Verkabelung, Inbetriebnahme, Fehlersuche |
+| [Projekthandbuch](docs/wandplotter-handbuch.md) | Hardware, Kinematik, Firmware, Abläufe, Qualität, offene Punkte |
+| [Gegenprüfung](docs/firmware-gegenpruefung.md) | was der FluidNC-Quelltext sagt und wo das Repo danebenlag |
+| [Kinematik-Auswertung](docs/kinematik.md) | gerechnete Zahlen für eine Beispielaufhängung |
+| [Projektidee](docs/projektidee.md) | Hardware, Mechanik, Entscheidungen |
+| [Software-Roadmap](docs/software-roadmap.md) | Stufenplan und UI-Architektur |
+| [FluidNC-Konfiguration](config/fluidnc-wallplotter.yaml) | die erzeugte `config.yaml` fürs Rodent-Board |
 
 ## Stand
 
-Board unterwegs, Mechanik noch nicht gedruckt. Die
-[Gegenprüfung gegen den FluidNC-Quelltext](docs/firmware-gegenpruefung.md) hat
-39 belegte Funde ergeben, davon fünf, die das Board blockiert hätten — die sind
-behoben.
+Board unterwegs, Mechanik noch nicht gedruckt.
 
-* **Verifiziert ohne Hardware:** Geometrie, GCode-Export, Kalibrierlogik,
-  Testmuster, Kinematikrechnung, Bildverfahren, UI-Verdrahtung — 687 Tests.
-  Die board-nahen Tests laufen gegen eine Gegenstelle, die sich wie FluidNC
-  verhält: unbekannte Endpunkte sind 404, und `/command?plain=` versteht nur
-  `$`-Kommandos. Die alten Attrappen quittierten alles mit 200 — darüber sind
-  sechs Firmware-Fehler jahrelang grün geblieben.
-* **Behoben, mit Beleg aus dem Quelltext:** Die `config.yaml` hätte das Board
-  mit `Laser: laser_mode` in ConfigAlarm gesetzt und die `speed_map` den Servo
-  in den Anschlag gefahren. Der Upload ging an einen Endpunkt, den es nicht
-  gibt. Not-Halt, Pause und Statusabfrage liefen über `/command?plain=` und
-  meldeten Erfolg, ohne etwas zu tun — sie gehen jetzt über den TCP-Kanal auf
-  Port 23 bzw. über die Ereignis-Endpunkte der Firmware. Und die Web-UI
-  antwortete seit NiceGUI 3 auf jede Anfrage mit HTTP 500.
-* **Noch offen, weil es Hardware braucht:** die Servo-Werte im Stiftkatalog,
-  die Steckerbelegung am eigenen Board, der komplette Laserpfad. Die
-  Reihenfolge zum Prüfen steht in der
-  [Bauanleitung](docs/bauanleitung.md), Abschnitt 10.
+Ohne Hardware geprüft sind Geometrie, GCode-Export, Kalibrierlogik, Testmuster,
+Kinematikrechnung, Bildverfahren und die Verdrahtung der Oberflächen: 687 Tests.
+Die board-nahen laufen gegen eine Gegenstelle, die sich wie FluidNC verhält,
+unbekannte Endpunkte also mit 404 beantwortet und bei `/command?plain=` nur
+`$`-Kommandos versteht.
+
+Hardware brauchen noch die Servowerte im Stiftkatalog, die Steckerbelegung am
+eigenen Board und der Laserpfad. Die Reihenfolge zum Prüfen steht in der
+[Bauanleitung](docs/bauanleitung.md), Abschnitt 10. Was die Gegenprüfung gegen
+den FluidNC-Quelltext zutage gefördert hat und wie es behoben wurde, steht in
+[docs/firmware-gegenpruefung.md](docs/firmware-gegenpruefung.md) und im
+[CHANGELOG](CHANGELOG.md).
 
 ## Lizenz
 
-MIT — siehe [LICENSE](LICENSE).
+MIT, siehe [LICENSE](LICENSE).
