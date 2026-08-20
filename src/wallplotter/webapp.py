@@ -20,6 +20,7 @@ from dataclasses import replace
 
 from .calibration import CORNERS, AreaCalibration
 from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PlotConfig
+from .design import LICHT, quasar_colors, stylesheet
 from .gcode import geometry_to_gcode, layers_to_gcode, prepare_geometry, stats_for
 from .imaging import IMAGE_SUFFIXES, TECHNIQUES, ImagingError
 from .imaging import image_to_lines as image_lines
@@ -43,11 +44,18 @@ JOG_STEPS = [1, 10, 50, 100]
 DEFAULT_PITCH_MM = 25.0
 DEFAULT_JOG_STEP_MM = 10
 
-EMPTY_PREVIEW = (
-    '<div style="display:flex;align-items:center;justify-content:center;'
-    'height:100%;min-height:60vh;color:#8b8b8b;font-size:0.9rem;text-align:center">'
-    "Noch nichts geladen —<br>SVG oder Foto hochladen, oder ein Testmuster wählen</div>"
-)
+EMPTY_PREVIEW = """
+<div class="wp-leer">
+  <svg width="64" height="80" viewBox="0 0 64 80" fill="none" stroke="currentColor"
+       stroke-width="1.5" aria-hidden="true">
+    <rect x="6" y="6" width="52" height="68" rx="2"/>
+    <path d="M6 22h52M6 58h52" stroke-dasharray="3 4" opacity=".6"/>
+    <path d="M18 50l10-18 8 12 4-6 6 12" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <div><strong>Noch nichts geladen</strong><br>
+  SVG oder Foto hierher ziehen — oder ein Testmuster wählen</div>
+</div>
+"""
 
 
 def _positive(value, fallback: float) -> float:
@@ -682,28 +690,35 @@ class WallplotterUI:
 
     def build_ui(self) -> None:
         ui = self.ui
-        ui.add_head_html("<style>body{background:#f6f6f7}</style>")
+        # Ein Aussehen für Website, Web-UI und Terminal — siehe wallplotter.design.
+        ui.colors(**quasar_colors())
+        ui.add_head_html(f"<style>{stylesheet()}</style>")
+        # Hell oder dunkel entscheidet das Gerät. An der Wand im Keller steht
+        # abends jemand mit dem Handy, tagsüber jemand am Rechner. `.auto()`
+        # ist nötig, damit auch Quasar umschaltet — sonst folgen nur die
+        # eigenen Farben dem System und die fertigen Bauteile bleiben hell.
+        ui.dark_mode(value=None)
 
         with ui.header().classes("items-center justify-between px-4 py-2"):
             with ui.row().classes("items-center gap-3"):
-                ui.label("Wandplotter").classes("text-xl font-medium")
+                ui.html(
+                    '<span class="wp-marke">Wandplotter<span class="wp-punkt">.</span></span>'
+                )
                 self.location_select = (
                     ui.select(
                         sorted(self.book.locations),
                         value=self.book.active,
                         on_change=lambda e: self.switch_location(e.value),
                     )
-                    .props("dense outlined dark options-dense label-color=white")
+                    .props("dense outlined options-dense")
                     .classes("w-40")
                     .tooltip("Standort — jede Aufhängung hat eigene Ankermaße")
                 )
             with ui.row().classes("items-center gap-2"):
                 self.status_badge = ui.badge("", color="grey").props("rounded")
-                self.status_label = ui.label("—").classes("text-sm")
+                self.status_label = ui.label("—").classes("text-sm wp-status")
                 self.host_input = (
-                    ui.input(value=self.host)
-                    .props("dense outlined dark input-class=text-white")
-                    .classes("w-44")
+                    ui.input(value=self.host).props("dense outlined").classes("w-44 wp-zahl")
                 )
 
         with ui.tabs().classes("w-full") as tabs:
@@ -726,7 +741,7 @@ class WallplotterUI:
         with ui.row().classes("w-full gap-4 items-start no-wrap max-lg:flex-wrap"):
             with ui.column().classes("gap-3 w-80 max-lg:w-full"):
                 with ui.card().classes("w-full"):
-                    ui.label("Vorlage").classes("text-sm text-grey-8")
+                    ui.label("Vorlage").classes("wp-titel")
                     ui.upload(
                         on_upload=self.load_upload,
                         auto_upload=True,
@@ -739,8 +754,8 @@ class WallplotterUI:
                             ).props("outline size=sm")
 
                 with ui.card().classes("w-full"):
-                    ui.label("Fläche").classes("text-sm text-grey-8")
-                    self.area_label = ui.label("—").classes("text-xs text-grey")
+                    ui.label("Fläche").classes("wp-titel")
+                    self.area_label = ui.label("—").classes("text-xs text-grey wp-zahl")
                     self.width = ui.number("Breite mm", value=WALL_WIDTH_MM).props("dense outlined")
                     self.height = ui.number("Höhe mm", value=WALL_HEIGHT_MM).props("dense outlined")
                     self.margin = ui.number("Rand mm", value=50).props("dense outlined")
@@ -754,7 +769,7 @@ class WallplotterUI:
                     )
 
                 with ui.card().classes("w-full"):
-                    ui.label("Werkzeug").classes("text-sm text-grey-8")
+                    ui.label("Werkzeug").classes("wp-titel")
                     self.head_select = (
                         ui.select(
                             {key: head.name for key, head in TOOLHEADS.items()},
@@ -809,15 +824,19 @@ class WallplotterUI:
 
             with ui.column().classes("flex-grow gap-2 min-w-0"):
                 with ui.card().classes("w-full"):
-                    self.preview = ui.html(EMPTY_PREVIEW).classes("w-full")
+                    self.preview = ui.html(EMPTY_PREVIEW).classes("w-full wp-brett")
                     with ui.row().classes("items-center gap-3 text-xs text-grey-7"):
-                        ui.html('<span style="color:#1a4fd6">▬</span> Stift unten')
-                        ui.html('<span style="color:#d64545">┅</span> Leerweg')
+                        ui.html(
+                            f'<span style="color:{LICHT.accent}">▬</span> Stift unten'
+                        )
+                        ui.html(f'<span style="color:{LICHT.bad}">┅</span> Leerweg')
                 self.layer_box = ui.column().classes("gap-1 w-full")
                 self.info = ui.label("Noch nichts geladen").classes("text-sm")
-                ui.button("Auf Wand plotten", icon="send", on_click=self.send_plot).classes(
-                    "w-full"
-                ).props("color=primary")
+                # color=None: sonst hängt NiceGUI `bg-primary` an den Knopf, und
+                # der bleibt dann im Dunkelmodus im hellen Blau stehen.
+                ui.button(
+                    "Auf Wand plotten", icon="send", on_click=self.send_plot, color=None
+                ).classes("w-full wp-los").props("unelevated")
 
     def _calibration_panel(self) -> None:
         ui = self.ui
@@ -828,7 +847,7 @@ class WallplotterUI:
                 self._jog_pad()
 
             with ui.card().classes("w-80 max-lg:w-full"):
-                ui.label("1. Nullpunkt").classes("text-sm text-grey-8")
+                ui.label("1. Nullpunkt").classes("wp-titel")
                 ui.label(
                     "Gondel an den oberen Anschlag fahren, dann Nullpunkt setzen."
                 ).classes("text-xs text-grey")
@@ -839,7 +858,7 @@ class WallplotterUI:
                 ).props("outline").classes("w-full")
 
                 ui.separator()
-                ui.label("2. Ecken anfahren").classes("text-sm text-grey-8")
+                ui.label("2. Ecken anfahren").classes("wp-titel")
                 self.corner_badges = {}
                 for corner in CORNERS:
                     with ui.row().classes("items-center gap-2 w-full no-wrap"):
@@ -863,13 +882,13 @@ class WallplotterUI:
                     )
 
             with ui.card().classes("w-80 max-lg:w-full"):
-                ui.label("Standort").classes("text-sm text-grey-8")
-                self.location_label = ui.label("").classes("text-xs text-grey")
+                ui.label("Standort").classes("wp-titel")
+                self.location_label = ui.label("").classes("text-xs text-grey wp-zahl")
                 self.geometry_label = ui.label("").classes(
                     "text-xs whitespace-pre-line text-grey-8"
                 )
                 ui.separator()
-                ui.label("Neue Aufhängung eintragen").classes("text-sm text-grey-8")
+                ui.label("Neue Aufhängung eintragen").classes("wp-titel")
                 ui.label(
                     "Gondel am Referenzpunkt, Nullpunkt gesetzt, dann drei Maße "
                     "mit dem Zollstock nehmen."
@@ -884,7 +903,7 @@ class WallplotterUI:
 
     def _jog_pad(self) -> None:
         ui = self.ui
-        ui.label("Gondel bewegen").classes("text-sm text-grey-8")
+        ui.label("Gondel bewegen").classes("wp-titel")
         self.jog_step = ui.toggle(JOG_STEPS, value=10).props("dense")
         ui.label("Schrittweite in mm").classes("text-xs text-grey")
 
@@ -913,12 +932,12 @@ class WallplotterUI:
                         ).props("outline")
 
         self.jog_feed = ui.number("Jog-Vorschub mm/min", value=1000).props("dense outlined")
-        self.position_label = ui.label("").classes("text-xs text-grey font-mono")
+        self.position_label = ui.label("").classes("text-xs text-grey wp-zahl")
 
     def _machine_panel(self) -> None:
         ui = self.ui
         with ui.card().classes("w-96 max-lg:w-full"):
-            ui.label("Laufender Job").classes("text-sm text-grey-8")
+            ui.label("Laufender Job").classes("wp-titel")
             self.progress = ui.linear_progress(value=0, show_value=False).classes("w-full")
             with ui.row().classes("gap-2 mt-2"):
                 ui.button(

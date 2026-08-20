@@ -41,7 +41,10 @@ jobs:
           cache: pip
 
       - name: Werkzeuge
-        run: pip install markdown pygments
+        # Dieselbe Liste wie in der CI — aus dem Extra, nicht von Hand
+        # nachgezogen, sonst baut die Website hier mit anderen Paketen als
+        # der Test, der sie prüft.
+        run: pip install -e ".[site]"
 
       - name: Website bauen
         run: python tools/build_site.py --out site

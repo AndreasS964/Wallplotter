@@ -99,10 +99,11 @@ def test_firmware_config_mismatch_is_reported(tmp_path, book_path):
         "    right_anchor_y: 500.0\n",
         encoding="utf-8",
     )
-    check = check_firmware_config(config, book_path)
+    checks = check_firmware_config(config, book_path)
+    check = next(c for c in checks if c.name == "Firmware-Konfiguration")
     assert check.status == WARN
     assert "left_anchor_y" in check.detail
-    assert "wallplotter-location config" in check.hint
+    assert "wallplotter-firmware config" in check.hint
 
 
 def test_matching_firmware_config_is_fine(tmp_path, book_path):
@@ -110,11 +111,58 @@ def test_matching_firmware_config_is_fine(tmp_path, book_path):
     location = LocationBook.load(book_path).get()
     config = tmp_path / "config.yaml"
     config.write_text(location.fluidnc_kinematics_yaml(), encoding="utf-8")
-    assert check_firmware_config(config, book_path).status == OK
+    assert status_of(check_firmware_config(config, book_path), "Firmware-Konfiguration") == OK
+
+
+def test_a_config_written_by_the_generator_is_reported_as_generated(tmp_path, book_path):
+    """Der ganze Sinn der Sache: die Datei stammt aus dem Werkzeug."""
+    pytest.importorskip("yaml")
+    from wallplotter.firmware import FirmwareConfig
+
+    location = LocationBook.load(book_path).get()
+    config = tmp_path / "config.yaml"
+    config.write_text(FirmwareConfig.from_location(location).render(), encoding="utf-8")
+
+    checks = check_firmware_config(config, book_path)
+    assert status_of(checks, "Erzeugt") == OK
+    assert status_of(checks, "Firmware-Konfiguration") == OK
+    assert status_of(checks, "config.yaml gegen FluidNC") == OK
+
+
+def test_a_hand_written_config_is_flagged_as_drifted(tmp_path, book_path):
+    pytest.importorskip("yaml")
+    from wallplotter.firmware import FirmwareConfig
+
+    location = LocationBook.load(book_path).get()
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        FirmwareConfig.from_location(location).render().replace("pulse_us: 4", "pulse_us: 5"),
+        encoding="utf-8",
+    )
+    checks = check_firmware_config(config, book_path)
+    assert status_of(checks, "Erzeugt") == WARN
+    assert "diff" in next(c for c in checks if c.name == "Erzeugt").hint
+
+
+def test_a_key_fluidnc_does_not_know_is_a_failure(tmp_path, book_path):
+    """`laser_mode` stand einmal wirklich in dieser Datei — das Board wäre
+    damit gar nicht erst gefahren."""
+    pytest.importorskip("yaml")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "kinematics:\n  WallPlotter:\n    left_anchor_x: -1150.0\n"
+        "Laser:\n  laser_mode: false\n",
+        encoding="utf-8",
+    )
+    checks = check_firmware_config(config, book_path)
+    check = next(c for c in checks if c.name == "config.yaml gegen FluidNC")
+    assert check.status == FAIL
+    assert "laser_mode" in check.detail
+    assert "ConfigAlarm" in check.hint
 
 
 def test_missing_firmware_config_is_an_open_point(tmp_path, book_path):
-    assert check_firmware_config(tmp_path / "weg.yaml", book_path).status == SKIP
+    assert status_of(check_firmware_config(tmp_path / "weg.yaml", book_path), "Firmware-Konfiguration") == SKIP
 
 
 def test_run_checks_without_a_board_skips_the_board_section(book_path):
@@ -147,3 +195,19 @@ def test_a_locations_file_of_the_wrong_shape_is_reported(tmp_path):
     checks = check_locations(path)
     assert status_of(checks, "Standorte") == FAIL
     assert "keine Standortdatei" in checks[0].hint
+
+
+def test_a_comment_behind_a_number_is_a_failure(tmp_path, book_path):
+    """FluidNC schneidet Kommentare am Zeilenende nicht ab — ein YAML-Parser
+    sieht daran nichts, das Board geht in ConfigAlarm."""
+    pytest.importorskip("yaml")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "kinematics:\n  WallPlotter:\n    left_anchor_x: -1150.0\n"
+        "stepping:\n  idle_ms: 255 # Motoren gehalten lassen\n",
+        encoding="utf-8",
+    )
+    checks = check_firmware_config(config, book_path)
+    check = next(c for c in checks if c.name == "config.yaml gegen FluidNC")
+    assert check.status == FAIL
+    assert "ConfigAlarm" in check.detail or "ConfigAlarm" in check.hint

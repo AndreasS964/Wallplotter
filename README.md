@@ -10,7 +10,7 @@
   <a href="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-461-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-687-brightgreen">
   <img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-lightgrey">
 </p>
 
@@ -32,9 +32,15 @@ Zollstock**, den Rest rechnet die Software.
 </p>
 
 ```bash
+wallplotter-setup                      # geführt, von der leeren Wand bis zum ersten Strich
+```
+
+Oder einzeln, wenn man weiß, was man will:
+
+```bash
 wallplotter-location new Keller --span 2300 --left 1450 --right 1470
-wallplotter-location config Keller     # fertiger kinematics-Block für FluidNC
 wallplotter-location show              # Auflösung, Riemenkräfte, Riemenlänge
+wallplotter-firmware config --location Keller --out config.yaml
 ```
 
 ## Dokumentation
@@ -50,7 +56,8 @@ Alles auch gesetzt und verlinkt unter
 | [Projektidee](docs/projektidee.md) | Hardware, Mechanik, Entscheidungen |
 | [Software-Roadmap](docs/software-roadmap.md) | Stufenplan und UI-Architektur |
 | [Kinematik-Auswertung](docs/kinematik.md) | gerechnete Zahlen für eine Beispielaufhängung |
-| [FluidNC-Konfiguration](config/fluidnc-wallplotter.yaml) | kommentierte `config.yaml` fürs Rodent-Board |
+| [Aussehen](src/wallplotter/design.py) | die eine Palette für Website, Web-UI und Terminal |
+| [FluidNC-Konfiguration](config/fluidnc-wallplotter.yaml) | kommentierte `config.yaml` fürs Rodent-Board — **erzeugt**, siehe unten |
 
 ## Warum eigener GCode-Export?
 
@@ -69,6 +76,7 @@ pip install -e ".[geometry,dev]"      # Kern + vpype + Tests
 pip install -e ".[web]"               # zusätzlich für die Web-UI
 pip install -e ".[photo]"             # zusätzlich für Fotos (nur Pillow)
 pip install -e ".[hatch]"             # zusätzlich für Schraffur (zieht vpype, OpenCV & Co. nach)
+pip install -e ".[site]"              # zusätzlich für tools/build_site.py
 ```
 
 Ohne die Extras funktionieren GCode-Export, Statistik, Vorschau und Upload —
@@ -85,7 +93,7 @@ drei Maße mit dem Zollstock, alles Weitere folgt daraus:
 ```bash
 wallplotter-calibrate --host 192.168.1.42 zero      # Gondel am Referenzpunkt
 wallplotter-location new Keller --span 2300 --left 1450 --right 1470
-wallplotter-location config Keller                  # Kinematikblock für die config.yaml
+wallplotter-firmware config --location Keller --out config.yaml
 ```
 
 `--span` ist der Abstand der beiden Umlenkpunkte, `--left`/`--right` die
@@ -95,6 +103,88 @@ die Ankerkoordinaten per Trilateration heraus — die kommen in die
 
 `wallplotter-location list` zeigt alle Aufhängungen, `use <Name>` wechselt.
 In der Web-UI steht die Auswahl oben in der Kopfzeile.
+
+### Geführt: `wallplotter-setup`
+
+Alles Folgende geht auch einzeln. Der Wizard nimmt einem vor allem eine Sache
+ab: **die Reihenfolge**, und die verzeiht an drei Stellen keinen Fehler.
+
+```bash
+wallplotter-setup            # dort weiter, wo es aufgehört hat
+wallplotter-setup --status   # nur nachsehen, was noch fehlt
+wallplotter-setup --ab servo # gezielt einen Abschnitt
+```
+
+Acht Schritte: Installation → Board erreichen → Aufhängung einmessen →
+`config.yaml` erzeugen und übertragen → Nullpunkt → Fläche abstecken →
+Stiftheber einstellen → erster Plot. Jeder sagt dazu, **warum** er hier steht
+und nicht später; jeder prüft nach; abbrechen und fortsetzen geht jederzeit,
+weil jeder Schritt selbst weiß, ob er schon erledigt ist.
+
+Ohne Board läuft die halbe Vorbereitung trotzdem — messen, rechnen, die
+`config.yaml` schreiben und prüfen. Was die Maschine braucht, steht am Ende als
+Liste da:
+
+```
+[5/8] Nullpunkt setzen: übersprungen, kein Board
+
+Noch offen:
+  * config.yaml liegt in config/fluidnc-wallplotter.yaml, ist aber noch nicht
+    auf dem Board: wallplotter-firmware push --host <ip> --location Keller
+  * Fläche abstecken braucht die Maschine: wallplotter-setup --ab flaeche
+```
+
+Die Servowerte, die dabei herauskommen, bleiben im Standort stehen — der
+Stiftkatalog liefert nur Schätzungen, und die liegen an jedem Aufbau anders.
+
+### Die `config.yaml` wird erzeugt, nicht getippt
+
+Die Firmware-Konfiguration ist kein Dokument, das man pflegt, sondern ein
+Erzeugnis derselben Beschreibung, mit der auch die Vorschau rechnet:
+
+```bash
+wallplotter-firmware config --location Keller --out config/fluidnc-wallplotter.yaml
+wallplotter-firmware pruefen config/fluidnc-wallplotter.yaml   # ohne Board
+wallplotter-firmware diff   config/fluidnc-wallplotter.yaml    # was hat sich geändert?
+wallplotter-firmware push   --host 192.168.1.42 --location Keller
+```
+
+Damit hängen drei Dinge nicht mehr davon ab, dass jemand daran denkt:
+
+* **Ankermaße.** Sie kommen aus dem eingemessenen Standort — derselben Rechnung,
+  die die Vorschau benutzt. Vorher standen sie an zwei Stellen und liefen
+  auseinander. Aufgefallen wäre das nur dem, der `wallplotter-doctor` aufrief —
+  der prüft die Ankerwerte gegen den aktiven Standort und tut es weiterhin.
+  Nur ist eine Prüfung, die man aufrufen muss, keine, die einen erreicht: Wer
+  sie ausließ, plottete schief.
+* **Schritte pro Millimeter.** Sie folgen aus Pulley, Riementeilung und
+  Mikroschritten. Wer im Treiberblock die Mikroschritte änderte und oben
+  `steps_per_mm` vergaß, fuhr um denselben Faktor daneben.
+* **Der Servoweg.** `speed_map` bildet auf das *Tastverhältnis* ab, nicht auf
+  einen Winkel. Bei 50 Hz will ein RC-Servo 1,0 bis 2,0 ms Impuls, also 5 bis
+  10 % — der Erzeuger rechnet das aus, statt es zu raten.
+
+`pruefen` schaut zweimal hin. Einmal wie ein YAML-Parser: jeder Schlüssel gegen
+eine Liste, die aus dem FluidNC-Quelltext gezogen ist — **ein einziger
+unbekannter Schlüssel setzt das Board in ConfigAlarm**, und dann fährt gar
+nichts. Und einmal wie FluidNCs eigener Tokenizer, der von YAML abweicht:
+
+```yaml
+idle_ms: 255 # Motoren gehalten lassen
+```
+
+Jeder YAML-Parser liest daraus `255`. FluidNC nimmt den ganzen Rest der Zeile
+als Wert, scheitert beim Umwandeln — und geht in ConfigAlarm. Die ausgelieferte
+Datei hatte elf solche Zeilen, vier davon tödlich; gefunden hat sie erst dieser
+zweite Blickwinkel. Ausführlich in der
+[Gegenprüfung](docs/firmware-gegenpruefung.md), Abschnitt 2.6.
+
+Mit `--host` holt `pruefen` die Datei vorher vom Board — der schnellste Weg zur
+Ursache, wenn ein Board nicht anläuft.
+
+`push` schreibt in den **Flash**, nicht auf die SD-Karte: dort liest FluidNC die
+Konfiguration nie. Die bisherige Fassung wird vorher heruntergeladen und
+gesichert.
 
 ### Fläche einmessen
 
@@ -204,9 +294,11 @@ wallplotter-doctor --host 192.168.1.42
 ```
 
 Geht die Kette einmal von vorn nach hinten durch: Installation, Kern,
-Standort, Firmware-Konfiguration, Board. Prüft dabei auch, ob die Ankermaße
-in der `config.yaml` noch zu denen des aktiven Standorts passen — genau da
-wird ein Wandbild unbemerkt schief.
+Standort, Firmware-Konfiguration, Board. Prüft dabei drei Dinge an der
+`config.yaml`: ob FluidNC jeden Schlüssel darin kennt, ob die Ankermaße noch zu
+denen des aktiven Standorts passen — genau da wird ein Wandbild unbemerkt
+schief — und ob die Datei noch das ist, was `wallplotter-firmware` schreiben
+würde.
 
 Wenn das Board zwischen zwei Farben aus war, ist der Nullpunkt weg — `G92`
 ist flüchtig. Zwei Wege zurück:
@@ -403,8 +495,10 @@ Pipeline.
 pytest
 ```
 
-Tests, die vpype, NiceGUI oder PyYAML brauchen, überspringen sich selbst, wenn
-das Paket fehlt — der Rest läuft immer.
+Tests, die vpype, NiceGUI, PyYAML oder `markdown` brauchen, überspringen sich
+selbst, wenn das Paket fehlt — der Rest läuft immer. In der CI gilt das nicht:
+dort ist alles installiert, und ein übersprungener Test färbt den Lauf rot.
+Ein Test, der sich selbst überspringt, findet nichts.
 
 ## Stand
 
@@ -414,7 +508,7 @@ Board unterwegs, Mechanik noch nicht gedruckt. Die
 behoben.
 
 * **Verifiziert ohne Hardware:** Geometrie, GCode-Export, Kalibrierlogik,
-  Testmuster, Kinematikrechnung, Bildverfahren, UI-Verdrahtung — 461 Tests.
+  Testmuster, Kinematikrechnung, Bildverfahren, UI-Verdrahtung — 687 Tests.
   Die board-nahen Tests laufen gegen eine Gegenstelle, die sich wie FluidNC
   verhält: unbekannte Endpunkte sind 404, und `/command?plain=` versteht nur
   `$`-Kommandos. Die alten Attrappen quittierten alles mit 200 — darüber sind

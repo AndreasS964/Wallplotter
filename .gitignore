@@ -19,6 +19,10 @@ htmlcov/
 # Plotter-Ausgaben (werden generiert, gehören nicht ins Repo)
 out/
 *.gcode
+
+# Sicherungen, die `wallplotter-firmware push` neben sich ablegt — die
+# gehören zum Board, nicht ins Repo (sie können ein WLAN-Passwort enthalten).
+config.yaml.bak*
 *.nc
 
 # Gebaute Website (entsteht mit tools/build_site.py, wird von der CI gebaut)

@@ -26,7 +26,9 @@ Fehler dort auffällt, wo er entsteht, und nicht drei Stunden später an der Wan
 
 ### Sicherheit, in drei Sätzen
 
-Das Netzteil liefert 24–56 V bei bis zu 10 A. Das ist keine Kleinspannung zum
+Der Rodent nimmt DC 24–56 V und ist auf bis zu 10 A ausgelegt — *ausgelegt*,
+nicht *gebraucht*: Für zwei NEMA17 mit 1,2 A Phasenstrom reicht ein 24-V-Netzteil
+mit 4–5 A bequem. Das ist trotzdem keine Kleinspannung zum
 Danebengreifen: **stromlos verdrahten, Aderendhülsen verwenden, vor dem
 Einschalten zweimal hinsehen.** Die Gondel hängt an zwei Riemen über einer
 Fläche, unter der Menschen stehen — beim ersten Lauf niemand darunter, und ein
@@ -43,8 +45,8 @@ Not-Aus-Taster gehört an die Wand, bevor der erste unbeaufsichtigte Plot läuft
 | --- | --- | --- |
 | BIGTREETECH Rodent CNC V1.0 oder V1.1 | 1 | ESP32, 4× TMC2160, FluidNC ab Werk |
 | NEMA17 17HS4412P1-3 (1,2 A, 0,45 Nm, 40 mm) | 2 + 1 Ersatz | mehr Strom heißt nicht ruhiger |
-| Netzteil 24 V | 1 | ≥ 4 A: 2 × 1,2 A Motoren plus Reserve |
-| Netzteil 5 V | 1 | **getrennt**, für den Servo — Begründung in [7.4](#74-servo-anschließen) |
+| Netzteil 24 V | 1 | ≥ 4 A: 2 × 1,2 A Motoren plus Reserve. **Das einzige Netzteil** — Servo, Endstops und Logik kommen aus der Platine |
+| Elko 470–1000 µF, ≥ 10 V + 100 nF | je 1 | Puffer für den Servo an der Gondel, siehe [7.4](#74-servo-anschließen) |
 | Servo MG90S (Metallgetriebe) | 1 | Pen-Lift |
 | µSD-Karte | 1 | FAT32, klein reicht |
 | Aderendhülsen, Motorverlängerungen, Litze | | 4-adrig für die Motoren |
@@ -258,13 +260,23 @@ geraten:
 | Sp-Feedback (CN53) | 3-polig | gpio.14 |
 | SP-PWM | 2-polig + Trimmpoti | analog 3–10 V, **kein Logikpegel** |
 | SD-Karte | — | CS gpio.0, CLK gpio.18, D0 gpio.19, CMD gpio.23 |
-| OLED (I2C) | 4-polig | SDA gpio.27, SCL gpio.26 |
+| OLED (I2C) | 4-polig | SDA gpio.27, SCL gpio.26, GND, **+5 V** ← Servoversorgung, siehe [7.4](#74-servo-anschließen) |
+| V-MOS 1/2/3 | je 2-polig + eigener Eingang | Leistungsausgänge, gpio.12 / gpio.2 / gpio.4, DC 12–36 V, bis 5 A |
 | RS485 | Klemme | über gpio.15 / gpio.16 / gpio.14 |
 
-Zwei Dinge, die man daraus sofort sieht: **Sp-Direction und Sp-Feedback teilen
+Drei Dinge, die man daraus sofort sieht: **Sp-Direction und Sp-Feedback teilen
 sich die Leitungen mit dem RS485-Treiber** — wer den einen benutzt, kann den
-anderen nicht. Und **der `SP-PWM`-Stecker ist ein analoger Drehzahlausgang mit
-Poti**, nicht der 3,3-V-PWM-Ausgang, den man für einen Servo bräuchte.
+anderen nicht. **Der `SP-PWM`-Stecker ist ein analoger Drehzahlausgang mit
+Poti**, nicht der 3,3-V-PWM-Ausgang, den man für einen Servo bräuchte. Und die
+drei **V-MOS-Ausgänge** sind keine Logikausgänge, sondern Low-Side-MOSFETs an
+einem eigenen Spannungseingang — für einen Servo unbrauchbar, für Air Assist,
+Absaugung oder Arbeitslicht genau richtig (in der `config.yaml` als
+`coolant: flood_pin: gpio.4`, geschaltet mit `M8`/`M9`).
+
+> Frühere Fassungen dieser Anleitung behaupteten, `gpio.2`, `gpio.4` und
+> `gpio.12` seien am Rodent nirgends herausgeführt. Das ist falsch — sie
+> schalten genau diese drei Ausgänge. Für den Servo bleiben sie trotzdem
+> ungeeignet, aber aus dem richtigen Grund.
 
 ### 7.2 Motoren
 
@@ -314,19 +326,50 @@ Daraus folgen drei Dinge, und das mittlere ist das wichtige:
   er zuckt statt sauber zu stellen, hilft ein Pegelwandler auf 5 V.
 * **Der Servo darf seinen Strom NICHT aus Pin 1 ziehen.** Da liegen ebenfalls
   100 Ω in Reihe. Ein MG90S zieht im Anlauf mehrere hundert Milliampere — an
-  100 Ω bricht die Spannung vollständig zusammen. Der Servo braucht ein eigenes
-  5-V-Netzteil.
-* **Masse zusammenlegen.** Servo-Netzteil und Board müssen dieselbe Masse
-  sehen, sonst hat das Signal keinen Bezug. Pin 2 von CN51 ist der richtige
-  Punkt dafür.
+  100 Ω bricht die Spannung vollständig zusammen.
+* **Masse an Pin 2.** Der Servo braucht denselben Massebezug wie das Signal.
+
+#### Woher der Servo seine 5 V bekommt
+
+> Hier stand eine Zeitlang „der Servo braucht ein eigenes 5-V-Netzteil". Das war
+> zu kurz gedacht: Nur der +5-V-Pin **dieses Steckers** ist unbrauchbar, nicht
+> der 5-V-Zweig der Platine. Zwei Netzteile braucht dieser Plotter nicht.
+
+Der Rodent erzeugt aus der Eingangsspannung (DC 24–56 V) selbst +12 V und +5 V.
+Ohne Vorwiderstand kommt der 5-V-Zweig an zwei Stellen heraus:
+
+| Abgriff | Wo | Anmerkung |
+| --- | --- | --- |
+| **OLED-Stecker, Pin `+5V`** | unten am Board, neben `SDA`/`SCL`/`GND` | der sauberste Punkt — das Display wird hier nicht gebraucht |
+| **Endstop-Stecker, Pin `V-Lim`** | jeder der fünf | nur wenn die `SW_VCC`-Brücke (CN44) auf **+5V** steckt |
+
+Beide führen denselben Zweig. Die 1 kΩ, die man im Endstop-Schaltplan sieht,
+liegen in der LED-Strecke des Optokopplers, **nicht** im `V-Lim`-Pin — sonst
+könnte an diesem Stecker auch kein NPN-Näherungsschalter mit 12 V betrieben
+werden, wofür die Spannungswahl ja gerade da ist.
 
 ```
-   5-V-Netzteil ──── rot   ─────────────── Servo +
-                └─── schwarz ──┬────────── Servo −
-                               │
-   Rodent CN51 Pin 2 (GND) ────┘
-   Rodent CN51 Pin 3 (gpio.25) ─── orange ─ Servo Signal
+   Rodent OLED-Stecker +5V ─── rot ─────────── Servo +
+   Rodent CN51 Pin 2 (GND) ─── schwarz ─────── Servo −
+   Rodent CN51 Pin 3 (gpio.25) ─── orange ──── Servo Signal
+
+                         ┌──── 470–1000 µF ────┐   direkt an der Gondel,
+   Servo + ──────────────┤                     ├── parallel zu + und −
+   Servo − ──────────────┴──── 100 nF ─────────┘
 ```
+
+**Der Puffer ist nicht optional.** Ein Stiftheber zieht im Mittel fast nichts,
+aber für rund 100 ms beim Hub einige hundert Milliampere. Der Elko liefert genau
+diese Spitze vor Ort, statt sie über zwei Meter Zuleitung zu holen.
+
+**Und dann nachmessen.** Wie viel der 5-V-Zweig hergibt, steht im Rodent-Handbuch
+nirgends — also nicht glauben, sondern prüfen: Servo zwanzigmal heben und senken,
+dabei die 5 V im Auge behalten.
+
+* Bleibt sie über ~4,7 V: fertig, ein Netzteil.
+* Sackt sie unter ~4,5 V, oder das Board startet neu: ein kleiner
+  Abwärtswandler (24 V → 5 V, 2–3 A, ein paar Euro) an die Motorklemme. Auch das
+  ist **kein** zweites Netzteil, sondern ein Bauteil am vorhandenen.
 
 Der `SP-PWM`-Stecker bleibt frei. Er liefert 3–10 V analog über ein Trimmpoti
 und ist für einen VFD gedacht, nicht für einen RC-Servo.
@@ -353,8 +396,16 @@ Der Weiter-Taster ist außerdem der bequemste Weg, die `M0`-Pause beim
 Stiftwechsel aufzulösen — man steht ohnehin an der Wand und hat die Hände am
 Stift, nicht am Handy.
 
+> **Vorher die DIAG-Steckbrücken abziehen.** Auf denselben GPIOs liegen die
+> `DIAG`-Ausgänge der Treiber, wenn die Brücken gesteckt sind: `DIAGX`→gpio.35,
+> `DIAGY`→gpio.34, `DIAGZ`→gpio.33, `DIAGE`→gpio.32. Bleibt eine drin, treibt
+> der Treiber gegen den Taster. Für diesen Plotter sind sie ohnehin nutzlos —
+> StallGuard-Homing kann die WallPlotter-Kinematik nicht.
+
 Die Eingänge sind optogekoppelt; Spannungswahl über die `SW_VCC`-Brücke
-(5 V bei einem 24-V-Netzteil). Die Taster schließen gegen GND, in der
+(CN44) auf **+5 V**. Dieselbe Brücke versorgt auch den Servo, wenn man ihn an
+einem Endstop-Stecker abgreift ([7.4](#74-servo-anschließen)). Die Taster
+schließen gegen GND, in der
 `config.yaml` steht deshalb `:low` hinter dem Pin. FluidNC verlangt, dass alle
 Control-Eingänge beim Start **inaktiv** lesen — ein klemmender Taster löst
 sonst gleich beim Einschalten Alarm aus. Das ist so gewollt und ein guter
@@ -413,15 +464,57 @@ mit HTTP 200 quittiert, ohne dass irgendetwas passiert — der Not-Halt meldete
 so lange Zeit Erfolg. Belege in der
 [Gegenprüfung](firmware-gegenpruefung.md), Abschnitt 2.3.
 
+### 8.2a Alles ab hier geführt: `wallplotter-setup`
+
+Die folgenden Abschnitte beschreiben jeden Schritt einzeln — das braucht man,
+wenn etwas klemmt. Für den geraden Weg gibt es sie auch geführt:
+
+```bash
+wallplotter-setup --host <ip>
+```
+
+Der Wizard geht dieselben acht Schritte durch, prüft nach jedem nach und sagt
+bei jedem dazu, warum er dort steht. Abbrechen und später fortsetzen geht
+jederzeit (`--status` zeigt den Stand, `--ab <schritt>` setzt fort). Ohne Board
+erledigt er, was ohne Board geht, und listet den Rest am Ende auf.
+
+Was er einem vor allem abnimmt, ist die **Reihenfolge**: Ankermaße erst nach
+einem Neustart am Referenzpunkt, `config.yaml` vor dem Einmessen der Fläche,
+Stifttest erst danach. Alle drei verzeihen keinen Fehler, und keiner davon
+meldet sich von selbst.
+
 ### 8.3 Konfiguration hochladen
 
-`config/fluidnc-wallplotter.yaml` über das FluidNC-WebUI auf den Flash laden
-(Dateisymbol → Upload) und das Board neu starten.
+Die Datei wird **erzeugt, nicht getippt**:
 
-**Vorher die Ankerkoordinaten eintragen.** Die vier Zeilen im
-`kinematics`-Block sind Beispielwerte für eine symmetrische Aufhängung; die
-echten fallen in [Abschnitt 9.5](#95-einmessen) an. Ohne sie fährt die Maschine
-zwar, aber in einem falschen Koordinatensystem.
+```bash
+wallplotter-firmware pruefen config/fluidnc-wallplotter.yaml   # ohne Board
+wallplotter-firmware push --host <ip>                          # in den Flash, dann Neustart
+```
+
+`push` schreibt in den Flash und startet das Board neu; die bisherige Fassung
+lädt es vorher herunter und legt sie als `config.yaml.bak` daneben. Von Hand
+geht es auch: über das FluidNC-WebUI (Dateisymbol → Upload) — aber auf den
+**Flash**, nicht auf die SD-Karte. Dort liest FluidNC die Konfiguration nie,
+und der Upload sähe trotzdem erfolgreich aus.
+
+**Die Ankerkoordinaten kommen aus dem Standort, nicht aus dem Editor.** Die vier
+Zeilen im `kinematics`-Block der ausgelieferten Datei sind Beispielwerte für eine
+symmetrische Aufhängung; die echten fallen in [Abschnitt 9.5](#95-einmessen) an
+und wandern über `--location <Name>` hinein. Ohne sie fährt die Maschine zwar,
+aber in einem falschen Koordinatensystem.
+
+Was sonst noch in der Datei steht, ändert man ebenfalls über das Werkzeug und
+nicht im Editor: `wallplotter-firmware config --help` zählt die Stellschrauben
+auf — Mikroschritte, Motorstrom, Höchstgeschwindigkeit, Servofenster, Laser,
+Taster. Der Aufruf, der genau die vorliegende Datei wiederherstellt, steht in
+ihrer eigenen Kopfzeile.
+
+> **Falle, wenn doch von Hand:** Hinter einen Wert gehört **kein** Kommentar.
+> FluidNC schneidet ihn nicht ab — bei einer Zahl scheitert das Einlesen und
+> das Board geht in ConfigAlarm, bei einem `true`/`false` wird stillschweigend
+> `false` daraus. Kommentare immer in die Zeile darüber. Einzelheiten in der
+> [Gegenprüfung](firmware-gegenpruefung.md), Abschnitt 2.6.
 
 Beim Start ins Log sehen. Zwei Zeilen entscheiden:
 
@@ -545,10 +638,12 @@ Drei Maße mit dem Zollstock, Gondel am Referenzpunkt, Board dort gestartet:
 
 ```bash
 wallplotter-location new Keller --span 2300 --left 1450 --right 1470
-wallplotter-location config Keller     # gibt den kinematics-Block aus
+wallplotter-firmware push --host <ip> --location Keller
 ```
 
-Der ausgegebene Block wandert in die `config.yaml`, dann Board neu starten.
+Der zweite Aufruf erzeugt die `config.yaml` mit genau diesen Maßen, schreibt sie
+in den Flash und startet das Board neu. Wer sie erst ansehen will:
+`wallplotter-firmware config --location Keller` gibt sie auf der Konsole aus.
 Aus den drei Maßen fallen die Ankerkoordinaten per Trilateration heraus — unter
 der Annahme gleicher Ankerhöhen, was zu dem passt, was die Firmware rechnet.
 
@@ -631,7 +726,7 @@ gekennzeichnet in [Abschnitt 9.3](#93-servoweg-einstellen) bzw. im
 
 | Symptom | Wahrscheinliche Ursache |
 | --- | --- |
-| Board startet, meldet aber `ConfigAlarm` | Unbekannter Schlüssel in der `config.yaml`. Das Log nennt ihn: `[MSG:ERR: Ignored key …]`. |
+| Board startet, meldet aber `ConfigAlarm` | Unbekannter Schlüssel in der `config.yaml`. Das Log nennt ihn: `[MSG:ERR: Ignored key …]`. Ohne Log: `wallplotter-firmware pruefen --host <ip>` holt die Datei vom Board und sagt, welcher Schlüssel es ist. |
 | `$H` meldet „This kinematic system cannot home" | Richtig so. Die WallPlotter-Kinematik referenziert nicht — siehe [7.3](#73-warum-kein-endschalter-nötig-ist). |
 | Motor brummt, dreht nicht | Ader innerhalb eines Spulenpaares vertauscht. |
 | Motor wird heiß | `run_amps` zu hoch, oder `r_sense_ohms` passt nicht zur Boardrevision. |

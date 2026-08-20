@@ -28,6 +28,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 BLOB = "https://github.com/AndreasS964/Wallplotter/blob/main"
 
+# Die Farben kommen aus demselben Modul wie die der Web-UI. Ohne das hatte das
+# Projekt zwei Paletten, die zufällig ähnlich aussahen — und beim nächsten
+# Anfassen nicht mehr. Der Pfad muss dazu, weil die Website auch gebaut wird,
+# ohne dass das Paket installiert ist (die Pages-Action zieht nur markdown).
+sys.path.insert(0, str(REPO / "src"))
+from wallplotter.design import DUNKEL, LICHT, MONO, css_variables  # noqa: E402
+
 TITLE = "Wallplotter"
 TAGLINE = "Ein V-Plotter, der Wände bemalt — und die Software dahinter"
 
@@ -110,31 +117,18 @@ LINK_MAP = {
     "CHANGELOG.md": "changelog.html",
 }
 
-CSS = """
+CSS = (
+    """
 :root {
   color-scheme: light dark;
-  --bg: #fbfaf8;
-  --bg-soft: #f2efe9;
-  --fg: #23201c;
-  --fg-soft: #5d574e;
-  --line: #e2ded5;
-  --accent: #1a4fd6;
-  --accent-soft: #e8eefc;
-  --warn: #a8420a;
-  --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #16151a;
-    --bg-soft: #1e1d24;
-    --fg: #e8e5e0;
-    --fg-soft: #a49f97;
-    --line: #302e38;
-    --accent: #8aa9ff;
-    --accent-soft: #21243a;
-    --warn: #ff9d63;
-  }
-}
+"""
+    + f"  --mono: {MONO};\n"
+    + "}\n"
+    + css_variables(LICHT)
+    + "\n@media (prefers-color-scheme: dark) {\n"
+    + css_variables(DUNKEL, "  :root")
+    + "\n}\n"
+    + """
 
 * { box-sizing: border-box; }
 
@@ -302,6 +296,7 @@ td code { white-space: nowrap; }
   h1 { font-size: 1.6rem; }
 }
 """
+)
 
 
 def render_markdown(text: str):

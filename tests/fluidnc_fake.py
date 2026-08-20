@@ -12,6 +12,13 @@ Deshalb bilden diese beiden Klassen nach, was die Firmware wirklich tut:
   ``/command?plain=`` verhält sich wie ``settings_execute_line()``: es wirft
   das erste Zeichen weg und versteht nur ``$name=wert`` — GCode und
   Realtime-Zeichen bekommen dort die Hilfezeile mit HTTP 200, nicht Wirkung.
+
+  Karte und Flash sind zwei getrennte Ablagen, so wie auf dem Board: ``/upload``
+  schreibt auf die SD-Karte, ``/files`` in den Flash. Wer die ``config.yaml``
+  auf die Karte lädt, bekommt hier dieselbe freundliche Antwort wie vom echten
+  Board — und dieselbe Wirkungslosigkeit. Gelesen wird der Flash über den
+  Nicht-gefunden-Zweig (``handle_not_found`` → ``myStreamFile``), und während
+  einer Fahrt antwortet der mit **503** statt mit der Datei.
 * :class:`FakeFluidNCSocket` ist ein Bytestrom wie der Telnet-Kanal: er
   beantwortet ``?`` mit einem Statusbericht, quittiert Zeilen mit ``ok`` und
   kann auf Wunsch ``error:`` liefern.
@@ -61,12 +68,30 @@ class FakeSession:
         "/upload",
     }
 
-    def __init__(self, files: dict[str, str] | None = None, blocked: bool = False) -> None:
+    def __init__(
+        self,
+        files: dict[str, str] | None = None,
+        blocked: bool = False,
+        flash: dict[str, str] | None = None,
+        upload_scheitert: bool = False,
+    ) -> None:
         self.calls: list[tuple[str, str, dict | None]] = []
         self.timeouts: list[float | None] = []
         self.card: dict[str, str] = dict(files or {})
+        """Die SD-Karte — hier liegt der GCode."""
+
+        self.flash: dict[str, str] = dict(flash or {})
+        """Das lokale Dateisystem — hier liegt die ``config.yaml``."""
+
         self.blocked = blocked
-        """``$HTTP/BlockDuringMotion``: dann antwortet ``/command`` mit 503."""
+        """``$HTTP/BlockDuringMotion``: dann antworten ``/command`` und das
+        Ausliefern von Flash-Dateien mit 503."""
+
+        self.upload_scheitert = upload_scheitert
+        """Der Upload misslingt — und zwar so, wie er es beim echten Board tut:
+        mit **HTTP 200** und ``"status":"Upload failed"`` im Rumpf
+        (``WebUIServer.cpp:1220-1224``). Wer nur den Statuscode ansieht, hält
+        das für einen Erfolg."""
 
     # -- Hilfsmittel ------------------------------------------------------
 
@@ -82,6 +107,13 @@ class FakeSession:
                 return FakeResponse(self.card[name])
             return FakeResponse("Not found", 404)
         if path not in self.KNOWN:
+            # handle_not_found() liefert Dateien aus dem Flash aus, bevor es 404 sagt
+            if path in self.flash:
+                if self.blocked:
+                    return FakeResponse(
+                        "<h3>Cannot load WebUI while GCode Program is Running</h3>", 503
+                    )
+                return FakeResponse(self.flash[path])
             return FakeResponse("Not found", 404)
         if path == "/command":
             return self._command(params or {})
@@ -118,11 +150,15 @@ class FakeSession:
         self.calls.append(("post", url, {"params": params, "data": data, "files": files}))
         self.timeouts.append(timeout)
         path = self._path(url)
-        if path != "/upload":
+        ablage = {"/upload": self.card, "/files": self.flash}.get(path)
+        if ablage is None:
             return FakeResponse("Not found", 404)
+        if self.upload_scheitert:
+            # Nichts wird abgelegt — aber quittiert wird trotzdem mit 200.
+            return FakeResponse('{"files":[],"status":"Upload failed"}')
         for _field, (filename, payload, *_rest) in (files or {}).items():
             body = payload.decode("utf-8") if isinstance(payload, bytes) else payload
-            self.card[filename if filename.startswith("/") else f"/{filename}"] = body
+            ablage[filename if filename.startswith("/") else f"/{filename}"] = body
         return FakeResponse('{"status":"Ok"}')
 
 

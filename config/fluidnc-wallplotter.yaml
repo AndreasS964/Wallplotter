@@ -1,20 +1,31 @@
 # FluidNC-Konfiguration für den Wandplotter auf dem BIGTREETECH Rodent V1.0
 #
+# ERZEUGT — nicht von Hand ändern. Wieder herstellen mit:
+#     wallplotter-firmware config --kein-standort
+#
+# Wer hier etwas ändern will, ändert es in der Python-Seite: Ankermaße über
+# `wallplotter-location`, Motor und Grenzen in wallplotter/firmware.py. Sonst
+# ist die Änderung beim nächsten Erzeugen wieder weg — und schlimmer: bis
+# dahin beschreiben Software und Board zwei verschiedene Maschinen.
+#
 # Pinbelegung (Stepper, SPI, I2S, SD, Endstops) stammt aus BTTs eigener
-# rodent.yaml: https://github.com/bigtreetech/Rodent/blob/master/rodent.yaml
+# rodent.yaml: https://github.com/bigtreetech/Rodent/blob/master/rodent.yaml —
 # Servo- und Tasterpins aus dem Rodent User Manual V1.03 (Pinbild S. 6/7,
-# Spindel-Schaltplan S. 12). Jeder Schlüssel dieser Datei ist gegen den
-# FluidNC-Quelltext geprüft — siehe docs/firmware-gegenpruefung.md.
+# Spindel-Schaltplan S. 12).
+# Jeder Schlüssel dieser Datei ist gegen den FluidNC-Quelltext geprüft —
+# siehe docs/firmware-gegenpruefung.md.
 #
 # Vor dem ersten Einschalten durchgehen:
-#   1. Anker-Koordinaten aus der echten Aufhängung eintragen (siehe unten)
+#   1. Ankermaße: stehen die des eigenen Standorts drin? (siehe unten)
 #   2. run_amps auf 1.2 lassen (17HS4412P1-3), nicht höher
 #   3. Bei einem V1.1-Board r_sense_ohms nachprüfen: BTTs rodent.yaml gilt für
 #      V1.0 (0.022), im V1.1-Pinbild steht "RSENSE 75MR"
 #   4. Nach dem Start ins Log sehen — ein einziges "[MSG:ERR: Ignored key …]"
 #      bedeutet ConfigAlarm, und dann fährt gar nichts
 #
-# Prüfen lässt sich die Geometrie vorab mit:
+# Prüfen lässt sich beides vorab ohne Board — die Datei selbst und die
+# Geometrie dahinter:
+#   wallplotter-firmware pruefen config/fluidnc-wallplotter.yaml
 #   wallplotter-kinematics --width 2000 --height 2500 --overhang 150 --above 150
 
 board: BTT Rodent V1.0
@@ -32,14 +43,14 @@ kinematics:
     # und damit ändern sich Ankerabstand und -höhe jedes Mal.
     #
     # Gondel an den Referenzpunkt hängen, DORT das Board neu starten (siehe
-    # den Homing-Block unten), dann drei Maße nehmen:
-    # Abstand der Umlenkpunkte, linke Riemenlänge, rechte Riemenlänge. Dann:
+    # den Homing-Block unten), dann drei Maße nehmen: Abstand der
+    # Umlenkpunkte, linke Riemenlänge, rechte Riemenlänge. Dann:
     #
     #   wallplotter-location new <Name> --span 2300 --left 1450 --right 1470
-    #   wallplotter-location config <Name>
+    #   wallplotter-firmware config --location <Name> --out config.yaml
     #
-    # Das gibt genau diesen Block mit den passenden Zahlen aus. Die Werte unten
-    # sind nur ein Beispiel für eine symmetrische Aufhängung.
+    # Das erzeugt diese Datei mit den passenden Zahlen. Die Werte unten sind
+    # nur ein Beispiel für eine symmetrische Aufhängung.
     left_anchor_x: -1150.000
     left_anchor_y: 900.000
     right_anchor_x: 1150.000
@@ -51,7 +62,8 @@ kinematics:
 
 stepping:
   engine: I2S_STREAM
-  idle_ms: 255 # Motoren gehalten lassen — die Gondel hängt am Riemen
+  # Motoren gehalten lassen — die Gondel hängt am Riemen
+  idle_ms: 255
   pulse_us: 4
   dir_delay_us: 1
   disable_delay_us: 0
@@ -109,13 +121,16 @@ axes:
         cs_pin: gpio.5
         spi_index: 1
         r_sense_ohms: 0.022
-        run_amps: 1.200 # Nennstrom der 17HS4412P1-3, nicht erhöhen
-        hold_amps: 1.200 # voller Haltestrom: die Gondel darf nicht absacken
+        # Nennstrom der 17HS4412P1-3, nicht erhöhen
+        run_amps: 1.200
+        # voller Haltestrom: die Gondel darf nicht absacken
+        hold_amps: 1.200
         microsteps: 16
         toff_disable: 0
         toff_stealthchop: 5
         use_enable: false
-        run_mode: StealthChop # leise — und Homing gibt es hier ohnehin nicht
+        # leise — und Homing gibt es hier ohnehin nicht
+        run_mode: StealthChop
         homing_mode: CoolStep
         stallguard: 16
         stallguard_debug: false
@@ -141,7 +156,8 @@ axes:
         step_pin: I2SO.5
         direction_pin: I2SO.4
         disable_pin: I2SO.7
-        cs_pin: NO_PIN # Daisy-Chain: CS sitzt am ersten Treiber
+        # Daisy-Chain: CS sitzt am ersten Treiber
+        cs_pin: NO_PIN
         spi_index: 2
         r_sense_ohms: 0.022
         run_amps: 1.200
@@ -168,26 +184,53 @@ axes:
 # in FluidNC nicht.
 #
 # Der Pin ist geklärt (Rodent User Manual V1.03, Pinbild S. 6/7 und
-# Spindel-Schaltplan S. 12): gpio.25 liegt als "Sp-Enable" auf dem 3-poligen
-# Stecker CN51 heraus — VCC / GND / Signal, Raster 2,54 mm. Beschaltung dort:
+# Spindel-Schaltplan S. 12): gpio.25 liegt als "Sp-Enable" auf dem
+# 3-poligen Stecker CN51 heraus — VCC / GND / Signal, Raster 2,54 mm.
+# Beschaltung dort:
 #
 #   CN51 Pin 1 --[R25 100R]-- +5V
 #   CN51 Pin 2 --------------- GND
 #   CN51 Pin 3 --[R24 100R]-- gpio.25, ESD-Klemmdiode 3,3 V gegen GND
 #
 # Also: Signal an Pin 3, Masse an Pin 2 — aber die SERVOVERSORGUNG NICHT vom
-# +5-V-Pin abgreifen. Da liegen ebenfalls 100 Ohm in Reihe, an denen ein MG90S
-# (mehrere hundert mA im Anlauf) die Spannung vollständig zusammenbrechen
-# lässt. Eigenes 5-V-Netzteil, Masse mit dem Board zusammenlegen.
+# +5-V-Pin dieses Steckers abgreifen. Da liegen ebenfalls 100 Ohm in Reihe, an
+# denen ein MG90S (mehrere hundert mA im Anlauf) die Spannung vollständig
+# zusammenbrechen lässt.
+#
+# Ein zweites Netzteil braucht es dafür aber NICHT — das stand hier eine
+# Zeitlang und war zu kurz gedacht. Die Platine hat einen eigenen 5-V-Zweig,
+# und der kommt an zwei Stellen ohne Vorwiderstand heraus:
+#
+#   * OLED-Stecker, Pin +5V (neben SDA/SCL/GND)
+#   * jeder Endstop-Stecker, Pin V-Lim — wenn die SW_VCC-Brücke (CN44) auf +5V steckt
+#
+# Von dort die rote Servoleitung, Masse weiter an CN51 Pin 2. Dazu 470 bis
+# 1000 uF Elko plus 100 nF direkt an der Gondel: Ein Stiftheber zieht im Mittel
+# fast nichts, aber für rund 100 ms beim Hub einige hundert mA — der Puffer
+# nimmt genau diese Spitze auf, statt sie durch die Zuleitung zu holen.
+#
+# Wie viel der 5-V-Zweig hergibt, steht im Rodent-Handbuch nirgends. Also
+# nachmessen: Servo mehrfach heben und senken, dabei die 5 V beobachten. Sackt
+# sie unter etwa 4,5 V oder startet der ESP32 neu, kommt ein kleiner
+# Abwärtswandler an die Motorklemme (24 V auf 5 V, 2 bis 3 A). Auch das ist
+# kein zweites Netzteil, sondern ein Bauteil für wenige Euro am vorhandenen.
 #
 # Der Stecker mit der Aufschrift "PWM" ist NICHT der richtige: das ist ein
 # analoger 3-10-V-Drehzahlausgang mit Trimmpoti (VR-10K), für einen VFD
-# gedacht. Ebenfalls richtiggestellt: gpio.2, gpio.4, gpio.12 und gpio.13 sind
-# keine brauchbaren Alternativen — sie sind am Rodent nirgends herausgeführt,
-# und 2/12/13 sind ESP32-Strapping- bzw. JTAG-Pins.
+# gedacht.
+#
+# Ebenfalls richtiggestellt, und diesmal in die andere Richtung: gpio.2, gpio.4
+# und gpio.12 sind am Rodent SEHR WOHL herausgeführt — hier stand einmal das
+# Gegenteil. Sie schalten die drei V-MOS-Leistungsausgänge
+# (DC12V bis DC36V, bis 5 A je Ausgang). Für den Servo taugen sie trotzdem nicht: das
+# sind Low-Side-MOSFETs an einem eigenen Spannungseingang, keine
+# Logikausgänge.
+# Wofür sie taugen, steht beim Laserblock weiter unten.
 pwm:
-  pwm_hz: 50 # Servo-Takt
-  output_pin: gpio.25 # Sp-Enable, CN51 Pin 3
+  # Servo-Takt
+  pwm_hz: 50
+  # Sp-Enable, CN51 Pin 3
+  output_pin: gpio.25
   enable_pin: NO_PIN
   direction_pin: NO_PIN
   disable_with_s0: false
@@ -214,41 +257,7 @@ pwm:
 # ist gewollt: M3 S<wert> setzt konstant, ohne mit dem Vorschub zu skalieren.
 
 # ---------------------------------------------------------------------------
-# Halt, Pause und Weiter als Taster
-# ---------------------------------------------------------------------------
-#
-# Nicht optional. Über HTTP lässt sich die Maschine derzeit nicht anhalten:
-# `/command?plain=` führt nur $-Kommandos aus, ein Realtime-Byte landet dort
-# beim leeren Kommandonamen ("Help") und meldet HTTP 200, ohne etwas zu tun.
-# Und während der Fahrt antwortet der Endpunkt ohnehin nur mit 503, solange
-# $HTTP/BlockDuringMotion an ist.
-#
-# Die Eingänge sind frei: weil die WallPlotter-Kinematik nicht referenzieren
-# kann, wird kein einziger der fünf optogekoppelten Endstop-Eingänge gebraucht.
-# Taster gegen GND, Spannungswahl über die SW_VCC-Brücke (5 V bei 24-V-Board).
-#
-# `cycle_start_pin` ist zusätzlich der einzige heute funktionierende Weg, die
-# M0-Pause beim Stiftwechsel aufzulösen.
-#
-# Alle Control-Eingänge müssen beim Start INAKTIV lesen — ein klemmender Taster
-# löst sonst gleich beim Einschalten Alarm aus. Das ist gewollt.
-#
-# Das `:low` unten unterstellt, dass der Eingang im Ruhezustand HIGH liegt und
-# der gedrückte Taster ihn nach GND zieht. Die Eingänge des Rodent sind
-# optogekoppelt, die Ruhelage hängt damit an der Beschaltung — vor dem ersten
-# Lauf mit `?` gegenprüfen: im Statusbericht listet das Feld `Pn:` genau die
-# Control-Eingänge, die FluidNC gerade als AKTIV sieht. Steht dort schon im
-# Ruhezustand ein R, H oder S, gehört das `:low` weg.
-#
-# Wer die Taster (noch) nicht verdrahtet hat, kommentiert den Block aus;
-# NO_PIN wäre auch in Ordnung, aber dann fehlt der Halt ersatzlos.
-control:
-  reset_pin: gpio.35:low # X-MAX-Stecker — Not-Halt, entspricht Ctrl-X
-  feed_hold_pin: gpio.34:low # Y-MAX-Stecker — Pause, entspricht !
-  cycle_start_pin: gpio.33:low # Z-MAX-Stecker — Weiter, entspricht ~
-
-# ---------------------------------------------------------------------------
-# Zweiter Werkzeugkopf (Laser) — bewusst auskommentiert
+# Zweiter Werkzeugkopf (Laser)
 # ---------------------------------------------------------------------------
 #
 # FluidNC kann mehrere Spindeln in einer Datei führen; umgeschaltet wird im
@@ -260,8 +269,8 @@ control:
 # Zwei Dinge gehen dabei NICHT:
 #
 #   1. Beide Köpfe am selben GPIO. FluidNC belegt einen Pin exklusiv; zwei
-#      Spindeln auf gpio.25 lassen sich nicht einmal parsen. Der Laser braucht
-#      also einen eigenen Ausgang.
+#      Spindeln auf gpio.25 lassen sich nicht einmal parsen. Der Laser
+#      braucht also einen eigenen Ausgang.
 #   2. Beide Köpfe an derselben Frequenz. Ein RC-Servo will 50 Hz, ein Laser
 #      braucht Kilohertz — FluidNC begrenzt `pwm_hz` einer Laser-Spindel auf
 #      1000 bis 100000. Wer den Stift versehentlich an eine `Laser:`-Spindel
@@ -277,22 +286,81 @@ control:
 # Endwert als `--laser-smax` übernehmen. Steht dort 255 und die Software
 # rechnet mit 1000, kommt viermal zu wenig Leistung heraus — oder umgekehrt.
 #
+# Die Luft (M8) hängt an einem V-MOS-Ausgang. Genau dafür sind die drei da:
+# DC12V bis DC36V, bis 5 A je Ausgang, geschaltet von
+# gpio.12 (V-MOS 1), gpio.2 (V-MOS 2), gpio.4 (V-MOS 3).
+# Eigener Spannungseingang, also Pumpe oder Ventil direkt daran — kein
+# Relais, kein weiteres Netzteil. Dasselbe gilt für Absaugung oder Licht.
+#
+# Aus, solange kein Laser dranhängt — einschalten mit `--laser`.
+#
 # Laser:
-#   pwm_hz: 5000              # Klasse Laser erlaubt nur 1000..100000
-#   output_pin: gpio.15       # Sp-Direction, CN52 Pin 3 — schließt RS485 aus
-#   enable_pin: NO_PIN        # Freigabe der Laser-PSU, falls vorhanden
-#   disable_with_s0: true     # S0 zieht auch die Freigabe — sicherer
+#   # Klasse Laser erlaubt nur 1000..100000
+#   pwm_hz: 5000
+#   # Sp-Direction, CN52 Pin 3 — schließt RS485 aus
+#   output_pin: gpio.15
+#   # Freigabe der Laser-PSU, falls vorhanden
+#   enable_pin: NO_PIN
+#   # S0 zieht auch die Freigabe — sicherer
+#   disable_with_s0: true
 #   s0_with_disable: true
 #   speed_map: 0=0.000% 1000=100.000%
 #   tool_num: 100
 #
 # coolant:
 #   mist_pin: NO_PIN
-#   flood_pin: NO_PIN         # Air Assist, angesteuert mit M8 (aus: M9)
+#   # Air Assist über V-MOS, angesteuert mit M8 (aus: M9)
+#   flood_pin: gpio.4
 #   delay_ms: 500
 
+# ---------------------------------------------------------------------------
+# Halt, Pause und Weiter als Taster
+# ---------------------------------------------------------------------------
+#
+# Nicht optional. Über HTTP lässt sich die Maschine derzeit nicht anhalten:
+# `/command?plain=` führt nur $-Kommandos aus, ein Realtime-Byte landet dort
+# beim leeren Kommandonamen ("Help") und meldet HTTP 200, ohne etwas zu tun.
+# Und während der Fahrt antwortet der Endpunkt ohnehin nur mit 503, solange
+# $HTTP/BlockDuringMotion an ist.
+#
+# Die Eingänge sind frei: weil die WallPlotter-Kinematik nicht referenzieren
+# kann, wird kein einziger der fünf optogekoppelten Endstop-Eingänge gebraucht.
+# Taster gegen GND, Spannungswahl über die SW_VCC-Brücke (CN44) auf +5V.
+#
+# ACHTUNG, Steckbrücken abziehen: Auf denselben GPIOs liegen die
+# DIAG-Ausgänge der Treiber, wenn die Brücken gesteckt sind —
+# DIAGX auf gpio.35, DIAGY auf gpio.34, DIAGZ auf gpio.33, DIAGE auf gpio.32.
+# Bleibt eine davon drin, treibt der Treiber gegen den Taster. Für einen
+# Wandplotter sind sie ohnehin nutzlos: StallGuard-Homing kann diese
+# Kinematik nicht.
+#
+# `cycle_start_pin` ist zusätzlich der einzige heute funktionierende Weg, die
+# M0-Pause beim Stiftwechsel aufzulösen.
+#
+# Alle Control-Eingänge müssen beim Start INAKTIV lesen — ein klemmender Taster
+# löst sonst gleich beim Einschalten Alarm aus. Das ist gewollt.
+#
+# Das `:low` unten unterstellt, dass der Eingang im Ruhezustand HIGH liegt und
+# der gedrückte Taster ihn nach GND zieht. Die Eingänge des Rodent sind
+# optogekoppelt, die Ruhelage hängt damit an der Beschaltung — vor dem ersten
+# Lauf mit `?` gegenprüfen: im Statusbericht listet das Feld `Pn:` genau die
+# Control-Eingänge, die FluidNC gerade als AKTIV sieht. Steht dort schon im
+# Ruhezustand ein R, H oder S, gehört das `:low` weg — dann neu erzeugen mit
+# `--taster-aktiv-high`.
+#
+# Wer die Taster (noch) nicht verdrahtet hat, erzeugt die Datei mit
+# `--ohne-taster`; dann fehlt der Halt allerdings ersatzlos.
+control:
+  # X-MAX-Stecker — Not-Halt, entspricht Ctrl-X
+  reset_pin: gpio.35:low
+  # Y-MAX-Stecker — Pause, entspricht !
+  feed_hold_pin: gpio.34:low
+  # Z-MAX-Stecker — Weiter, entspricht ~
+  cycle_start_pin: gpio.33:low
+
 start:
-  must_home: false # Referenziert wird per Anschlag und G92, nicht per $H
+  # Referenziert wird per Anschlag und G92, nicht per $H
+  must_home: false
   deactivate_parking: true
   check_limits: false
 

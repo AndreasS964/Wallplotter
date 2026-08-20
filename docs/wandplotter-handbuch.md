@@ -78,7 +78,8 @@ Betrieb am Board.
 ### Noch zu beschaffen
 
 - Servo MG90S (Metallgetriebe) für den Pen-Lift
-- 24-V-Netzteil, ausreichend für 2× 1,2 A + Servo + Reserve
+- **ein** 24-V-Netzteil, 4–5 A: 2× 1,2 A Motoren plus Reserve. Servo, Endstops
+  und Logik kommen aus der Platine (Board nimmt DC 24–56 V)
 - Aderendhülsen, Motor-Verlängerungskabel
 - GT2-Riemen **mit Stahlkern** (siehe Abschnitt 8 — das ist der wichtigste Einkauf)
 
@@ -194,8 +195,8 @@ Kinematik-Auswertung, FluidNC-Konfiguration und erreichbare Fläche.
 
 ```bash
 wallplotter-location new Keller --span 2300 --left 1450 --right 1470
-wallplotter-location config Keller     # gibt den kinematics-Block aus
 wallplotter-location show              # Auflösung, Kräfte, Riemenlänge
+wallplotter-firmware config --location Keller --out config.yaml
 ```
 
 ---
@@ -205,6 +206,65 @@ wallplotter-location show              # Auflösung, Kräfte, Riemenlänge
 Konfiguration: [`config/fluidnc-wallplotter.yaml`](../config/fluidnc-wallplotter.yaml).
 Pinbelegung stammt aus [BTTs eigener rodent.yaml](https://github.com/bigtreetech/Rodent/blob/master/rodent.yaml)
 — also echte Werte, keine geratenen.
+
+### Die Datei wird erzeugt
+
+Sie ist ein **Erzeugnis**, kein gepflegtes Dokument. Geschrieben hat sie
+`wallplotter-firmware` aus derselben Beschreibung, mit der auch die Vorschau
+rechnet; der Aufruf, der sie wiederherstellt, steht in ihrer eigenen Kopfzeile.
+
+```bash
+wallplotter-firmware config --location Keller --out config/fluidnc-wallplotter.yaml
+wallplotter-firmware pruefen config/fluidnc-wallplotter.yaml   # ohne Board
+wallplotter-firmware pruefen --host <ip>                       # die vom Board
+wallplotter-firmware diff   config/fluidnc-wallplotter.yaml    # von Hand geändert?
+wallplotter-firmware push   --host <ip> --location Keller
+```
+
+Der Grund ist nicht Bequemlichkeit, sondern dass es vorher **zwei**
+Beschreibungen derselben Maschine gab: die Python-Seite und eine YAML-Datei,
+die jemand von Hand nachzog. Zwei Beschreibungen laufen auseinander, und zwar
+— die Vorschau rechnet mit den gemessenen Ankermaßen, das Board mit denen von
+vor drei Wochen, und das Bild an der Wand ist verzerrt. `wallplotter-doctor`
+merkte das schon vorher an; nur muss man ihn dafür aufrufen, und sein Rat
+verwies auf `wallplotter-location config`, das nur den Kinematikblock liefert.
+
+Drei Kopplungen hält der Erzeuger fest, die von Hand schon danebengegangen sind:
+
+| Was | Folgt woraus | Was von Hand schiefging |
+| --- | --- | --- |
+| `left_anchor_*` / `right_anchor_*` | den drei Maßen des Standorts | zwei Stellen, die auseinanderliefen |
+| `steps_per_mm` | Vollschritte × Mikroschritte ÷ (Zähne × Riementeilung), also 200 × 16 ÷ 40 = 80 | Mikroschritte geändert, Schritte vergessen — Faktor daneben |
+| `speed_map` | Impulsfenster ÷ PWM-Periode | `0=0.000% 100=100.000%` — der ganze Servoweg lag zwischen S5 und S10 |
+
+`pruefen` schaut mit zwei Blickwinkeln auf die Datei.
+
+Erstens mit dem eines YAML-Parsers: jeder Schlüssel gegen eine Liste, die aus
+dem FluidNC-Quelltext gezogen ist (`handler.item()` / `handler.section()`, Stand
+`8a0f8c8`). Der Unterschied, den sie macht, ist scharf: Ein **unbekannter
+Schlüssel** setzt das Board in ConfigAlarm, dann fährt nichts mehr; ein **Wert
+außerhalb des Bereichs** wird von der Firmware geklemmt und nur gemeldet
+(`NutsBolts.h`, `constrain_with_message`). Beides sagt das Werkzeug getrennt.
+
+Zweitens mit dem von FluidNCs **eigenem Tokenizer**, denn der weicht von YAML
+ab. Am folgenreichsten hier:
+
+> Hinter einen Wert gehört kein Kommentar. `parseValue()` nimmt bei einem
+> unquotierten Wert den ganzen Rest der Zeile — `idle_ms: 255 # gehalten
+> lassen` wird also als Zahl `255 # gehalten lassen` gelesen, scheitert, und das
+> Board geht in **ConfigAlarm**. Bei `true`/`false` wird stillschweigend `false`
+> daraus, bei einem Pin gibt es `Setting up pin … failed`.
+
+Ein YAML-Parser sieht davon nichts — deshalb beide Blickwinkel. In BTTs eigener
+`rodent.yaml` trägt aus demselben Grund keine Zeile einen Kommentar hinter dem
+Wert. Ausführlich in der [Gegenprüfung](firmware-gegenpruefung.md),
+Abschnitt 2.6.
+
+`push` schreibt in den **Flash**, nicht auf die SD-Karte. Das ist keine
+Feinheit: FluidNC liest die Konfiguration über `FileStream(filename, "rb",
+LocalFS)`, und ein Upload auf die Karte gälte als geglückt, während das Board
+weiter mit der alten Datei fährt. Die bisherige Fassung wird vorher
+heruntergeladen und gesichert.
 
 ### Die wichtigsten Einstellungen
 
@@ -230,11 +290,23 @@ BTTs eigene Datei nutzt einen VFD über RS485 und belegt gar keinen PWM-Port. Zw
 es: `gpio.25` liegt als `Sp-Enable` auf dem 3-poligen Stecker CN51 heraus, über
 100 Ω und auf 3,3 V geklemmt — genau richtig für einen Servo-Signaleingang. Der
 Stecker mit der Aufschrift „PWM" ist dagegen ein analoger 3–10-V-Ausgang mit
-Trimmpoti und wäre falsch gewesen. Die Versorgung des Servos darf **nicht** vom
-+5-V-Pin desselben Steckers kommen (dort liegen ebenfalls 100 Ω); dafür braucht
-es ein eigenes Netzteil. Auch richtiggestellt: gpio.2, 4, 12 und 13 sind am
-Rodent gar nicht herausgeführt. Verdrahtung in der
-[Bauanleitung](bauanleitung.md), Abschnitt 7.4.
+Trimmpoti und wäre falsch gewesen.
+
+Die **Versorgung** des Servos darf nicht vom +5-V-Pin desselben Steckers kommen —
+dort liegen ebenfalls 100 Ω. Hier stand daraufhin „dafür braucht es ein eigenes
+Netzteil", und das war zu kurz gedacht: Unbrauchbar ist nur dieser eine Pin, nicht
+der 5-V-Zweig der Platine. Ohne Vorwiderstand kommt er am **OLED-Stecker** (Pin
+`+5V`) heraus und an jedem **Endstop-Stecker** (Pin `V-Lim`, wenn die
+`SW_VCC`-Brücke auf +5 V steckt). Dazu ein Elko an der Gondel — dann genügt **ein**
+Netzteil für die ganze Maschine. Verdrahtung und die Messung, mit der man das
+absichert, in der [Bauanleitung](bauanleitung.md), Abschnitt 7.4.
+
+Ebenfalls richtiggestellt, und diesmal in die andere Richtung: Hier stand, gpio.2,
+4, 12 und 13 seien am Rodent gar nicht herausgeführt. Für **gpio.2, gpio.4 und
+gpio.12 ist das falsch** — sie schalten die drei V-MOS-Leistungsausgänge
+(DC 12–36 V, bis 5 A). Als Servosignal taugen sie trotzdem nicht (Low-Side-MOSFETs,
+keine Logikausgänge), aber als Air Assist, Absaugung oder Arbeitslicht sehr wohl:
+`coolant: flood_pin: gpio.4`, geschaltet mit `M8`/`M9`.
 
 ### Nullpunkt und Homing — die wichtigste Firmware-Entscheidung
 
@@ -411,7 +483,22 @@ Selbst nachsehen: `wallplotter-doctor`.
 
 ### Erstinbetriebnahme
 
-1. Board flashen, `config.yaml` hochladen, WLAN einrichten
+Geführt in einem Aufwasch:
+
+```bash
+wallplotter-setup --host <ip>
+```
+
+Acht Schritte, jeder mit Begründung, jeder nachgeprüft, jederzeit abbrechbar und
+fortsetzbar (`--status`, `--ab <schritt>`). Der Ablauf steht in
+`wallplotter/wizard.py` und weiß nichts von einem Terminal — er redet über ein
+schmales `Dialog`-Protokoll mit der Welt, damit derselbe Ablauf später auch in
+der Web-UI laufen kann und im Test gegen ein Skript aus Antworten prüfbar ist.
+
+Von Hand ist es dieselbe Reihenfolge:
+
+1. Board flashen, `config.yaml` erzeugen und in den Flash laden
+   (`wallplotter-firmware push --host <ip>`), WLAN einrichten
 2. `wallplotter-doctor --host <ip>` — sagt, was noch fehlt
 3. Motoren ohne Mechanik auf dem Tisch testen, Treiberstrom prüfen
 4. Servo/Pen-Lift durchtesten, S-Werte für oben/unten ermitteln,
@@ -430,7 +517,7 @@ Selbst nachsehen: `wallplotter-doctor`.
 ```bash
 wallplotter-calibrate --host <ip> zero                        # am Referenzpunkt
 wallplotter-location new Werkstatt --span 1800 --left 1200 --right 1200
-wallplotter-location config Werkstatt                         # in die config.yaml
+wallplotter-firmware push --host <ip> --location Werkstatt    # config.yaml + Neustart
 wallplotter-calibrate --host <ip> jog --dx -100               # in die Ecken fahren
 wallplotter-calibrate --host <ip> record bottom-left          # ... und alle vier aufnehmen
 wallplotter-location show                                     # Urteil zur Geometrie

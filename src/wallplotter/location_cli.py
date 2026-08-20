@@ -6,6 +6,10 @@
     wallplotter-location config --out kinematics.yaml
     wallplotter-location use Werkstatt
 
+``config`` gibt nur den Kinematikblock aus. Die vollständige ``config.yaml``
+des Boards — mit Treibern, Servo und Tastern — erzeugt
+``wallplotter-firmware config --location <Name>``.
+
 Die Flächenecken kommen aus ``wallplotter-calibrate`` und landen im jeweils
 aktiven Standort.
 """
@@ -47,7 +51,15 @@ def build_parser() -> argparse.ArgumentParser:
     remove = sub.add_parser("remove", help="Standort löschen")
     remove.add_argument("name")
 
-    config = sub.add_parser("config", help="FluidNC-Kinematikblock ausgeben")
+    config = sub.add_parser(
+        "config",
+        help="nur den FluidNC-Kinematikblock ausgeben",
+        description=(
+            "Gibt allein den kinematics-Block aus — zum Einsetzen in eine bestehende "
+            "config.yaml. Die vollständige Datei erzeugt `wallplotter-firmware config "
+            "--location <Name>`."
+        ),
+    )
     config.add_argument("name", nargs="?")
     config.add_argument("--out", type=Path, help="in Datei schreiben statt auf die Konsole")
     config.add_argument("--segment-length", type=float, default=1.0)
@@ -120,6 +132,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Geschrieben: {args.out}")
             else:
                 print(block)
+            print(
+                "\nNur der Kinematikblock. Die ganze Datei — Treiber, Servo, Taster — "
+                "erzeugt:\n"
+                f"  wallplotter-firmware config --location {args.name or book.active} "
+                "--out config/fluidnc-wallplotter.yaml",
+                file=sys.stderr,
+            )
             return 0
 
         if args.command in ("push", "pull"):

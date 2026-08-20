@@ -33,15 +33,22 @@ hatch = ["pillow>=10.0", "hatched>=0.2"]
 # kann das wieder ändern — deshalb erst prüfen, dann anheben.
 web = ["nicegui>=2.0,<4.0"]
 dev = ["pytest>=8.0", "ruff>=0.6", "pyyaml>=6.0"]
+# Nur für `tools/build_site.py`. Steht als eigenes Extra da, damit die CI
+# es mitinstallieren kann: der Test, der die Website gegen `design.py` hält,
+# übersprang sich sonst — und ein übersprungener Test ist ein Test, der die
+# Drift nicht mehr findet, die er finden soll.
+site = ["markdown>=3.5", "pygments>=2.17"]
 
 [project.scripts]
 plot = "wallplotter.cli:main"
 wallplotter-calibrate = "wallplotter.calibrate_cli:main"
 wallplotter-correct = "wallplotter.correct_cli:main"
 wallplotter-doctor = "wallplotter.doctor:main"
+wallplotter-firmware = "wallplotter.firmware_cli:main"
 wallplotter-kinematics = "wallplotter.kinematics:main"
 wallplotter-location = "wallplotter.location_cli:main"
 wallplotter-resume = "wallplotter.resume_cli:main"
+wallplotter-setup = "wallplotter.wizard_cli:main"
 wallplotter-web = "wallplotter.webapp:_cli"
 
 [project.urls]
