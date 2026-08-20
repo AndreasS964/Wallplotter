@@ -38,19 +38,21 @@ jobs:
         run: ruff check .
 
       - name: Test
-        run: pytest -q -rs
-
-      - name: Keine übersprungenen Tests durch fehlende Pakete
-        # Ein Skip ist hier kein Freibrief, sondern ein Hinweis: In diesem Job
-        # ist alles installiert, also darf sich nichts wegen eines fehlenden
-        # Pakets überspringen. Genau dadurch war die Suite jahrelang grün,
-        # während ganze Testdateien gar nicht liefen.
+        # Einmal laufen lassen, das Ergebnis danach auswerten. Ein Skip ist in
+        # diesem Job kein Freibrief, sondern ein Hinweis: hier ist alles
+        # installiert, also darf sich nichts wegen eines fehlenden Pakets
+        # überspringen. Genau dadurch war die Suite lange grün, während ganze
+        # Testdateien gar nicht liefen.
+        #
+        # `-rxs` listet auch die xfails — die dürfen bleiben (ein Fremdpaket,
+        # das seit Jahren nicht mehr veröffentlicht wurde, repariert sich nicht
+        # durch einen roten Balken), sollen aber im Bericht stehen.
         run: |
           set -o pipefail
-          pytest -q -rs 2>&1 | tee ergebnis.txt
-          if grep -qiE "SKIPPED.*(optional|Extra:)" ergebnis.txt; then
+          pytest -q -rxs 2>&1 | tee ergebnis.txt
+          if grep -qiE "^SKIPPED.*(optional|Extra:)" ergebnis.txt; then
             echo "::error::Tests haben sich wegen fehlender Pakete übersprungen"
-            grep -iE "SKIPPED" ergebnis.txt
+            grep -iE "^SKIPPED" ergebnis.txt
             exit 1
           fi
 

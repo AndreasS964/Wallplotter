@@ -94,7 +94,14 @@ Die Attrappen sagen jetzt auch Nein. Die alten quittierten jede URL und jedes
 Kommando mit 200 — darüber sind sechs Firmware-Fehler grün geblieben. Die neue
 Gegenstelle (`tests/fluidnc_fake.py`) kennt nur die Endpunkte, die FluidNC
 registriert, und verhält sich bei `plain=` wie `settings_execute_line()`.
-**460 Tests.**
+**461 Tests.**
+
+Dabei kam gleich etwas heraus, das vorher unter dem Skip lag: Das Fremdpaket
+`hatched` (0.2.0, die letzte Veröffentlichung) ist mit Shapely 2 nicht mehr
+lauffähig — es baut ein leeres `MultiLineString` aus einem numpy-Array.
+`imaging.hatch` sagt das jetzt im Klartext und nennt die drei Verfahren, die
+nur Pillow brauchen; der Test meldet ein sichtbares xfail statt eines stillen
+Skips und wird von selbst grün, wenn upstream nachzieht.
 
 Die CI installiert alle Extras in einem Job und bricht ab, wenn sich ein Test
 wegen eines fehlenden Pakets überspringt — genau so blieben ganze Testdateien

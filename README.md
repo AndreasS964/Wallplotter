@@ -10,7 +10,7 @@
   <a href="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-460-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-461-brightgreen">
   <img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-lightgrey">
 </p>
 
@@ -353,12 +353,18 @@ plot --list-techniques
 plot foto.jpg --technique spiral --pitch 25
 ```
 
-| Verfahren | Charakter | Stifthübe |
-| --- | --- | --- |
-| `hatch` | Schraffur nach Helligkeitsstufen, grafisch | viele |
-| `stipple` | Punktraster, fotografisch | einer je Punkt |
-| `tsp` | dieselben Punkte als eine durchgehende Linie | keine |
-| `spiral` | Spirale mit dunkelheitsabhängiger Auslenkung | keine |
+| Verfahren | Charakter | Stifthübe | Stand |
+| --- | --- | --- | --- |
+| `hatch` | Schraffur nach Helligkeitsstufen, grafisch | viele | **fällt derzeit aus, siehe unten** |
+| `stipple` | Punktraster, fotografisch | einer je Punkt | läuft |
+| `tsp` | dieselben Punkte als eine durchgehende Linie | keine | läuft |
+| `spiral` | Spirale mit dunkelheitsabhängiger Auslenkung | keine | läuft |
+
+`hatch` liegt an dem Fremdpaket `hatched`, und dessen letzte Veröffentlichung
+(0.2.0) ist mit Shapely 2 nicht mehr lauffähig — sie baut ein leeres
+`MultiLineString` aus einem numpy-Array, was Shapely 2 ablehnt. Der Aufruf
+meldet das im Klartext samt Ausweg. Die drei übrigen Verfahren brauchen nur
+Pillow, und `tsp` wie `spiral` sind an einer Wand ohnehin die ruhigeren.
 
 ![Vergleich der Bildverfahren](docs/images/verfahren.png)
 
@@ -408,7 +414,7 @@ Board unterwegs, Mechanik noch nicht gedruckt. Die
 behoben.
 
 * **Verifiziert ohne Hardware:** Geometrie, GCode-Export, Kalibrierlogik,
-  Testmuster, Kinematikrechnung, Bildverfahren, UI-Verdrahtung — 460 Tests.
+  Testmuster, Kinematikrechnung, Bildverfahren, UI-Verdrahtung — 461 Tests.
   Die board-nahen Tests laufen gegen eine Gegenstelle, die sich wie FluidNC
   verhält: unbekannte Endpunkte sind 404, und `/command?plain=` versteht nur
   `$`-Kommandos. Die alten Attrappen quittierten alles mit 200 — darüber sind

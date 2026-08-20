@@ -362,6 +362,23 @@ def hatch(
             save_svg=False,
         )
     except Exception as exc:
+        if "truth value of an empty array" in str(exc):
+            # hatched 0.2.0 (die letzte Veröffentlichung, Stand August 2026)
+            # baut in `_build_hatch` ein leeres MultiLineString aus einem
+            # numpy-Array: `MultiLineString(np.empty(shape=(0, 2, 2)))`.
+            # Shapely 2 prüft dort `if not lines:` und lehnt das ab. Der Fehler
+            # trifft *jeden* Aufruf, unabhängig vom Bild — deshalb hier eine
+            # Meldung, mit der man etwas anfangen kann, statt der rohen.
+            raise ImagingError(
+                "Das Paket `hatched` (0.2.0) ist mit Shapely 2 nicht lauffähig: es "
+                "baut ein leeres MultiLineString aus einem numpy-Array "
+                "(hatched/hatched.py:210), und Shapely 2 lehnt das ab. Eine neuere "
+                "Veröffentlichung gibt es nicht.\n"
+                "Ausweg: --technique stipple, tsp oder spiral — die brauchen nur "
+                "Pillow und liefern an einer Wand ohnehin die ruhigere Bewegung. Wer "
+                "die Schraffur unbedingt braucht, muss shapely<2 verwenden, und das "
+                "verträgt sich nicht mit vpype."
+            ) from exc
         raise ImagingError(f"Schraffur fehlgeschlagen: {exc}") from exc
     finally:
         if temporary:

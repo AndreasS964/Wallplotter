@@ -3,7 +3,7 @@
 Alles zum Projekt an einer Stelle: was gebaut wird, warum es so gebaut wird,
 was gemessen und gerechnet wurde, und wie man es bedient.
 
-*Stand: August 2026 · Version 0.2.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 426 Tests*
+*Stand: August 2026 · Version 0.2.0 · Repo: [AndreasS964/Wallplotter](https://github.com/AndreasS964/Wallplotter) · 461 Tests*
 
 > **Seit der [Gegenprüfung gegen den FluidNC-Quelltext](firmware-gegenpruefung.md)
 > sind mehrere Aussagen in diesem Handbuch überholt.** Sie sind unten
@@ -395,7 +395,7 @@ wichtiger als eine Versionsnummer:
 
 | | Zustand |
 | --- | --- |
-| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 426 Tests |
+| Geometrie, Einpassen, Bildverfahren, GCode-Erzeugung | **läuft**, 461 Tests |
 | Laufzeitschätzung, Fortsetzen, Vorverzerrung, Kalibrierlogik | **läuft**, gegen erzeugte Programme geprüft |
 | Web-UI, alle sechs CLIs | **läuft**, ohne Board bedienbar |
 | Upload, Jog, Status, `$SD/Run` | nach ESP3D-Doku gebaut, **nie an einem Board** |
@@ -571,7 +571,7 @@ Bei Bildvorlagen entscheidet das Verfahren mehr als die Mechanik:
 
 | Verfahren | Charakter | Stifthübe |
 | --- | --- | --- |
-| `hatch` | Schraffur nach Helligkeitsstufen, grafisch | viele |
+| `hatch` | Schraffur nach Helligkeitsstufen, grafisch | viele — **derzeit nicht lauffähig**: `hatched` 0.2.0 verträgt sich nicht mit Shapely 2 |
 | `stipple` | Punktraster, fotografisch | einer je Punkt |
 | `tsp` | dieselben Punkte als eine durchgehende Linie | keine |
 | `spiral` | Spirale mit dunkelheitsabhängiger Auslenkung | keine |
