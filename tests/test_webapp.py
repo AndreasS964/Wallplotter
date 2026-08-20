@@ -397,7 +397,7 @@ def test_a_broken_locations_file_does_not_stop_the_ui(tmp_path):
 
 
 def test_the_documented_start_command_actually_serves_a_page():
-    """`python -m wallplotter.webapp` — der Weg, der in README und Handbuch steht.
+    """`python -m wallplotter.webapp` — der Weg, der im Handbuch steht.
 
     Der Server lief immer; nur antwortete er auf **jede** Anfrage mit HTTP 500,
     weil NiceGUI ab Version 3 bei jedem Seitenaufruf
