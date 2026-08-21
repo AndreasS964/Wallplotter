@@ -9,7 +9,7 @@
   <a href="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-687-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-728-brightgreen">
   <img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-lightgrey">
 </p>
 
@@ -435,7 +435,7 @@ Alles gesetzt und verlinkt unter
 Board unterwegs, Mechanik noch nicht gedruckt.
 
 Ohne Hardware geprüft sind Geometrie, GCode-Export, Kalibrierlogik, Testmuster,
-Kinematikrechnung, Bildverfahren und die Verdrahtung der Oberflächen: 687 Tests.
+Kinematikrechnung, Bildverfahren und die Verdrahtung der Oberflächen: 728 Tests.
 Die board-nahen laufen gegen eine Gegenstelle, die sich wie FluidNC verhält,
 unbekannte Endpunkte also mit 404 beantwortet und bei `/command?plain=` nur
 `$`-Kommandos versteht.
