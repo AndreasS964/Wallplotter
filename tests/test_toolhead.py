@@ -129,6 +129,22 @@ def test_pen_without_dwell_is_flagged():
     assert any("Wartezeit" in note for note in notes)
 
 
+def test_a_high_global_feed_is_flagged_even_without_a_pen_override():
+    """check() rechnete den wirksamen Vorschub über feed_for() korrekt aus,
+    warnte davor aber nur, wenn self.draw_feed (die Stift-eigene Übersteuerung)
+    gesetzt war — ein hoher globaler draw_feed blieb so unbemerkt."""
+    notes = PenToolhead().check(travel_as_g1=False, draw_feed=6000)
+    assert any("Riemen springen" in note for note in notes)
+
+    # Dieselbe wirksame Geschwindigkeit über eine Stift-Übersteuerung warnte
+    # schon vorher — das darf durch die Behebung nicht wegfallen.
+    notes = PenToolhead(draw_feed=6000).check(travel_as_g1=False, draw_feed=1500)
+    assert any("Riemen springen" in note for note in notes)
+
+    notes = PenToolhead().check(travel_as_g1=False, draw_feed=1500)
+    assert not any("Riemen springen" in note for note in notes)
+
+
 def test_impossible_pen_values_are_rejected():
     with pytest.raises(ToolheadError):
         PenToolhead(dwell_s=-1)

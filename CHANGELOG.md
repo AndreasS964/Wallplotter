@@ -1,5 +1,39 @@
 # Änderungen
 
+## Unveröffentlicht — drei weitere Funde: Warnschwelle, Spirale, Bildrand
+
+Weiter aus derselben Gegenprüfungsrunde.
+
+### Die Übergeschwindigkeits-Warnung griff nur mit Stift-Übersteuerung
+
+`toolhead.py`: `PenToolhead.check()` berechnete den wirksamen Vorschub
+korrekt über `feed_for()` — der fällt auf den globalen `draw_feed` zurück,
+wenn der Stift keinen eigenen hat —, warnte aber nur `if self.draw_feed and
+feed > 2500`. Ohne Stift-eigene Übersteuerung blieb die Bedingung falsch,
+selbst wenn der *globale* Vorschub weit über der Schwelle lag, ab der die
+Riemen springen. Genau der naheliegendste Weg, einen Plot schneller zu
+machen — `--draw-feed` global hochsetzen —, umging damit die eigene Warnung.
+
+### Die Wobble-Phase der Fotospirale: ein Fix, der sich selbst aufhob
+
+`imaging.py`: `spiral()` sollte im Zentrum, wo der Radius kleiner als
+`pitch_mm / 4` ist, den Bogen um weniger als `step_mm` wachsen lassen — das
+steht auch weiterhin so im Kommentar. Die Rechnung dazu war aber
+`delta * max(radius, pitch_mm / 4)`, und das ist algebraisch **immer** genau
+`step_mm`, weil `delta` selbst als `step_mm / max(radius, pitch_mm / 4)`
+definiert ist. Der Bogen wuchs also unbedingt um den vollen Nennschritt,
+ganz gleich wie klein der Radius war — die Phase des Wobbles lief im Zentrum
+weiter davon, obwohl der Kommentar das Gegenteil beschreibt. Jetzt zählt
+`delta * radius`, der tatsächlich gefahrene Bogen beim wahren Radius.
+
+### Ein Bildrand, der keiner war
+
+`imaging.py`: `GrayImage.darkness()` prüfte die Bildgrenzen mit `int(x)`,
+`int(y)` — Kürzung Richtung 0. Für `-1 < x < 0` (ebenso für `y`) liefert das
+fälschlich Pixel 0 statt „außerhalb", denn `int(-0.5) == 0`. Betroffen davon
+ist unter anderem `spiral()`, deren Wobble Bildkoordinaten knapp unter 0
+erzeugen kann. Jetzt `math.floor()`.
+
 ## Unveröffentlicht — frische Gegenprüfung des Codes: drei Funde behoben
 
 Eine neue, unabhängige Runde: 7 Fachbereiche parallel gegengelesen, jeder
