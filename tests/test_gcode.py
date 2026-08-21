@@ -128,6 +128,38 @@ def test_travel_is_counted_for_every_pass():
     assert dreimal.travel_mm == pytest.approx(3 * einmal.travel_mm)
 
 
+def test_travel_mm_is_measured_from_the_calibrated_origin():
+    """motion_s rechnete schon vom Standort-Nullpunkt aus — travel_mm nicht,
+    und wich davon ab, sobald origin_x_mm/origin_y_mm ungleich 0 sind."""
+    from wallplotter.geometry import travel_length
+
+    lines = [[(0.0, 0.0), (10.0, 0.0)], [(50.0, 50.0), (60.0, 50.0)]]
+    origin = (300.0, 200.0)
+    config = PlotConfig(
+        width_mm=1000, height_mm=1000, margin_mm=50, origin_x_mm=origin[0], origin_y_mm=origin[1]
+    )
+    stats = stats_for(lines, config)
+    assert stats.travel_mm == pytest.approx(travel_length(lines, start=origin))
+    assert stats.travel_mm != pytest.approx(travel_length(lines))  # ab Maschinen-(0,0) wäre falsch
+
+
+def test_travel_mm_without_park_skips_the_return_leg():
+    """Ein Block, der nicht zum Ausgangspunkt zurückfährt — eine
+    Zwischenebene im zusammenhängenden Mehrfarbenprogramm —, darf die
+    Rückfahrt auch in der Statistik nicht mitzählen."""
+    from wallplotter.geometry import travel_length
+
+    lines = [[(0.0, 0.0), (10.0, 0.0)], [(50.0, 50.0), (60.0, 50.0)]]
+    geparkt = stats_for(lines, CONFIG)
+    from wallplotter.gcode import PlotStats
+
+    ungeparkt = PlotStats(lines, CONFIG, park=False)
+    assert ungeparkt.travel_mm == pytest.approx(
+        travel_length(lines, start=(0.0, 0.0), return_to_start=False)
+    )
+    assert ungeparkt.travel_mm < geparkt.travel_mm
+
+
 def test_no_line_exceeds_what_fluidnc_accepts():
     """FluidNC liest in einen ``char line[128]`` und lehnt alles Längere ab.
 

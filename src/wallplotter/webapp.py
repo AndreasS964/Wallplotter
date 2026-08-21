@@ -434,6 +434,13 @@ class WallplotterUI:
         if not (0 <= index < len(self.layers)):
             return
         layer = self.layers[index]
+        blocked = self.laser_blocked()
+        if blocked:
+            # Derselbe Riegel wie in regenerate() — sonst erzeugte gerade der
+            # Knopf, der sofort hochlädt und startet, vollständigen
+            # Laser-GCode ohne je den Schalter „Laser scharf" zu verlangen.
+            self.ui.notify(blocked, type="negative", multi_line=True, timeout=10000)
+            return
         config = self.plot_config()
         # gemeinsame Einpassung über alle Ebenen, sonst passt der Passer nicht
         try:

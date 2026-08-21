@@ -1,5 +1,40 @@
 # Änderungen
 
+## Unveröffentlicht — frische Gegenprüfung des Codes: drei Funde behoben
+
+Eine neue, unabhängige Runde: 7 Fachbereiche parallel gegengelesen, jeder
+Fund einzeln adversarisch nachgeprüft (28 Agenten, 21 bestätigt). Diese drei
+zuerst, weil einer sicherheitsrelevant ist und die anderen beiden dieselbe
+Datei betreffen; der Rest folgt in den nächsten Einträgen.
+
+### Der Laser-Riegel hatte noch ein zweites Loch
+
+`webapp.py`: Der Schalter „Laser scharf" wird von `regenerate()` über
+`laser_blocked()` geprüft — auch über die Ebenenzuordnung, seit einer
+früheren Runde. Aber der Sende-Knopf **je Ebene** (`send_layer()`) rief
+`laser_blocked()` nie auf. Eine Farbebene, deren Dropdown auf „Laser"
+gestellt war, erzeugte darüber vollständigen Laser-GCode und lud ihn
+hoch — ohne dass der Riegel je angefasst wurde, auch wenn das
+`Laser scharf`-Häkchen nie gesetzt war. `send_layer()` prüft jetzt denselben
+Riegel wie `regenerate()`, vor dem Erzeugen des Programms.
+
+### `travel_mm` rechnete vom falschen Nullpunkt
+
+`gcode.py`: `PlotStats.travel_mm` maß die Leerwege ab Maschinen-`(0,0)`, obwohl
+die Geometrie längst auf `config.origin_x_mm`/`origin_y_mm` verschoben ist —
+den Punkt, an dem der Plot tatsächlich parkt. Die Nachbarrechnung `motion_s`
+tat das schon richtig, zwei Zeilen darunter. Bei kalibrierter Fläche (der
+Normalfall, nicht der Sonderfall) wich die ausgewiesene Leerweg-Strecke damit
+um ein Vielfaches vom tatsächlichen Weg ab — sichtbar in jeder generierten
+`.gcode`-Datei, im CLI-Ausdruck und in der Web-UI.
+
+Dieselbe Stelle zählte in einem zusammenhängenden Mehrfarbenprogramm
+(`--layers --one-file`) für jede Zwischenebene eine Rückfahrt zum Nullpunkt
+mit, die deren eigener GCode-Block gar nicht enthält — die passiert erst ganz
+am Schluss, im letzten Block. `travel_length()` und `PlotStats` kennen jetzt
+beide einen `park`/`return_to_start`-Schalter, den `_program()` passend zu
+`include_end` setzt.
+
 ## Unveröffentlicht — Testlücke bei `wallplotter-location` geschlossen
 
 `location_cli.py` war das einzige der zehn Konsolenbefehle ohne eigene

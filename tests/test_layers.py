@@ -176,6 +176,35 @@ def test_no_park_run_across_the_wall_before_a_pen_change():
     assert any(line.startswith("M5") for line in lines[pause - 4 : pause])
 
 
+def test_non_final_blocks_do_not_claim_a_return_leg_that_never_happens():
+    """Der eingebettete Statistik-Kommentar einer Zwischenebene versprach eine
+    Rückfahrt zum Nullpunkt, die im GCode dieses Blocks gar nicht vorkommt —
+    die steht erst ganz am Schluss des zusammengesetzten Programms.
+
+    Weit vom Nullpunkt entfernt, damit die Rückfahrt beim Runden auf eine
+    Nachkommastelle nicht untergeht.
+    """
+    import re
+
+    far = Layer(2, "#e02020", [[(500.0, 900.0), (600.0, 900.0)]])
+
+    # fit=False, damit beide Programme dieselben Koordinaten benutzen — mit
+    # Einpassung würde Rot allein anders skaliert als Rot neben Schwarz, und
+    # das verfälschte den Vergleich unabhängig von der Rückfahrt.
+    combined = layers_to_gcode([far, BLACK], CONFIG, separate=False, fit=False)
+    separate = layers_to_gcode([far], CONFIG, fit=False)["#e02020"]
+
+    def travel_m(program: str) -> float:
+        match = re.search(r"\+ ([\d.]+) m\s+Leerweg", program)
+        assert match, program
+        return float(match.group(1))
+
+    # Rot steht als erster, nicht-letzter Block im kombinierten Programm —
+    # seine eigene GCode-Sequenz fährt nicht zum Nullpunkt zurück, das tut nur
+    # der allerletzte Block. Als eigene Datei parkt dieselbe Ebene dagegen.
+    assert travel_m(combined) < travel_m(separate)
+
+
 def test_each_layer_gets_the_tool_preamble_after_a_change():
     """Nach dem Wechsel muss der neue Kopf hochgefahren werden — beim Laser
     wären das Luft an, Vorlauf und Lasermodus."""

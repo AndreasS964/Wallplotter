@@ -472,6 +472,38 @@ def test_the_laser_bar_holds_for_layer_assignments_too(app):
     assert app.laser_blocked() == ""
 
 
+def test_send_layer_refuses_an_unarmed_laser_assignment(app, tmp_path, monkeypatch):
+    """`send_layer` lädt hoch und startet direkt — der Riegel muss also hier greifen,
+    nicht nur in `regenerate()`, dessen `self.gcode` dieser Pfad gar nicht anfasst."""
+    pytest.importorskip("vpype_cli")
+    svg = tmp_path / "bunt.svg"
+    svg.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" '
+        'viewBox="0 0 100 100">'
+        '<rect x="10" y="10" width="80" height="80" fill="none" stroke="#000000"/>'
+        '<circle cx="50" cy="50" r="30" fill="none" stroke="#e02020"/></svg>',
+        encoding="utf-8",
+    )
+    app.upload_data, app.upload_name = svg.read_bytes(), "bunt.svg"
+    run_handler(app, app.render_upload())
+    index = next(i for i, layer in enumerate(app.layers) if layer.color == "#e02020")
+    app.assign_head("#e02020", "laser")
+
+    sent = []
+
+    async def fake_send(*args):
+        sent.append(args)
+        return "sollte-nie-laufen.gcode"
+
+    monkeypatch.setattr(app, "_send", fake_send)
+    run_handler(app, app.send_layer(index))
+    assert sent == []  # kein Upload, solange „Laser scharf" nicht umgelegt ist
+
+    app.laser_armed.value = True
+    run_handler(app, app.send_layer(index))
+    assert len(sent) == 1  # scharfgeschaltet darf dieselbe Ebene laufen
+
+
 def test_loading_a_pattern_clears_the_previous_layers(app):
     """Sonst blieben die Sende-Knöpfe der alten Zeichnung bedienbar.
 
