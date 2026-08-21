@@ -1,5 +1,16 @@
 # Änderungen
 
+## Unveröffentlicht — eine kaputte Kalibrierdatei sah aus wie eine fehlende
+
+`wallplotter-calibrate`s `_Store.load()` fing `CalibrationError` einheitlich
+ab und fiel in beiden Fällen auf eine leere Kalibrierung zurück: sowohl wenn
+die Datei fehlt (der Normalfall vor der ersten Aufnahme) als auch wenn sie
+existiert, aber kaputt ist (Handbearbeitung, abgebrochenes Schreiben). Im
+zweiten Fall hätte der nächste `record`-Aufruf die Datei stillschweigend mit
+nur der einen neuen Ecke überschrieben — der Rest der Kalibrierung wäre weg
+gewesen, ohne dass irgendwo eine Meldung erschien. Jetzt wird zuerst geprüft,
+ob die Datei überhaupt existiert; existiert sie, muss sie auch lesbar sein.
+
 ## Unveröffentlicht — `download()` ignorierte `remote_dir`
 
 `FluidNCClient.upload()` legt eine Datei unter `config.remote_dir` ab —
