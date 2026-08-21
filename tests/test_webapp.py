@@ -202,6 +202,27 @@ def test_photo_geometry_is_not_fitted_again(app, tmp_path):
     assert app.fit_source is False
 
 
+def test_load_upload_reads_a_real_nicegui_upload_event(app):
+    """Alle anderen Upload-Tests setzen app.upload_data/upload_name direkt und
+    umgehen load_upload() — dadurch fiel nicht auf, dass es noch die alte
+    NiceGUI-Schnittstelle ansprach (event.content.read()/event.name), die es
+    seit der Umstellung auf UploadEventArguments.file nicht mehr gibt. Jeder
+    echte Browser-Upload endete serverseitig mit AttributeError, bevor er bei
+    render_upload() ankam — sichtbar nur mit einem echten Upload-Ereignis."""
+    from nicegui.elements.upload_files import SmallFileUpload
+    from nicegui.events import UploadEventArguments
+
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm"></svg>'
+    event = UploadEventArguments(
+        sender=None,
+        client=None,
+        file=SmallFileUpload("test.svg", "image/svg+xml", svg),
+    )
+    run_handler(app, app.load_upload(event))
+    assert app.upload_data == svg
+    assert app.upload_name == "test.svg"
+
+
 def test_colour_layers_are_listed_and_plottable(app, tmp_path):
     pytest.importorskip("vpype_cli")
     svg = tmp_path / "bunt.svg"

@@ -1,5 +1,24 @@
 # Änderungen
 
+## Unveröffentlicht — jeder echte Upload in der Web-UI schlug fehl
+
+`load_upload()` sprach noch die alte NiceGUI-Schnittstelle an
+(`event.content.read()`, `event.name`) — die installierte NiceGUI-Version
+reicht seit der Umstellung auf `UploadEventArguments.file` ein eigenes
+`FileUpload`-Objekt mit **asynchronem** `read()` durch, kein `.content` und
+kein `.name` mehr auf dem Ereignis selbst. Jeder Upload über den Browser
+endete serverseitig mit `AttributeError`, bevor er bei `render_upload()`
+ankam — die Oberfläche zeigte dabei nichts an, denn die Ausnahme fällt
+NiceGUI in den Schoß, nicht dem Nutzer vor den Latz.
+
+Gefunden hat das kein Test, sondern ein echter Browser (Playwright) gegen
+einen laufenden Server: Alle bestehenden Upload-Tests setzen
+`app.upload_data`/`upload_name` direkt und rufen `render_upload()` auf —
+`load_upload()` selbst, der tatsächliche Weg vom Browser-Ereignis, wurde von
+keinem einzigen Test durchlaufen. Jetzt gibt es einen, mit einem echten
+`UploadEventArguments`/`SmallFileUpload` aus NiceGUI selbst statt einer
+Attrappe.
+
 ## Unveröffentlicht — der letzte Fund: eine überholte Umrechnung gewann
 
 `webapp.render_upload()` schickt die (bei einer Spirale über eine große Wand

@@ -260,8 +260,12 @@ class WallplotterUI:
     # -- Zeichnung laden --------------------------------------------------
 
     async def load_upload(self, event) -> None:
-        self.upload_data = event.content.read()
-        self.upload_name = event.name
+        # NiceGUI reicht seit der Umstellung auf UploadEventArguments.file ein
+        # FileUpload-Objekt mit eigenem (asynchronem) read() durch, nicht mehr
+        # ein synchrones .content — ohne Browser-Test blieb das unbemerkt,
+        # jeder echte Upload endete mit AttributeError, bevor er ankam.
+        self.upload_data = await event.file.read()
+        self.upload_name = event.file.name
         await self.render_upload()
 
     def _convert_upload(self, suffix: str, config: PlotConfig):
