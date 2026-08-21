@@ -35,6 +35,16 @@ def test_two_diagonal_corners_are_enough():
     assert partial.rectangle() == (0.0, 0.0, 1000.0, 500.0)
 
 
+def test_the_other_diagonal_is_enough_too():
+    """complete() prüfte nur die eine Diagonale (bottom-left/top-right) fest
+    verdrahtet — die andere (bottom-right/top-left), die rectangle() genauso
+    gut aus den vorhandenen Ecken herleiten kann, zählte fälschlich als
+    unvollständig."""
+    partial = calibration({"bottom-right": (1000.0, 0.0), "top-left": (0.0, 500.0)})
+    assert partial.complete
+    assert partial.rectangle() == (0.0, 0.0, 1000.0, 500.0)
+
+
 def test_incomplete_calibration_reports_what_is_missing():
     partial = calibration({"bottom-left": (0.0, 0.0)})
     assert not partial.complete
@@ -123,6 +133,16 @@ def test_load_missing_file_is_a_clear_error(tmp_path):
 def test_load_rejects_garbage(tmp_path):
     path = tmp_path / "kaputt.json"
     path.write_text("kein json", encoding="utf-8")
+    with pytest.raises(CalibrationError, match="keine gültige Kalibrierung"):
+        AreaCalibration.load(path)
+
+
+def test_load_rejects_a_points_block_of_the_wrong_shape(tmp_path):
+    """Gültiges JSON, aber "points" ist eine Liste statt eines Wörterbuchs —
+    load() fing nur ValueError/KeyError/TypeError/IndexError ab, nicht den
+    AttributeError von ``["a", "b"].items()``."""
+    path = tmp_path / "falsche-form.json"
+    path.write_text('{"points": ["a", "b"], "note": ""}', encoding="utf-8")
     with pytest.raises(CalibrationError, match="keine gültige Kalibrierung"):
         AreaCalibration.load(path)
 

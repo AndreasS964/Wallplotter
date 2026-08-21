@@ -324,24 +324,35 @@ def check_firmware_config(path: Path, locations_path: Path) -> list[Check]:
             ("left_anchor_y", anchors.y),
             ("right_anchor_y", anchors.y),
         ]
-        off = [
-            f"{key}: Firmware {float(wall.get(key, 0)):.0f} ≠ Standort {value:.0f}"
-            for key, value in pairs
-            if abs(float(wall.get(key, 0)) - value) > 1.0
-        ]
-        if off:
+        try:
+            off = [
+                f"{key}: Firmware {float(wall.get(key, 0)):.0f} ≠ Standort {value:.0f}"
+                for key, value in pairs
+                if abs(float(wall.get(key, 0)) - value) > 1.0
+            ]
+        except (TypeError, ValueError) as exc:
+            # Ein Ankermaß in der Datei ist nicht in eine Zahl umzuwandeln
+            # (Handbearbeitung, kaputtes YAML) — das soll den ganzen
+            # Selbsttest nicht mit einer rohen Ausnahme beenden.
             checks.append(
-                Check(
-                    "Firmware-Konfiguration",
-                    WARN,
-                    "; ".join(off),
-                    f"wallplotter-firmware config --location {location.name} --out {path}",
-                )
+                Check("Firmware-Konfiguration", FAIL, f"Ankermaß in {path} ist keine Zahl: {exc}")
             )
         else:
-            checks.append(
-                Check("Firmware-Konfiguration", OK, f"Ankermaße passen zu Standort {location.name}")
-            )
+            if off:
+                checks.append(
+                    Check(
+                        "Firmware-Konfiguration",
+                        WARN,
+                        "; ".join(off),
+                        f"wallplotter-firmware config --location {location.name} --out {path}",
+                    )
+                )
+            else:
+                checks.append(
+                    Check(
+                        "Firmware-Konfiguration", OK, f"Ankermaße passen zu Standort {location.name}"
+                    )
+                )
         erzeugt = FirmwareConfig.from_location(location)
 
     if text == erzeugt.render():

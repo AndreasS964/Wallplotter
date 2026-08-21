@@ -119,6 +119,22 @@ def test_loading_a_missing_book_is_empty(tmp_path):
     assert LocationBook.load(tmp_path / "nichts.json").locations == {}
 
 
+def test_a_malformed_calibration_block_is_a_clean_error():
+    """"calibration.points" als Liste statt Wörterbuch — gültiges JSON, aber
+    die falsche Form. from_dict() fing nur KeyError/TypeError/ValueError/
+    IndexError ab, nicht den AttributeError von ``["x", "y"].items()``."""
+    from wallplotter.location import Location
+
+    with pytest.raises(LocationError, match="nicht lesbar"):
+        Location.from_dict({
+            "name": "Keller",
+            "anchor_span_mm": 2300.0,
+            "left_belt_zero_mm": 1500.0,
+            "right_belt_zero_mm": 1500.0,
+            "calibration": {"points": ["x", "y"], "note": ""},
+        })
+
+
 def test_unknown_location_lists_the_known_ones():
     book = LocationBook()
     book.add(location(name="Keller"))

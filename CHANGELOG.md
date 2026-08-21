@@ -1,5 +1,30 @@
 # Änderungen
 
+## Unveröffentlicht — kaputte Dateien melden sich jetzt sauber statt mit Traceback
+
+Vier Stellen, ein Muster: Eine gespeicherte JSON-Datei ist gültig geparst,
+aber nicht in der erwarteten Form — von Hand bearbeitet, unterbrochen
+geschrieben, aus einer anderen Version. Der jeweilige `try/except` fing
+schon einiges ab, aber nicht `AttributeError`, den zum Beispiel eine Liste
+statt eines Wörterbuchs auslöst (`["a","b"].items()`). Betroffen:
+`correction.load_correction()`, `calibration.AreaCalibration.load()`,
+`location.Location.from_dict()`. Alle drei melden jetzt den eigenen,
+dokumentierten Fehlertyp statt eines rohen Tracebacks.
+
+`wallplotter-doctor` hatte dieselbe Lücke ohne die Datei-Form-Ausrede:
+`check_firmware_config()` rechnete ein Ankermaß aus der `config.yaml` mit
+`float(...)` um, ohne die Möglichkeit vorzusehen, dass dort kein Zahlwort
+steht (Tippfehler, kaputtes YAML) — ein `ValueError` riss den kompletten
+Selbsttest mit sich, statt nur diesen einen Befund als FAIL zu melden.
+
+Dazu, in derselben Datei gefunden: `AreaCalibration.complete` akzeptierte von
+den zwei möglichen Eck-Diagonalen nur `bottom-left`/`top-right` fest
+verdrahtet. Die andere (`bottom-right`/`top-left`) — genauso gültig, `rectangle()`
+konnte sie schon immer auswerten — zählte fälschlich als unvollständig. Wer
+beim Einmessen genau diese zwei Ecken anfuhr (eine gültige Reihenfolge beim
+Abbrechen des Wizards), bekam „Kalibrierung unvollständig" gemeldet, obwohl
+sie es nicht war.
+
 ## Unveröffentlicht — zwei CLI-Funde: `0` als Wert, `--adaptive-feed` und `--layers`
 
 Dieselbe Fundklasse wie schon einmal im CHANGELOG vermerkt ("`0` auf der

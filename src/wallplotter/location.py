@@ -301,7 +301,9 @@ class Location:
                 calibration=calibration,
                 servo=servo,
             )
-        except (KeyError, TypeError, ValueError, IndexError) as exc:
+        except (KeyError, TypeError, ValueError, IndexError, AttributeError) as exc:
+            # AttributeError: gültiges JSON, aber z. B. "calibration.points"
+            # eine Liste statt eines Wörterbuchs — kein .items().
             raise LocationError(f"Standort nicht lesbar: {exc}") from exc
 
 
@@ -362,6 +364,13 @@ class LocationBook:
             data = json.loads(source.read_text(encoding="utf-8"))
             locations = [Location.from_dict(entry) for entry in data.get("locations", [])]
         except (ValueError, TypeError, CalibrationError) as exc:
+            # Absichtlich kein AttributeError hier: Ist die oberste Ebene gar
+            # kein Objekt (z. B. eine JSON-Liste), soll das ein Aufrufer wie
+            # wallplotter.doctor.check_locations() an seinem eigenen weiteren
+            # `except Exception` erkennen und gezielter melden können, statt
+            # hier hinter derselben LocationError zu verschwinden wie jeder
+            # andere Lesefehler. Ein defektes *Element* von "locations" wird
+            # dagegen schon in Location.from_dict() sauber zu LocationError.
             raise LocationError(f"{source} ist nicht lesbar: {exc}") from exc
         book = cls(locations={loc.name: loc for loc in locations})
         active = data.get("active")

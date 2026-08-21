@@ -344,18 +344,23 @@ def load_correction(path: Path | str, kinematics=None):
     except ValueError as exc:
         raise CorrectionError(f"{source} ist nicht lesbar: {exc}") from exc
 
-    kind = data.get("type")
-    if kind == "measured":
-        return MeasuredCorrection(
-            coefficients_x=[float(v) for v in data["coefficients_x"]],
-            coefficients_y=[float(v) for v in data["coefficients_y"]],
-            degree=str(data.get("degree", "bilinear")),
-            note=str(data.get("note", "")),
-        )
-    if kind == "stretch":
-        if kinematics is None:
-            raise CorrectionError("Das Dehnungsmodell braucht einen Standort mit Ankermaßen")
-        return StretchCorrection(
-            kinematics, float(data["specific_stiffness"]), str(data.get("note", ""))
-        )
+    try:
+        kind = data.get("type")
+        if kind == "measured":
+            return MeasuredCorrection(
+                coefficients_x=[float(v) for v in data["coefficients_x"]],
+                coefficients_y=[float(v) for v in data["coefficients_y"]],
+                degree=str(data.get("degree", "bilinear")),
+                note=str(data.get("note", "")),
+            )
+        if kind == "stretch":
+            if kinematics is None:
+                raise CorrectionError("Das Dehnungsmodell braucht einen Standort mit Ankermaßen")
+            return StretchCorrection(
+                kinematics, float(data["specific_stiffness"]), str(data.get("note", ""))
+            )
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        # data war zwar gültiges JSON, aber nicht die erwartete Form — eine
+        # Handbearbeitung, ein abgebrochenes Schreiben, ein anderes Format.
+        raise CorrectionError(f"{source} ist keine gültige Korrektur: {exc}") from exc
     raise CorrectionError(f"Unbekannte Korrekturart: {kind!r}")
