@@ -1,5 +1,18 @@
 # Änderungen
 
+## Unveröffentlicht — Testlücke bei `wallplotter-location` geschlossen
+
+`location_cli.py` war das einzige der zehn Konsolenbefehle ohne eigene
+Testdatei — `new`, `list`, `show`, `use`, `remove`, `config` und der Abgleich
+mit der Karte (`push`/`pull`) liefen nur, wenn sie jemand von Hand ausprobiert
+hat. `tests/test_location_cli.py` deckt jetzt alle sieben Unterbefehle ab,
+inklusive der Fehlerpfade: ein Standort mit unmöglichen Maßen (Rückgabe 3),
+ein unbekannter Name bei `show`/`remove`, `remove` des gerade aktiven
+Standorts (die Aktivität fällt auf einen verbliebenen zurück), und ein
+`pull` von einer Karte ohne abgelegte Standorte (Rückgabe 5). Der
+Karten-Abgleich läuft wie in `tests/test_sdstore.py` gegen eine simulierte
+Karte, die nur die Endpunkte kennt, die FluidNC wirklich registriert.
+
 ## Unveröffentlicht — das README aufgeräumt
 
 Von 2930 auf rund 2200 Wörter. Gestrichen ist nichts, was man zum Bedienen
