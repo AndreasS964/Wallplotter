@@ -375,7 +375,11 @@ def _run(args) -> int:
             return 6
         print(f"Vorverzerrung aus {args.correction}{': ' + correction.note if correction.note else ''}")
 
-    if args.adaptive_feed and location is None:
+    # --layers behandelt --adaptive-feed weiter unten als reinen Hinweis
+    # (steht in `ignored`) — hier abzubrechen widerspräche dem und schlüge
+    # bei --layers --adaptive-feed ohne Standort zu, obwohl der Schalter dort
+    # ohnehin nichts tut.
+    if args.adaptive_feed and location is None and not args.layers:
         print(
             "--adaptive-feed braucht einen Standort mit Ankermaßen: --location angeben.",
             file=sys.stderr,
@@ -483,7 +487,7 @@ def _run(args) -> int:
 
     if args.pattern:
         # Testmuster stehen schon in Flächenkoordinaten und werden nicht eingepasst
-        extra = {"spacing": args.pattern_spacing} if args.pattern_spacing else {}
+        extra = {"spacing": args.pattern_spacing} if args.pattern_spacing is not None else {}
         try:
             pattern = build(
                 args.pattern,
@@ -505,11 +509,11 @@ def _run(args) -> int:
         try:
             if args.input.suffix.lower() in IMAGE_SUFFIXES:
                 options = {}
-                if args.pitch and args.technique in ("hatch", "spiral"):
+                if args.pitch is not None and args.technique in ("hatch", "spiral"):
                     options["pitch_mm"] = args.pitch
-                if args.spacing and args.technique in ("stipple", "tsp"):
+                if args.spacing is not None and args.technique in ("stipple", "tsp"):
                     options["spacing_px"] = args.spacing
-                if args.dot and args.technique == "stipple":
+                if args.dot is not None and args.technique == "stipple":
                     options["dot_mm"] = args.dot
                 lines = image_to_lines(
                     args.input,

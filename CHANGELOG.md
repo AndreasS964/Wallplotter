@@ -1,5 +1,20 @@
 # Änderungen
 
+## Unveröffentlicht — zwei CLI-Funde: `0` als Wert, `--adaptive-feed` und `--layers`
+
+Dieselbe Fundklasse wie schon einmal im CHANGELOG vermerkt ("`0` auf der
+Kommandozeile fiel bei fünf Optionen still auf die Vorgabe zurück") war noch
+an vier weiteren Stellen offen: `--pitch`, `--spacing`, `--dot` und
+`--pattern-spacing` prüften mit `if args.x` statt `if args.x is not None`.
+Ein ausdrückliches `--pitch 0` verschwand damit lautlos, statt die
+Validierung des Verfahrens zu erreichen (`spiral()` lehnt `pitch_mm=0` ab —
+aber nur, wenn der Wert dort ankommt).
+
+`--adaptive-feed` ohne `--location` brach außerdem grundsätzlich ab, auch
+zusammen mit `--layers` — obwohl der `--layers`-Zweig `--adaptive-feed`
+längst als reinen Hinweis behandelt (er steht in der `ignored`-Liste dort und
+tut nichts). Der frühe Abbruch prüft jetzt `not args.layers` mit.
+
 ## Unveröffentlicht — drei weitere Funde: Warnschwelle, Spirale, Bildrand
 
 Weiter aus derselben Gegenprüfungsrunde.
