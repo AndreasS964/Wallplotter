@@ -1,5 +1,24 @@
 # Änderungen
 
+## Unveröffentlicht — drei kleinere Absicherungen
+
+Weiter aus derselben Gegenprüfungsrunde:
+
+* `wallplotter-kinematics --overhang 0 --above 0` stürzte ab: Der Anker fällt
+  dann exakt in eine Ecke der abgerasterten Fläche, und `analyze_area()`
+  rastert immer bis an den Rand — der Stift sitzt an genau diesem einen
+  Punkt „auf dem Anker", was `_unit_vectors()` mit `ValueError` quittiert.
+  Eine einzelne Singularität im Raster übersprang die Auswertung bisher
+  nicht, sie brach ab. Jetzt wird nur der eine Punkt übersprungen.
+* `LaserSpindle` hatte kein Gegenstück zu `ServoSpindle`s
+  `s_min >= s_max`-Prüfung: `s_max=0` ließ sich anstandslos bauen und ergab
+  eine `speed_map`, die S0 auf zwei widersprüchliche Tastverhältnisse
+  abbildet (`0=0.000% 0=100.000%`). Baut jetzt gar nicht erst.
+* `PlotConfig` prüfte nur, ob `margin_mm` zu *groß* für die Fläche ist. Ein
+  negativer Rand rutschte durch und machte `drawable_width_mm`/
+  `drawable_height_mm` rechnerisch größer als die Wand selbst, statt
+  abgelehnt zu werden.
+
 ## Unveröffentlicht — kaputte Dateien melden sich jetzt sauber statt mit Traceback
 
 Vier Stellen, ein Muster: Eine gespeicherte JSON-Datei ist gültig geparst,

@@ -112,6 +112,17 @@ def test_analysis_verdict_mentions_the_motor_reserve():
     assert "Riemen" in notes
 
 
+def test_an_anchor_exactly_on_the_sampled_grid_does_not_crash():
+    """Mit --overhang 0 --above 0 sitzt ein Anker exakt in einer Ecke der
+    abgerasterten Fläche — analyze_area() rasterte immer auch die Ränder
+    (0, width) x (0, height), traf den Anker also bit-genau und ließ den
+    ValueError aus _unit_vectors() ungefangen durch."""
+    analysis = analyze_area(
+        default_kinematics(anchor_overhang_mm=0.0, anchor_above_mm=0.0), samples=11
+    )
+    assert analysis.worst_resolution_mm > 0
+
+
 def test_higher_anchors_improve_the_worst_case():
     low = analyze_area(default_kinematics(anchor_above_mm=100), samples=11)
     high = analyze_area(default_kinematics(anchor_above_mm=400), samples=11)

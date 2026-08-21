@@ -85,6 +85,14 @@ def test_margin_larger_than_area_is_rejected():
         PlotConfig(width_mm=100, height_mm=100, margin_mm=60)
 
 
+def test_negative_margin_is_rejected():
+    """Nur die Obergrenze war geprüft — ein negativer Rand machte die
+    Zeichenfläche rechnerisch größer als die Wand, statt abgelehnt zu
+    werden: drawable_width_mm = width_mm - 2*margin_mm wächst dann."""
+    with pytest.raises(ValueError):
+        PlotConfig(width_mm=2000, height_mm=2500, margin_mm=-100)
+
+
 def test_stats_count_the_servo_dwell():
     """Bei einem Punktraster sind die Stifthübe der Löwenanteil der Laufzeit."""
     dots = [[(float(i), 0.0), (float(i) + 1.0, 0.0)] for i in range(0, 200, 2)]

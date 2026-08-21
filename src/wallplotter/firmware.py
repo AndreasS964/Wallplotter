@@ -469,6 +469,14 @@ class LaserSpindle:
     air_assist: bool = True
     """Air Assist über den Flood-Ausgang (``M8``/``M9``)."""
 
+    def __post_init__(self) -> None:
+        if self.s_max <= 0:
+            # Ohne diese Prüfung erzeugt _laser_block() eine speed_map, die
+            # denselben S-Wert (0) auf zwei widersprüchliche Tastverhältnisse
+            # abbildet — check() sah das nicht vor, weil kein Bereich dafür
+            # registriert war.
+            raise FirmwareError(f"s_max={self.s_max} muss größer als 0 sein")
+
 
 # ---------------------------------------------------------------------------
 # Die Maschine
