@@ -7,6 +7,7 @@ auf, bevor sie vor der Wand auffallen).
 
 import asyncio
 import os
+import threading
 import time
 from types import SimpleNamespace
 
@@ -201,6 +202,27 @@ def test_photo_geometry_is_not_fitted_again(app, tmp_path):
     assert app.fit_source is False
 
 
+def test_load_upload_reads_a_real_nicegui_upload_event(app):
+    """Alle anderen Upload-Tests setzen app.upload_data/upload_name direkt und
+    umgehen load_upload() — dadurch fiel nicht auf, dass es noch die alte
+    NiceGUI-Schnittstelle ansprach (event.content.read()/event.name), die es
+    seit der Umstellung auf UploadEventArguments.file nicht mehr gibt. Jeder
+    echte Browser-Upload endete serverseitig mit AttributeError, bevor er bei
+    render_upload() ankam — sichtbar nur mit einem echten Upload-Ereignis."""
+    from nicegui.elements.upload_files import SmallFileUpload
+    from nicegui.events import UploadEventArguments
+
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm"></svg>'
+    event = UploadEventArguments(
+        sender=None,
+        client=None,
+        file=SmallFileUpload("test.svg", "image/svg+xml", svg),
+    )
+    run_handler(app, app.load_upload(event))
+    assert app.upload_data == svg
+    assert app.upload_name == "test.svg"
+
+
 def test_colour_layers_are_listed_and_plottable(app, tmp_path):
     pytest.importorskip("vpype_cli")
     svg = tmp_path / "bunt.svg"
@@ -218,6 +240,43 @@ def test_colour_layers_are_listed_and_plottable(app, tmp_path):
     assert {layer.color for layer in app.layers} == {"#000000", "#e02020"}
     assert "2 Farben" in app.source_name
     run_handler(app, app.send_layer(0))   # ohne Board: darf nur nicht abstürzen
+
+
+def test_render_upload_ignores_a_stale_slower_conversion(app, monkeypatch):
+    """Wechselt jemand während einer langsamen Umrechnung (z. B. Spirale über
+    ein großes Foto) das Verfahren, läuft ein zweiter render_upload() parallel
+    dazu. Ohne Generationszähler gewinnt, wer zufällig zuerst *fertig* wird —
+    nicht, wer zuletzt *angestoßen* wurde, und das inzwischen überholte,
+    länger rechnende Ergebnis überschreibt das frischere."""
+    app.upload_data, app.upload_name = b"x", "bild.svg"
+
+    calls: list[int] = []
+    calls_lock = threading.Lock()
+
+    def fake_convert(suffix, config):
+        with calls_lock:
+            calls.append(1)
+            index = len(calls)
+        if index == 1:
+            time.sleep(0.15)  # die zuerst angestoßene Umrechnung ist die langsame
+            return [[(0.0, 0.0), (1.0, 1.0)]], [], "erste (langsam, überholt)", True
+        return [[(2.0, 2.0), (3.0, 3.0)]], [], "zweite (schnell, aktuell)", True
+
+    monkeypatch.setattr(app, "_convert_upload", fake_convert)
+
+    async def eine() -> None:
+        # Jede gleichzeitige Task braucht ihren eigenen Slot-Kontext (siehe
+        # run_handler oben) — asyncio.gather spawnt eigene Tasks, die den
+        # `with app.layer_box`-Kontext von außen nicht erben.
+        with app.layer_box:
+            await app.render_upload()
+
+    async def beide() -> None:
+        await asyncio.gather(eine(), eine())
+
+    asyncio.run(beide())
+    assert len(calls) == 2  # beide Umrechnungen sind wirklich gelaufen
+    assert app.source_name == "zweite (schnell, aktuell)"
 
 
 def test_photo_upload_clears_previous_layers(app, tmp_path):
@@ -470,6 +529,38 @@ def test_the_laser_bar_holds_for_layer_assignments_too(app):
 
     app.laser_armed.value = True
     assert app.laser_blocked() == ""
+
+
+def test_send_layer_refuses_an_unarmed_laser_assignment(app, tmp_path, monkeypatch):
+    """`send_layer` lädt hoch und startet direkt — der Riegel muss also hier greifen,
+    nicht nur in `regenerate()`, dessen `self.gcode` dieser Pfad gar nicht anfasst."""
+    pytest.importorskip("vpype_cli")
+    svg = tmp_path / "bunt.svg"
+    svg.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" '
+        'viewBox="0 0 100 100">'
+        '<rect x="10" y="10" width="80" height="80" fill="none" stroke="#000000"/>'
+        '<circle cx="50" cy="50" r="30" fill="none" stroke="#e02020"/></svg>',
+        encoding="utf-8",
+    )
+    app.upload_data, app.upload_name = svg.read_bytes(), "bunt.svg"
+    run_handler(app, app.render_upload())
+    index = next(i for i, layer in enumerate(app.layers) if layer.color == "#e02020")
+    app.assign_head("#e02020", "laser")
+
+    sent = []
+
+    async def fake_send(*args):
+        sent.append(args)
+        return "sollte-nie-laufen.gcode"
+
+    monkeypatch.setattr(app, "_send", fake_send)
+    run_handler(app, app.send_layer(index))
+    assert sent == []  # kein Upload, solange „Laser scharf" nicht umgelegt ist
+
+    app.laser_armed.value = True
+    run_handler(app, app.send_layer(index))
+    assert len(sent) == 1  # scharfgeschaltet darf dieselbe Ebene laufen
 
 
 def test_loading_a_pattern_clears_the_previous_layers(app):

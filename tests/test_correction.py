@@ -239,3 +239,22 @@ def test_unknown_type_is_rejected(tmp_path):
     path.write_text('{"type": "magie"}', encoding="utf-8")
     with pytest.raises(CorrectionError, match="Unbekannte Korrekturart"):
         load_correction(path)
+
+
+def test_a_measured_correction_missing_a_coefficient_block_is_a_clean_error(tmp_path):
+    """Gültiges JSON, aber ein Schlüssel fehlt — etwa aus einer
+    Handbearbeitung oder einem abgebrochenen Schreibvorgang. Vorher flog
+    hier ein roher KeyError statt CorrectionError aus der Funktion."""
+    path = tmp_path / "unvollstaendig.json"
+    path.write_text('{"type": "measured", "coefficients_y": [0, 0, 0]}', encoding="utf-8")
+    with pytest.raises(CorrectionError, match="keine gültige Korrektur"):
+        load_correction(path)
+
+
+def test_a_top_level_json_array_is_a_clean_error(tmp_path):
+    """``data`` selbst ist keine Abbildung — ``data.get("type")`` schlägt mit
+    AttributeError fehl, nicht mit einer der bisher abgefangenen Arten."""
+    path = tmp_path / "liste.json"
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+    with pytest.raises(CorrectionError, match="keine gültige Korrektur"):
+        load_correction(path)

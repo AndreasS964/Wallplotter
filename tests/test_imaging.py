@@ -75,6 +75,20 @@ def test_darkness_outside_the_image_is_zero():
     assert gradient().darkness(-5, -5) == 0.0
 
 
+def test_darkness_just_left_of_the_origin_is_still_outside():
+    """``int(-0.5) == 0`` in Python — Kürzung Richtung 0 zählte
+    ``-1 < x < 0`` fälschlich zu Pixel 0, statt zu ``außerhalb``.
+
+    Das Pixel (0, 0) ist bewusst nicht weiß: sonst maskiert eine zufällig
+    passende Dunkelheit von 0.0 an dieser Stelle den Fehler.
+    """
+    image = GrayImage(pixels=[[0.0]], width=1, height=1)  # Pixelwert 0 → Dunkelheit 1.0
+    assert image.darkness(0, 0) == 1.0
+    assert image.darkness(-0.5, 0) == 0.0
+    assert image.darkness(0, -0.5) == 0.0
+    assert image.darkness(-0.5, -0.5) == 0.0
+
+
 # -- Punktverteilung --------------------------------------------------------
 
 
@@ -232,6 +246,54 @@ def test_spiral_keeps_the_picture_at_a_fine_pitch():
         smooth = draw_length(spiral(image, 200.0, 200.0, pitch_mm=pitch, amplitude=0.0))
         assert smooth > 0
         assert wobbled / smooth > 2.0, f"Bahnabstand {pitch} mm: Wobble ohne Wirkung"
+
+
+def test_spiral_wobble_phase_uses_the_true_radius_near_the_centre():
+    """``arc`` wuchs vorher unbedingt um ``step_mm`` — eine algebraische
+    Nullrechnung (``delta * max(radius, pitch_mm/4)`` ist per Definition von
+    ``delta`` immer genau ``step_mm``), die den in den Kommentaren
+    beschriebenen Fix rückgängig machte. Im Zentrum, wo der Radius kleiner
+    als ``pitch_mm/4`` ist, muss die Wobble-Phase deshalb langsamer wachsen
+    als am tatsächlichen (kleinen) Radius entlang gefahren wurde — nicht
+    pauschal um den vollen Nennschritt.
+
+    Referenzwerte unabhängig nachgerechnet, mit der im Kommentar
+    beschriebenen (richtigen) Formel: ``arc += min(step_mm, delta * radius)``.
+    """
+    pitch_mm, step_mm, amplitude = 25.0, 1.2, 1.0
+    width_mm = height_mm = 2000.0
+    # Vollständig dunkles Bild: darkness() liefert überall exakt 1.0, damit
+    # der Wobble nur noch von der Phase (arc) abhängt, nicht vom Bildinhalt.
+    dark = GrayImage(pixels=[[0.0] * 40 for _ in range(40)], width=40, height=40)
+
+    lines = spiral(
+        dark, width_mm, height_mm, pitch_mm=pitch_mm, amplitude=amplitude,
+        step_mm=step_mm, simplify_mm=0.0,
+    )
+    raw = lines[0]
+
+    scale = min(width_mm / dark.width, height_mm / dark.height)
+    offset_x = (width_mm - dark.width * scale) / 2
+    offset_y = (height_mm - dark.height * scale) / 2
+    center = (offset_x + dark.width * scale / 2, offset_y + dark.height * scale / 2)
+    growth = pitch_mm / (2 * math.pi)
+    wavelength = pitch_mm
+
+    angle = arc = 0.0
+    expected = []
+    for _ in range(30):
+        radius = growth * angle
+        x = center[0] + radius * math.cos(angle)
+        y = center[1] + radius * math.sin(angle)
+        wobble = pitch_mm * amplitude * math.sin(2 * math.pi * arc / wavelength)
+        expected.append((x + wobble * math.cos(angle), y + wobble * math.sin(angle)))
+        delta = step_mm / max(radius, pitch_mm / 4)
+        angle += delta
+        arc += min(step_mm, delta * radius)  # die im Kommentar beschriebene, richtige Formel
+
+    assert len(raw) >= 30
+    for actual, want in zip(raw[:30], expected, strict=False):
+        assert actual == pytest.approx(want, abs=1e-6)
 
 
 def test_spiral_refuses_an_absurdly_fine_pitch():

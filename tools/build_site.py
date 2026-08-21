@@ -94,6 +94,13 @@ PAGES: list[Page] = [
         "Stufenplan und UI-Architektur",
         "Nachschlagen",
     ),
+    Page(
+        REPO / "docs/windows-paket.md",
+        "windows-paket.html",
+        "Windows-Datei",
+        "Die Web-Oberfläche als eigenständige .exe",
+        "Nachschlagen",
+    ),
     Page(REPO / "CHANGELOG.md", "changelog.html", "Änderungen", "Was wann passiert ist", "Nachschlagen"),
 ]
 
@@ -114,6 +121,8 @@ LINK_MAP = {
     "firmware-gegenpruefung.md": "gegenpruefung.html",
     "docs/software-roadmap.md": "roadmap.html",
     "software-roadmap.md": "roadmap.html",
+    "docs/windows-paket.md": "windows-paket.html",
+    "windows-paket.md": "windows-paket.html",
     "CHANGELOG.md": "changelog.html",
 }
 

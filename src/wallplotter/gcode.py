@@ -144,14 +144,21 @@ class PlotStats:
         lines: Sequence[Line],
         config: PlotConfig,
         feeds: Sequence[float] | None = None,
+        *,
+        park: bool = True,
     ) -> None:
+        """``park=False`` für einen Block, dessen GCode nicht zum Ausgangspunkt
+        zurückfährt — eine Zwischenebene in :func:`_program_with_pauses`."""
         head = config.toolhead
         self.line_count = len(lines)
         self.point_count = sum(len(line) for line in lines)
         self.passes = max(1, head.passes)
         self.draw_mm = draw_length(lines) * self.passes
-        # Auch die Anfahrten fallen je Durchgang neu an
-        self.travel_mm = travel_length(lines) * self.passes
+        origin = (config.origin_x_mm, config.origin_y_mm)
+        # Auch die Anfahrten fallen je Durchgang neu an. Gezählt wird ab dem
+        # Ort, an dem das Programm tatsächlich parkt bzw. losfährt — nicht ab
+        # Maschinen-(0,0), das nur vor dem Einmessen mit der Fläche zusammenfällt.
+        self.travel_mm = travel_length(lines, start=origin, return_to_start=park) * self.passes
         # Was das Werkzeug je Linie kostet: beim Stift zweimal Servo-Wartezeit,
         # beim Laser nichts. Bei einem Punktraster ist das nicht die
         # Nachkommastelle, sondern der Löwenanteil — 5000 Punkte × 0,5 s sind
@@ -173,7 +180,8 @@ class PlotStats:
                 head.feed_for(config.draw_feed),
                 travel_feed,
                 config.limits,
-                start=(config.origin_x_mm, config.origin_y_mm),
+                start=origin,
+                park=park,
                 draw_feeds=list(feeds) if feeds is not None else None,
             )
             * self.passes
@@ -294,7 +302,9 @@ def _program(
     # sie noch jemand, wenn die Meldung auf der Konsole längst weg ist.
     concerns = head.check(travel_as_g1=cfg.travel_as_g1, draw_feed=cfg.draw_feed)
 
-    stats = PlotStats(geometry, cfg if toolhead is None else replace(cfg, toolhead=head), feeds)
+    stats = PlotStats(
+        geometry, cfg if toolhead is None else replace(cfg, toolhead=head), feeds, park=include_end
+    )
     out: list[str] = []
 
     if header:

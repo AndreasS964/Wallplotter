@@ -1,5 +1,262 @@
 # Änderungen
 
+## Unveröffentlicht — die Web-Oberfläche als eigenständige Windows-Datei
+
+`wallplotter-web` lässt sich jetzt zu einer einzelnen `Wandplotter.exe`
+bauen — kein installiertes Python nötig, zum Doppelklicken auf einem
+anderen Rechner als dem Entwicklungsrechner. Von Hand über GitHub Actions
+(„Windows-Datei bauen" im Actions-Tab) oder lokal mit PyInstaller, siehe
+[docs/windows-paket.md](docs/windows-paket.md).
+
+Zwei Pakete brauchten dafür mehr als PyInstallers eingebaute Importsuche,
+beide erst am gebauten Programm sichtbar geworden, nicht am Quelltext:
+
+* **NiceGUI** liefert seine Oberfläche über eigene, nicht-Python-Dateien aus
+  (Vue/Quasar-Bausteine, Icons) — ohne die als `--add-data` blieb die
+  ausgelieferte Seite leer.
+* **vpype** entdeckt einen Teil seiner Kommandos über Paket-Metadaten zur
+  Laufzeit statt über normale `import`-Anweisungen; eine seiner
+  Abhängigkeiten (`tomli`) ist mit `mypyc` übersetzt und verweist auf ein
+  lose danebenliegendes Laufzeitmodul, dessen Name vom genauen Build abhängt
+  — `tools/wallplotter-web.spec` sucht ihn deshalb zur Bauzeit, statt ihn
+  fest einzutragen.
+
+Geprüft nicht nur am Bau, sondern an einem laufenden, gebauten Programm:
+Server gestartet, mit einem echten Browser (Playwright) eine SVG-Datei
+hochgeladen und bis zur GCode-Statistik durchgerechnet — auf Linux, weil
+hier kein Windows zur Verfügung steht, aber mit denselben PyInstaller-Flags,
+die der Windows-Bau in der CI verwendet. Genau dabei ist auch der oben
+verzeichnete Upload-Fehler aufgefallen.
+
+## Unveröffentlicht — jeder echte Upload in der Web-UI schlug fehl
+
+`load_upload()` sprach noch die alte NiceGUI-Schnittstelle an
+(`event.content.read()`, `event.name`) — die installierte NiceGUI-Version
+reicht seit der Umstellung auf `UploadEventArguments.file` ein eigenes
+`FileUpload`-Objekt mit **asynchronem** `read()` durch, kein `.content` und
+kein `.name` mehr auf dem Ereignis selbst. Jeder Upload über den Browser
+endete serverseitig mit `AttributeError`, bevor er bei `render_upload()`
+ankam — die Oberfläche zeigte dabei nichts an, denn die Ausnahme fällt
+NiceGUI in den Schoß, nicht dem Nutzer vor den Latz.
+
+Gefunden hat das kein Test, sondern ein echter Browser (Playwright) gegen
+einen laufenden Server: Alle bestehenden Upload-Tests setzen
+`app.upload_data`/`upload_name` direkt und rufen `render_upload()` auf —
+`load_upload()` selbst, der tatsächliche Weg vom Browser-Ereignis, wurde von
+keinem einzigen Test durchlaufen. Jetzt gibt es einen, mit einem echten
+`UploadEventArguments`/`SmallFileUpload` aus NiceGUI selbst statt einer
+Attrappe.
+
+## Unveröffentlicht — der letzte Fund: eine überholte Umrechnung gewann
+
+`webapp.render_upload()` schickt die (bei einer Spirale über eine große Wand
+durchaus sekundenlange) Bild- oder SVG-Umrechnung in einen Thread. Wechselt
+jemand währenddessen das Verfahren — der naheliegende nächste Klick, während
+man auf das Ergebnis wartet —, läuft ein zweiter `render_upload()`-Aufruf
+parallel dazu. Ohne Weiteres gewann danach, wer zufällig zuerst *fertig*
+wurde, nicht wer zuletzt *angestoßen* wurde: Die langsamere, längst
+überholte erste Umrechnung konnte das frischere, schon angezeigte Ergebnis
+der zweiten wieder überschreiben. Ein Generationszähler sorgt jetzt dafür,
+dass nur das Ergebnis des zuletzt gestarteten Aufrufs angewendet wird — ein
+überholtes wird verworfen, ohne die Oberfläche noch einmal anzufassen.
+
+Damit sind alle 21 Funde aus der aktuellen Gegenprüfungsrunde behoben (28
+Agenten, 7 Fachbereiche parallel gelesen, jeder Fund einzeln adversarisch
+nachgeprüft — 21 von 21 bestätigt).
+
+## Unveröffentlicht — `TelnetChannel` gegen gleichzeitige Nutzung abgesichert
+
+Die Web-UI cacht den `FluidNCClient` je Host/Zeitlimit und ruft ihn aus
+eigenen Threads auf (`asyncio.to_thread`) — Jog, Jog-Abbruch, Nullpunkt
+setzen und eine Ecke anfahren teilen sich damit denselben `TelnetChannel`.
+Der hatte keinerlei Sperre um seinen gemeinsamen Socket-Puffer: Liefen zwei
+`send_line()`- oder `status()`-Aufrufe gleichzeitig, konnte die Antwort auf
+die eine Anfrage bei der anderen landen — am naheliegendsten beim Jog-Pad,
+das bei gehaltener Taste mehrere `send_line()`-Aufrufe kurz hintereinander
+auslöst.
+
+`send_line()` und `status()` — beide lesen aus demselben Puffer — teilen sich
+jetzt eine Sperre, die nur eine „Unterhaltung" gleichzeitig zulässt.
+`send_realtime()` (Not-Halt, Jog-Abbruch) nimmt diese Sperre bewusst
+**nicht**: Ein Abbruch darf nicht erst warten, bis eine andere, noch laufende
+Anfrage ihre Antwort fertig eingesammelt hat — genau der Grund, warum es
+dafür überhaupt einen eigenen, unquittierten Kanalweg gibt.
+
+## Unveröffentlicht — ein Verbindungsabbruch beim Einmessen kostete alle Ecken
+
+`wallplotter-setup`s Flächenschritt (`_tue_flaeche`) sammelte die
+angefahrenen Ecken in einer lokalen Variable und schrieb sie erst ganz am
+Ende ins Standortbuch. Riss die WLAN-Verbindung mitten in der dritten Ecke ab
+(`FluidNCError`), sprang der Schritt sofort mit „Verbindung verloren" zurück
+— und die ersten beiden, längst erfolgreich aufgenommenen Ecken waren
+mitsamt der Ausnahme weg, nie gespeichert. Wer danach `wallplotter-setup`
+erneut aufrief, fing wieder bei null an. Gespeichert wird jetzt in jedem
+Fall, was bis zum Abbruch aufgenommen wurde; die Warnung bleibt.
+
+## Unveröffentlicht — eine kaputte Kalibrierdatei sah aus wie eine fehlende
+
+`wallplotter-calibrate`s `_Store.load()` fing `CalibrationError` einheitlich
+ab und fiel in beiden Fällen auf eine leere Kalibrierung zurück: sowohl wenn
+die Datei fehlt (der Normalfall vor der ersten Aufnahme) als auch wenn sie
+existiert, aber kaputt ist (Handbearbeitung, abgebrochenes Schreiben). Im
+zweiten Fall hätte der nächste `record`-Aufruf die Datei stillschweigend mit
+nur der einen neuen Ecke überschrieben — der Rest der Kalibrierung wäre weg
+gewesen, ohne dass irgendwo eine Meldung erschien. Jetzt wird zuerst geprüft,
+ob die Datei überhaupt existiert; existiert sie, muss sie auch lesbar sein.
+
+## Unveröffentlicht — `download()` ignorierte `remote_dir`
+
+`FluidNCClient.upload()` legt eine Datei unter `config.remote_dir` ab —
+`download()` las aber immer ab Kartenwurzel, ganz gleich, was `remote_dir`
+sagte. Solange `remote_dir` bei `/` (der Vorgabe) blieb, fiel das nie auf.
+Bei jedem anderen Wert schrieb `wallplotter-location push` die Standorte
+unter `remote_dir`, und das folgende `pull` suchte sie an der Kartenwurzel —
+zwei verschiedene Pfade, ein `404`. `download()` löst einen Namen ohne
+führenden Schrägstrich jetzt genauso gegen `remote_dir` auf wie `upload()`;
+ein Name *mit* führendem Schrägstrich bleibt weiterhin ein expliziter,
+absoluter Pfad.
+
+## Unveröffentlicht — drei kleinere Absicherungen
+
+Weiter aus derselben Gegenprüfungsrunde:
+
+* `wallplotter-kinematics --overhang 0 --above 0` stürzte ab: Der Anker fällt
+  dann exakt in eine Ecke der abgerasterten Fläche, und `analyze_area()`
+  rastert immer bis an den Rand — der Stift sitzt an genau diesem einen
+  Punkt „auf dem Anker", was `_unit_vectors()` mit `ValueError` quittiert.
+  Eine einzelne Singularität im Raster übersprang die Auswertung bisher
+  nicht, sie brach ab. Jetzt wird nur der eine Punkt übersprungen.
+* `LaserSpindle` hatte kein Gegenstück zu `ServoSpindle`s
+  `s_min >= s_max`-Prüfung: `s_max=0` ließ sich anstandslos bauen und ergab
+  eine `speed_map`, die S0 auf zwei widersprüchliche Tastverhältnisse
+  abbildet (`0=0.000% 0=100.000%`). Baut jetzt gar nicht erst.
+* `PlotConfig` prüfte nur, ob `margin_mm` zu *groß* für die Fläche ist. Ein
+  negativer Rand rutschte durch und machte `drawable_width_mm`/
+  `drawable_height_mm` rechnerisch größer als die Wand selbst, statt
+  abgelehnt zu werden.
+
+## Unveröffentlicht — kaputte Dateien melden sich jetzt sauber statt mit Traceback
+
+Vier Stellen, ein Muster: Eine gespeicherte JSON-Datei ist gültig geparst,
+aber nicht in der erwarteten Form — von Hand bearbeitet, unterbrochen
+geschrieben, aus einer anderen Version. Der jeweilige `try/except` fing
+schon einiges ab, aber nicht `AttributeError`, den zum Beispiel eine Liste
+statt eines Wörterbuchs auslöst (`["a","b"].items()`). Betroffen:
+`correction.load_correction()`, `calibration.AreaCalibration.load()`,
+`location.Location.from_dict()`. Alle drei melden jetzt den eigenen,
+dokumentierten Fehlertyp statt eines rohen Tracebacks.
+
+`wallplotter-doctor` hatte dieselbe Lücke ohne die Datei-Form-Ausrede:
+`check_firmware_config()` rechnete ein Ankermaß aus der `config.yaml` mit
+`float(...)` um, ohne die Möglichkeit vorzusehen, dass dort kein Zahlwort
+steht (Tippfehler, kaputtes YAML) — ein `ValueError` riss den kompletten
+Selbsttest mit sich, statt nur diesen einen Befund als FAIL zu melden.
+
+Dazu, in derselben Datei gefunden: `AreaCalibration.complete` akzeptierte von
+den zwei möglichen Eck-Diagonalen nur `bottom-left`/`top-right` fest
+verdrahtet. Die andere (`bottom-right`/`top-left`) — genauso gültig, `rectangle()`
+konnte sie schon immer auswerten — zählte fälschlich als unvollständig. Wer
+beim Einmessen genau diese zwei Ecken anfuhr (eine gültige Reihenfolge beim
+Abbrechen des Wizards), bekam „Kalibrierung unvollständig" gemeldet, obwohl
+sie es nicht war.
+
+## Unveröffentlicht — zwei CLI-Funde: `0` als Wert, `--adaptive-feed` und `--layers`
+
+Dieselbe Fundklasse wie schon einmal im CHANGELOG vermerkt ("`0` auf der
+Kommandozeile fiel bei fünf Optionen still auf die Vorgabe zurück") war noch
+an vier weiteren Stellen offen: `--pitch`, `--spacing`, `--dot` und
+`--pattern-spacing` prüften mit `if args.x` statt `if args.x is not None`.
+Ein ausdrückliches `--pitch 0` verschwand damit lautlos, statt die
+Validierung des Verfahrens zu erreichen (`spiral()` lehnt `pitch_mm=0` ab —
+aber nur, wenn der Wert dort ankommt).
+
+`--adaptive-feed` ohne `--location` brach außerdem grundsätzlich ab, auch
+zusammen mit `--layers` — obwohl der `--layers`-Zweig `--adaptive-feed`
+längst als reinen Hinweis behandelt (er steht in der `ignored`-Liste dort und
+tut nichts). Der frühe Abbruch prüft jetzt `not args.layers` mit.
+
+## Unveröffentlicht — drei weitere Funde: Warnschwelle, Spirale, Bildrand
+
+Weiter aus derselben Gegenprüfungsrunde.
+
+### Die Übergeschwindigkeits-Warnung griff nur mit Stift-Übersteuerung
+
+`toolhead.py`: `PenToolhead.check()` berechnete den wirksamen Vorschub
+korrekt über `feed_for()` — der fällt auf den globalen `draw_feed` zurück,
+wenn der Stift keinen eigenen hat —, warnte aber nur `if self.draw_feed and
+feed > 2500`. Ohne Stift-eigene Übersteuerung blieb die Bedingung falsch,
+selbst wenn der *globale* Vorschub weit über der Schwelle lag, ab der die
+Riemen springen. Genau der naheliegendste Weg, einen Plot schneller zu
+machen — `--draw-feed` global hochsetzen —, umging damit die eigene Warnung.
+
+### Die Wobble-Phase der Fotospirale: ein Fix, der sich selbst aufhob
+
+`imaging.py`: `spiral()` sollte im Zentrum, wo der Radius kleiner als
+`pitch_mm / 4` ist, den Bogen um weniger als `step_mm` wachsen lassen — das
+steht auch weiterhin so im Kommentar. Die Rechnung dazu war aber
+`delta * max(radius, pitch_mm / 4)`, und das ist algebraisch **immer** genau
+`step_mm`, weil `delta` selbst als `step_mm / max(radius, pitch_mm / 4)`
+definiert ist. Der Bogen wuchs also unbedingt um den vollen Nennschritt,
+ganz gleich wie klein der Radius war — die Phase des Wobbles lief im Zentrum
+weiter davon, obwohl der Kommentar das Gegenteil beschreibt. Jetzt zählt
+`delta * radius`, der tatsächlich gefahrene Bogen beim wahren Radius.
+
+### Ein Bildrand, der keiner war
+
+`imaging.py`: `GrayImage.darkness()` prüfte die Bildgrenzen mit `int(x)`,
+`int(y)` — Kürzung Richtung 0. Für `-1 < x < 0` (ebenso für `y`) liefert das
+fälschlich Pixel 0 statt „außerhalb", denn `int(-0.5) == 0`. Betroffen davon
+ist unter anderem `spiral()`, deren Wobble Bildkoordinaten knapp unter 0
+erzeugen kann. Jetzt `math.floor()`.
+
+## Unveröffentlicht — frische Gegenprüfung des Codes: drei Funde behoben
+
+Eine neue, unabhängige Runde: 7 Fachbereiche parallel gegengelesen, jeder
+Fund einzeln adversarisch nachgeprüft (28 Agenten, 21 bestätigt). Diese drei
+zuerst, weil einer sicherheitsrelevant ist und die anderen beiden dieselbe
+Datei betreffen; der Rest folgt in den nächsten Einträgen.
+
+### Der Laser-Riegel hatte noch ein zweites Loch
+
+`webapp.py`: Der Schalter „Laser scharf" wird von `regenerate()` über
+`laser_blocked()` geprüft — auch über die Ebenenzuordnung, seit einer
+früheren Runde. Aber der Sende-Knopf **je Ebene** (`send_layer()`) rief
+`laser_blocked()` nie auf. Eine Farbebene, deren Dropdown auf „Laser"
+gestellt war, erzeugte darüber vollständigen Laser-GCode und lud ihn
+hoch — ohne dass der Riegel je angefasst wurde, auch wenn das
+`Laser scharf`-Häkchen nie gesetzt war. `send_layer()` prüft jetzt denselben
+Riegel wie `regenerate()`, vor dem Erzeugen des Programms.
+
+### `travel_mm` rechnete vom falschen Nullpunkt
+
+`gcode.py`: `PlotStats.travel_mm` maß die Leerwege ab Maschinen-`(0,0)`, obwohl
+die Geometrie längst auf `config.origin_x_mm`/`origin_y_mm` verschoben ist —
+den Punkt, an dem der Plot tatsächlich parkt. Die Nachbarrechnung `motion_s`
+tat das schon richtig, zwei Zeilen darunter. Bei kalibrierter Fläche (der
+Normalfall, nicht der Sonderfall) wich die ausgewiesene Leerweg-Strecke damit
+um ein Vielfaches vom tatsächlichen Weg ab — sichtbar in jeder generierten
+`.gcode`-Datei, im CLI-Ausdruck und in der Web-UI.
+
+Dieselbe Stelle zählte in einem zusammenhängenden Mehrfarbenprogramm
+(`--layers --one-file`) für jede Zwischenebene eine Rückfahrt zum Nullpunkt
+mit, die deren eigener GCode-Block gar nicht enthält — die passiert erst ganz
+am Schluss, im letzten Block. `travel_length()` und `PlotStats` kennen jetzt
+beide einen `park`/`return_to_start`-Schalter, den `_program()` passend zu
+`include_end` setzt.
+
+## Unveröffentlicht — Testlücke bei `wallplotter-location` geschlossen
+
+`location_cli.py` war das einzige der zehn Konsolenbefehle ohne eigene
+Testdatei — `new`, `list`, `show`, `use`, `remove`, `config` und der Abgleich
+mit der Karte (`push`/`pull`) liefen nur, wenn sie jemand von Hand ausprobiert
+hat. `tests/test_location_cli.py` deckt jetzt alle sieben Unterbefehle ab,
+inklusive der Fehlerpfade: ein Standort mit unmöglichen Maßen (Rückgabe 3),
+ein unbekannter Name bei `show`/`remove`, `remove` des gerade aktiven
+Standorts (die Aktivität fällt auf einen verbliebenen zurück), und ein
+`pull` von einer Karte ohne abgelegte Standorte (Rückgabe 5). Der
+Karten-Abgleich läuft wie in `tests/test_sdstore.py` gegen eine simulierte
+Karte, die nur die Endpunkte kennt, die FluidNC wirklich registriert.
+
 ## Unveröffentlicht — das README aufgeräumt
 
 Von 2930 auf rund 2200 Wörter. Gestrichen ist nichts, was man zum Bedienen

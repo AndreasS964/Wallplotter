@@ -277,7 +277,7 @@ class PenToolhead:
                     f"{self.name}: {label}={value} liegt außerhalb von 0…100 — die "
                     "speed_map der config.yaml bildet nur diesen Bereich ab."
                 )
-        if self.draw_feed and feed > 2500:
+        if feed > 2500:
             notes.append(
                 f"{self.name}: {fmt(feed, 0)} mm/min ist viel für einen Stift — "
                 "erst mit --pattern feed-ramp prüfen, ab wann die Riemen springen."

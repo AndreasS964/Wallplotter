@@ -1,0 +1,65 @@
+name: Windows-Datei bauen
+
+# Von Hand ausgelöst (Tab "Actions" → dieser Workflow → "Run workflow") —
+# nicht bei jedem Push: Das Bauen dauert einige Minuten und braucht niemand
+# außer wer gerade eine neue Wandplotter.exe zum Verteilen will. Baut die
+# Web-Oberfläche als einzelne, eigenständige Datei für Windows, siehe
+# docs/windows-paket.md und tools/wallplotter-web.spec für die Einzelheiten
+# (warum vpype und NiceGUI eigene Handgriffe brauchen, was bewusst fehlt).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Werkzeuge
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[geometry,web,photo]" pyinstaller
+
+      - name: Bauen
+        run: pyinstaller --noconfirm tools/wallplotter-web.spec
+
+      # Rauchtest direkt auf dem Windows-Runner: Startet die Datei überhaupt
+      # und antwortet der Server? Eine kaputte Bündelung (fehlende
+      # NiceGUI-Dateien, vpype-Importfehler) fiele hier auf, nicht erst bei
+      # der Person, die die Datei doppelklickt.
+      - name: Rauchtest
+        shell: pwsh
+        run: |
+          $prozess = Start-Process -FilePath "dist\Wandplotter.exe" -PassThru
+          try {
+            $bereit = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 1
+              try {
+                $antwort = Invoke-WebRequest -Uri "http://127.0.0.1:8080/" -UseBasicParsing -TimeoutSec 2
+                if ($antwort.StatusCode -eq 200) { $bereit = $true; break }
+              } catch {}
+            }
+            if (-not $bereit) {
+              throw "Server antwortet nach 30 s nicht — dist\Wandplotter.exe vermutlich kaputt gebündelt."
+            }
+            Write-Host "Server antwortet."
+          } finally {
+            Stop-Process -Id $prozess.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wandplotter-windows
+          path: dist/Wandplotter.exe
+          retention-days: 30
+          if-no-files-found: error

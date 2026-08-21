@@ -369,6 +369,16 @@ def test_zwei_koepfe_auf_einem_pin_werden_gemeldet():
     assert any("doppelt belegt" in text for text in errors(config))
 
 
+def test_ein_laser_ohne_leistungsbereich_wird_gar_nicht_erst_gebaut():
+    """s_max=0 (oder negativ) ergäbe eine speed_map, die S0 auf zwei
+    widersprüchliche Tastverhältnisse abbildet — ServoSpindle prüft das
+    Gegenstück (s_min >= s_max) schon beim Bauen, LaserSpindle tat es nicht."""
+    with pytest.raises(FirmwareError):
+        LaserSpindle(s_max=0)
+    with pytest.raises(FirmwareError):
+        LaserSpindle(s_max=-5)
+
+
 def test_ein_laser_mit_servotakt_wird_gemeldet():
     config = dataclasses.replace(FirmwareConfig(), laser=LaserSpindle(enabled=True, pwm_hz=50))
     assert any("1000" in text for text in errors(config))

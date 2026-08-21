@@ -87,10 +87,13 @@ class _Store:
 
     def load(self) -> AreaCalibration:
         if self.book is None:
-            try:
-                return AreaCalibration.load(self.path)
-            except CalibrationError:
+            if not self.path.exists():
+                # Der Normalfall vor der ersten Aufnahme — keine Meldung nötig.
                 return AreaCalibration()
+            # Existiert die Datei aber ist kaputt, soll das auffallen: sonst
+            # fängt man hier mit einer leeren Kalibrierung an und überschreibt
+            # beim nächsten `record` lautlos, was vorher drinstand.
+            return AreaCalibration.load(self.path)
         return self.book.get(self.location_name).calibration
 
     def save(self, calibration: AreaCalibration) -> str:

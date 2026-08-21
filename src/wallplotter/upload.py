@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import re
 import socket
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -237,6 +238,15 @@ class TelnetChannel:
         self.timeout_s = timeout_s
         self._opener = opener or socket.create_connection
         self._socket: Any = None
+        # Schützt nur die "Unterhaltungen", die auf eine Antwort warten
+        # (send_line, status) — beide lesen aus demselben _buffer, und ohne
+        # Sperre könnte eine zweite, gleichzeitig laufende Anfrage (die
+        # Web-UI cacht den Client je Host/Zeitlimit, mehrere Bedienelemente
+        # teilen sich also denselben Kanal) Zeilen der ersten abbekommen.
+        # send_realtime() nimmt diese Sperre bewusst NICHT: Ein Not-Halt oder
+        # Jog-Abbruch darf nicht erst warten, bis eine andere Anfrage ihre
+        # Antwort fertig eingesammelt hat.
+        self._lock = threading.Lock()
 
     # -- Verbindung -------------------------------------------------------
 
@@ -300,21 +310,22 @@ class TelnetChannel:
         Ausnahme — stillschweigend „Erfolg" zu melden war genau der Fehler,
         den der HTTP-Weg gemacht hat.
         """
-        self._write(line.rstrip("\n").encode("utf-8") + b"\n")
-        if not expect_ok:
-            return ""
-        collected: list[str] = []
-        while True:
-            answer = self._read_line(self.timeout_s)
-            if answer is None:
-                raise FluidNCError(
-                    f"Keine Quittung auf {line!r} innerhalb von {self.timeout_s:.0f} s"
-                )
-            if _OK_RE.match(answer):
-                return "\n".join(collected)
-            if _ERROR_RE.match(answer):
-                raise FluidNCRejected(f"{line!r} abgelehnt: {answer}")
-            collected.append(answer)
+        with self._lock:
+            self._write(line.rstrip("\n").encode("utf-8") + b"\n")
+            if not expect_ok:
+                return ""
+            collected: list[str] = []
+            while True:
+                answer = self._read_line(self.timeout_s)
+                if answer is None:
+                    raise FluidNCError(
+                        f"Keine Quittung auf {line!r} innerhalb von {self.timeout_s:.0f} s"
+                    )
+                if _OK_RE.match(answer):
+                    return "\n".join(collected)
+                if _ERROR_RE.match(answer):
+                    raise FluidNCRejected(f"{line!r} abgelehnt: {answer}")
+                collected.append(answer)
 
     def send_realtime(self, byte: int) -> None:
         """Ein Realtime-Byte schicken — Halt, Weiter, Reset, Jog-Abbruch.
@@ -329,14 +340,15 @@ class TelnetChannel:
 
     def status(self) -> MachineStatus:
         """``?`` senden und den Statusbericht abholen."""
-        self.send_realtime(ord("?"))
-        deadline = min(self.timeout_s, REALTIME_TIMEOUT_S)
-        while True:
-            line = self._read_line(deadline)
-            if line is None:
-                raise FluidNCError(f"{self.host} antwortet nicht auf die Statusabfrage")
-            if _STATUS_RE.search(line):
-                return parse_status(line)
+        with self._lock:
+            self.send_realtime(ord("?"))
+            deadline = min(self.timeout_s, REALTIME_TIMEOUT_S)
+            while True:
+                line = self._read_line(deadline)
+                if line is None:
+                    raise FluidNCError(f"{self.host} antwortet nicht auf die Statusabfrage")
+                if _STATUS_RE.search(line):
+                    return parse_status(line)
 
 
 class FluidNCClient:
@@ -436,11 +448,7 @@ class FluidNCClient:
         vorab prüft, ob der Platz reicht.
         """
         payload = data.encode("utf-8") if isinstance(data, str) else data
-        remote_dir = (
-            self.config.remote_dir
-            if self.config.remote_dir.endswith("/")
-            else self.config.remote_dir + "/"
-        )
+        remote_dir = self._remote_dir()
         remote_path = f"{remote_dir}{filename}"
 
         with _as_fluidnc_error(f"Upload von {filename!r} fehlgeschlagen"):
@@ -540,9 +548,24 @@ class FluidNCClient:
             # Die Verbindung bricht ab, WEIL das Board neu startet — Normalfall.
             return f"Neustart angestoßen; das Board hat nicht mehr geantwortet ({exc})"
 
+    def _remote_dir(self) -> str:
+        """``config.remote_dir`` mit Schrägstrich am Ende."""
+        return (
+            self.config.remote_dir
+            if self.config.remote_dir.endswith("/")
+            else self.config.remote_dir + "/"
+        )
+
     def download(self, remote_path: str) -> str:
-        """Datei von der Karte lesen (``GET /sd/<pfad>``, WebDAV-Zweig)."""
-        path = remote_path if remote_path.startswith("/") else f"/{remote_path}"
+        """Datei von der Karte lesen (``GET /sd/<pfad>``, WebDAV-Zweig).
+
+        Wie bei :meth:`upload`: Ein Name ohne führenden Schrägstrich wird
+        relativ zu ``config.remote_dir`` aufgelöst. Ohne das las ``download``
+        immer ab Kartenwurzel — bei einem ``remote_dir`` ungleich ``/`` griff
+        ein ``push`` (schreibt unter ``remote_dir``) an einer anderen Stelle
+        als das folgende ``pull`` (las immer ab ``/``).
+        """
+        path = remote_path if remote_path.startswith("/") else f"{self._remote_dir()}{remote_path}"
         with _as_fluidnc_error(f"Lesen von {path!r} fehlgeschlagen"):
             response = self.session.get(
                 f"{self.config.base_url}/sd{path}", timeout=self.config.timeout_s

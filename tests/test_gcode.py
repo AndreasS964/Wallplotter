@@ -85,6 +85,14 @@ def test_margin_larger_than_area_is_rejected():
         PlotConfig(width_mm=100, height_mm=100, margin_mm=60)
 
 
+def test_negative_margin_is_rejected():
+    """Nur die Obergrenze war geprüft — ein negativer Rand machte die
+    Zeichenfläche rechnerisch größer als die Wand, statt abgelehnt zu
+    werden: drawable_width_mm = width_mm - 2*margin_mm wächst dann."""
+    with pytest.raises(ValueError):
+        PlotConfig(width_mm=2000, height_mm=2500, margin_mm=-100)
+
+
 def test_stats_count_the_servo_dwell():
     """Bei einem Punktraster sind die Stifthübe der Löwenanteil der Laufzeit."""
     dots = [[(float(i), 0.0), (float(i) + 1.0, 0.0)] for i in range(0, 200, 2)]
@@ -126,6 +134,38 @@ def test_travel_is_counted_for_every_pass():
     einmal = stats_for(lines, PlotConfig(toolhead=LaserToolhead()))
     dreimal = stats_for(lines, PlotConfig(toolhead=LaserToolhead(passes=3)))
     assert dreimal.travel_mm == pytest.approx(3 * einmal.travel_mm)
+
+
+def test_travel_mm_is_measured_from_the_calibrated_origin():
+    """motion_s rechnete schon vom Standort-Nullpunkt aus — travel_mm nicht,
+    und wich davon ab, sobald origin_x_mm/origin_y_mm ungleich 0 sind."""
+    from wallplotter.geometry import travel_length
+
+    lines = [[(0.0, 0.0), (10.0, 0.0)], [(50.0, 50.0), (60.0, 50.0)]]
+    origin = (300.0, 200.0)
+    config = PlotConfig(
+        width_mm=1000, height_mm=1000, margin_mm=50, origin_x_mm=origin[0], origin_y_mm=origin[1]
+    )
+    stats = stats_for(lines, config)
+    assert stats.travel_mm == pytest.approx(travel_length(lines, start=origin))
+    assert stats.travel_mm != pytest.approx(travel_length(lines))  # ab Maschinen-(0,0) wäre falsch
+
+
+def test_travel_mm_without_park_skips_the_return_leg():
+    """Ein Block, der nicht zum Ausgangspunkt zurückfährt — eine
+    Zwischenebene im zusammenhängenden Mehrfarbenprogramm —, darf die
+    Rückfahrt auch in der Statistik nicht mitzählen."""
+    from wallplotter.geometry import travel_length
+
+    lines = [[(0.0, 0.0), (10.0, 0.0)], [(50.0, 50.0), (60.0, 50.0)]]
+    geparkt = stats_for(lines, CONFIG)
+    from wallplotter.gcode import PlotStats
+
+    ungeparkt = PlotStats(lines, CONFIG, park=False)
+    assert ungeparkt.travel_mm == pytest.approx(
+        travel_length(lines, start=(0.0, 0.0), return_to_start=False)
+    )
+    assert ungeparkt.travel_mm < geparkt.travel_mm
 
 
 def test_no_line_exceeds_what_fluidnc_accepts():

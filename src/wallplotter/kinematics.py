@@ -288,7 +288,14 @@ def analyze_area(
         y = height_mm * iy / (samples - 1)
         for ix in range(samples):
             x = width_mm * ix / (samples - 1)
-            resolution = kinematics.resolution_mm(x, y)
+            try:
+                resolution = kinematics.resolution_mm(x, y)
+            except ValueError:
+                # Der Stift sitzt an dieser einen Rasterstelle exakt auf einem
+                # Anker (etwa bei --overhang 0 --above 0, wo der Anker in eine
+                # Ecke der Fläche fällt) — eine einzelne Singularität im
+                # Raster, kein Grund, die ganze Auswertung abzubrechen.
+                continue
             if resolution > worst_res:
                 worst_res, worst_at = resolution, (x, y)
             best_res = min(best_res, resolution)

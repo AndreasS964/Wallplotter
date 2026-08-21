@@ -252,8 +252,17 @@ def draw_length(lines: Iterable[Line]) -> float:
     return total
 
 
-def travel_length(lines: Sequence[Line], start: Point = (0.0, 0.0)) -> float:
-    """Summierte Leerweg-Strecke (Pen-Up), in mm — inklusive An- und Rückfahrt."""
+def travel_length(
+    lines: Sequence[Line], start: Point = (0.0, 0.0), *, return_to_start: bool = True
+) -> float:
+    """Summierte Leerweg-Strecke (Pen-Up), in mm — inklusive Anfahrt.
+
+    Mit ``return_to_start=False`` (Standard ``True``) fehlt die Rückfahrt: für
+    einen Block, dessen GCode gar nicht zum Ausgangspunkt zurückfährt — etwa
+    eine Zwischenebene eines zusammenhängenden Mehrfarbenprogramms, die mit
+    ``M0`` pausiert, statt vorher zu parken (siehe
+    :func:`wallplotter.gcode._program_with_pauses`).
+    """
     total = 0.0
     pos = start
     for line in lines:
@@ -261,7 +270,8 @@ def travel_length(lines: Sequence[Line], start: Point = (0.0, 0.0)) -> float:
             continue
         total += math.hypot(line[0][0] - pos[0], line[0][1] - pos[1])
         pos = line[-1]
-    total += math.hypot(start[0] - pos[0], start[1] - pos[1])
+    if return_to_start:
+        total += math.hypot(start[0] - pos[0], start[1] - pos[1])
     return total
 
 

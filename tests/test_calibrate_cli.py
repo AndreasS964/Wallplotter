@@ -98,6 +98,17 @@ def test_show_without_file_lists_what_is_missing(board, tmp_path, capsys):
     assert "bottom-left" in out
 
 
+def test_a_corrupted_file_is_reported_not_silently_treated_as_empty(board, tmp_path, capsys):
+    """_Store.load() fing CalibrationError einheitlich ab — eine fehlende
+    Datei (Normalfall) und eine kaputte Datei sahen für sie gleich aus. Ein
+    `record` auf eine kaputte Datei hätte sie ohne Warnung mit nur der einen
+    neuen Ecke überschrieben."""
+    path = tmp_path / "kaputt.json"
+    path.write_text("kein json", encoding="utf-8")
+    assert calibrate_cli.main(["--file", str(path), "show"]) == 3
+    assert "keine gültige Kalibrierung" in capsys.readouterr().err
+
+
 def test_clear_empties_the_calibration(board, tmp_path):
     path = tmp_path / "cal.json"
     calibrate_cli.main(["--file", str(path), "record", "top-left", "--at", "1", "2"])

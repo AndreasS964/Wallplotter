@@ -102,6 +102,9 @@ class WallplotterUI:
             self.book, self.book_error = LocationBook(), str(exc)
         self.correction_path = CORRECTION_PATH
         self._clients: dict = {}
+        self._upload_generation = 0
+        """Zählt render_upload()-Aufrufe hoch — ein noch laufender Aufruf
+        erkennt daran, ob inzwischen ein neuerer gestartet wurde."""
 
     @property
     def location(self) -> Location | None:
@@ -257,8 +260,12 @@ class WallplotterUI:
     # -- Zeichnung laden --------------------------------------------------
 
     async def load_upload(self, event) -> None:
-        self.upload_data = event.content.read()
-        self.upload_name = event.name
+        # NiceGUI reicht seit der Umstellung auf UploadEventArguments.file ein
+        # FileUpload-Objekt mit eigenem (asynchronem) read() durch, nicht mehr
+        # ein synchrones .content — ohne Browser-Test blieb das unbemerkt,
+        # jeder echte Upload endete mit AttributeError, bevor er ankam.
+        self.upload_data = await event.file.read()
+        self.upload_name = event.file.name
         await self.render_upload()
 
     def _convert_upload(self, suffix: str, config: PlotConfig):
@@ -290,9 +297,19 @@ class WallplotterUI:
         return [line for layer in layers for line in layer.lines], layers, name, True
 
     async def render_upload(self) -> None:
-        """Hochgeladene Vorlage (neu) übersetzen — auch beim Verfahrenswechsel."""
+        """Hochgeladene Vorlage (neu) übersetzen — auch beim Verfahrenswechsel.
+
+        Ein Foto kann sekundenlang rechnen (``_convert_upload``); wechselt
+        währenddessen jemand das Verfahren, läuft ein zweiter Aufruf parallel
+        dazu. Ohne Generationszähler gewinnt dann, wer zufällig zuerst
+        *fertig* wird — nicht, wer zuletzt *angestoßen* wurde. Ein länger
+        laufendes, längst überholtes Ergebnis hätte so das frischere
+        überschrieben.
+        """
         if not getattr(self, "upload_data", None):
             return
+        self._upload_generation += 1
+        generation = self._upload_generation
         suffix = os.path.splitext(self.upload_name)[1].lower()
         config = self.plot_config()
         try:
@@ -300,7 +317,12 @@ class WallplotterUI:
                 self._convert_upload, suffix, config
             )
         except (VpypeNotAvailable, ImagingError) as exc:
-            self.ui.notify(str(exc), type="negative", multi_line=True)
+            if generation == self._upload_generation:
+                self.ui.notify(str(exc), type="negative", multi_line=True)
+            return
+        if generation != self._upload_generation:
+            # Ein neuerer Aufruf ist inzwischen unterwegs oder schon
+            # angekommen — dieses veraltete Ergebnis nicht mehr anwenden.
             return
         # Bildverfahren rechnen selbst in Millimetern und werden nicht eingepasst
         self.lines, self.layers, self.fit_source = lines, layers, fit
@@ -434,6 +456,13 @@ class WallplotterUI:
         if not (0 <= index < len(self.layers)):
             return
         layer = self.layers[index]
+        blocked = self.laser_blocked()
+        if blocked:
+            # Derselbe Riegel wie in regenerate() — sonst erzeugte gerade der
+            # Knopf, der sofort hochlädt und startet, vollständigen
+            # Laser-GCode ohne je den Schalter „Laser scharf" zu verlangen.
+            self.ui.notify(blocked, type="negative", multi_line=True, timeout=10000)
+            return
         config = self.plot_config()
         # gemeinsame Einpassung über alle Ebenen, sonst passt der Passer nicht
         try:

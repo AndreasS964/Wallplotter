@@ -93,6 +93,11 @@ class PlotConfig:
         return self.height_mm - 2 * self.margin_mm
 
     def __post_init__(self) -> None:
+        if self.margin_mm < 0:
+            # Ohne diese Prüfung machte ein negativer Rand die Zeichenfläche
+            # größer als die Wand: drawable_width_mm = width_mm - 2*margin_mm
+            # wächst dann über width_mm hinaus, statt die Eingabe abzulehnen.
+            raise ValueError(f"margin_mm={self.margin_mm} kann nicht negativ sein")
         if self.drawable_width_mm <= 0 or self.drawable_height_mm <= 0:
             raise ValueError(
                 f"margin_mm={self.margin_mm} ist zu groß für die Fläche "

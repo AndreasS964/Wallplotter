@@ -9,7 +9,7 @@
   <a href="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/AndreasS964/Wallplotter/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-687-brightgreen">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-728-brightgreen">
   <img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-lightgrey">
 </p>
 
@@ -249,6 +249,10 @@ Erreichbar unter `http://<pc-ip>:8080`, auch vom Handy an der Wand. Drei Reiter:
 
 Auf dem Handy stapeln sich die Karten, das Jog-Pad steht dabei oben.
 
+Wer die Oberfläche auf einem Rechner ohne installiertes Python starten will,
+findet unter [docs/windows-paket.md](docs/windows-paket.md), wie sich daraus
+eine einzelne, eigenständige Datei für Windows bauen lässt.
+
 <table>
 <tr>
 <td width="70%"><img src="docs/images/ui-kalibrieren.png" alt="Reiter Kalibrieren"></td>
@@ -428,6 +432,7 @@ Alles gesetzt und verlinkt unter
 | [Kinematik-Auswertung](docs/kinematik.md) | gerechnete Zahlen für eine Beispielaufhängung |
 | [Projektidee](docs/projektidee.md) | Hardware, Mechanik, Entscheidungen |
 | [Software-Roadmap](docs/software-roadmap.md) | Stufenplan und UI-Architektur |
+| [Windows-Datei](docs/windows-paket.md) | Web-Oberfläche als eigenständige `.exe` bauen |
 | [FluidNC-Konfiguration](config/fluidnc-wallplotter.yaml) | die erzeugte `config.yaml` fürs Rodent-Board |
 
 ## Stand
@@ -435,7 +440,7 @@ Alles gesetzt und verlinkt unter
 Board unterwegs, Mechanik noch nicht gedruckt.
 
 Ohne Hardware geprüft sind Geometrie, GCode-Export, Kalibrierlogik, Testmuster,
-Kinematikrechnung, Bildverfahren und die Verdrahtung der Oberflächen: 687 Tests.
+Kinematikrechnung, Bildverfahren und die Verdrahtung der Oberflächen: 728 Tests.
 Die board-nahen laufen gegen eine Gegenstelle, die sich wie FluidNC verhält,
 unbekannte Endpunkte also mit 404 beantwortet und bei `/command?plain=` nur
 `$`-Kommandos versteht.

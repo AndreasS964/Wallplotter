@@ -61,8 +61,12 @@ class GrayImage:
     height: int
 
     def darkness(self, x: float, y: float) -> float:
-        """Dunkelheit (0…1) an einer Bildposition, außerhalb 0."""
-        ix, iy = int(x), int(y)
+        """Dunkelheit (0…1) an einer Bildposition, außerhalb 0.
+
+        ``math.floor`` statt ``int()`` — Kürzung Richtung 0 zählte
+        ``-0.5 < x < 0`` fälschlich zu Pixel 0 statt zu „außerhalb".
+        """
+        ix, iy = math.floor(x), math.floor(y)
         if not (0 <= ix < self.width and 0 <= iy < self.height):
             return 0.0
         return 1.0 - self.pixels[iy][ix]
@@ -309,11 +313,13 @@ def spiral(
         # Schrittweite so wählen, dass der Bogen etwa step_mm lang wird
         delta = step_mm / max(radius, pitch_mm / 4)
         angle += delta
-        # Der Bogen wächst um das, was tatsächlich gefahren wurde. Innen, wo
-        # der Radius kleiner ist als der Nenner oben, ist das weniger als
-        # step_mm — mit dem Nennwert zu rechnen ließ die Phase des Wobbles im
+        # Der Bogen wächst um das, was tatsächlich gefahren wurde — beim
+        # *wahren* Radius gerechnet, nicht beim geklemmten Nenner von `delta`.
+        # Innen, wo der Radius kleiner ist als der Nenner, ist das weniger als
+        # step_mm; mit dem Nennwert statt dem wahren Radius zu rechnen ergab
+        # rechnerisch immer exakt step_mm und ließ die Phase des Wobbles im
         # Zentrum davonlaufen.
-        arc += min(step_mm, delta * max(radius, pitch_mm / 4))
+        arc += min(step_mm, delta * radius)
 
     if len(current) >= 2:
         lines.append(current)

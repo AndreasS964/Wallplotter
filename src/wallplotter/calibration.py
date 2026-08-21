@@ -49,8 +49,13 @@ class AreaCalibration:
 
     @property
     def complete(self) -> bool:
-        """Vier Ecken sind ideal, zwei diagonale reichen zur Not."""
-        return not self.missing or {"bottom-left", "top-right"} <= set(self.points)
+        """Vier Ecken sind ideal, zwei diagonale reichen zur Not — beide
+        Diagonalen: ``rectangle()`` bestimmt Breite und Höhe je Seite über
+        die jeweils vorhandene Ecke, das funktioniert für beide gleich."""
+        if not self.missing:
+            return True
+        points = set(self.points)
+        return {"bottom-left", "top-right"} <= points or {"bottom-right", "top-left"} <= points
 
     # -- Auswertung -------------------------------------------------------
 
@@ -160,7 +165,9 @@ class AreaCalibration:
         try:
             data = json.loads(source.read_text(encoding="utf-8"))
             points = {key: (float(v[0]), float(v[1])) for key, v in data["points"].items()}
-        except (ValueError, KeyError, TypeError, IndexError) as exc:
+        except (ValueError, KeyError, TypeError, IndexError, AttributeError) as exc:
+            # AttributeError: gültiges JSON, aber "points" ist z. B. eine
+            # Liste statt eines Wörterbuchs und hat kein .items().
             raise CalibrationError(f"{source} ist keine gültige Kalibrierung: {exc}") from exc
         unknown = set(points) - set(CORNERS)
         if unknown:

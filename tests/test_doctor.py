@@ -114,6 +114,27 @@ def test_matching_firmware_config_is_fine(tmp_path, book_path):
     assert status_of(check_firmware_config(config, book_path), "Firmware-Konfiguration") == OK
 
 
+def test_a_non_numeric_anchor_is_reported_not_raised(tmp_path, book_path):
+    """float(wall.get(key, 0)) flog bei einem nicht-numerischen Ankermaß mit
+    einem rohen ValueError aus der Funktion — und riss damit den ganzen
+    Selbsttest mit sich, statt nur diesen einen Befund zu melden."""
+    pytest.importorskip("yaml")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "kinematics:\n"
+        "  WallPlotter:\n"
+        "    left_anchor_x: abc\n"
+        "    right_anchor_x: 1150.0\n"
+        "    left_anchor_y: 500.0\n"
+        "    right_anchor_y: 500.0\n",
+        encoding="utf-8",
+    )
+    checks = check_firmware_config(config, book_path)
+    check = next(c for c in checks if c.name == "Firmware-Konfiguration")
+    assert check.status == FAIL
+    assert "left_anchor_x" in check.detail or "keine Zahl" in check.detail
+
+
 def test_a_config_written_by_the_generator_is_reported_as_generated(tmp_path, book_path):
     """Der ganze Sinn der Sache: die Datei stammt aus dem Werkzeug."""
     pytest.importorskip("yaml")
