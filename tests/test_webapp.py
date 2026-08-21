@@ -7,6 +7,7 @@ auf, bevor sie vor der Wand auffallen).
 
 import asyncio
 import os
+import threading
 import time
 from types import SimpleNamespace
 
@@ -218,6 +219,43 @@ def test_colour_layers_are_listed_and_plottable(app, tmp_path):
     assert {layer.color for layer in app.layers} == {"#000000", "#e02020"}
     assert "2 Farben" in app.source_name
     run_handler(app, app.send_layer(0))   # ohne Board: darf nur nicht abstürzen
+
+
+def test_render_upload_ignores_a_stale_slower_conversion(app, monkeypatch):
+    """Wechselt jemand während einer langsamen Umrechnung (z. B. Spirale über
+    ein großes Foto) das Verfahren, läuft ein zweiter render_upload() parallel
+    dazu. Ohne Generationszähler gewinnt, wer zufällig zuerst *fertig* wird —
+    nicht, wer zuletzt *angestoßen* wurde, und das inzwischen überholte,
+    länger rechnende Ergebnis überschreibt das frischere."""
+    app.upload_data, app.upload_name = b"x", "bild.svg"
+
+    calls: list[int] = []
+    calls_lock = threading.Lock()
+
+    def fake_convert(suffix, config):
+        with calls_lock:
+            calls.append(1)
+            index = len(calls)
+        if index == 1:
+            time.sleep(0.15)  # die zuerst angestoßene Umrechnung ist die langsame
+            return [[(0.0, 0.0), (1.0, 1.0)]], [], "erste (langsam, überholt)", True
+        return [[(2.0, 2.0), (3.0, 3.0)]], [], "zweite (schnell, aktuell)", True
+
+    monkeypatch.setattr(app, "_convert_upload", fake_convert)
+
+    async def eine() -> None:
+        # Jede gleichzeitige Task braucht ihren eigenen Slot-Kontext (siehe
+        # run_handler oben) — asyncio.gather spawnt eigene Tasks, die den
+        # `with app.layer_box`-Kontext von außen nicht erben.
+        with app.layer_box:
+            await app.render_upload()
+
+    async def beide() -> None:
+        await asyncio.gather(eine(), eine())
+
+    asyncio.run(beide())
+    assert len(calls) == 2  # beide Umrechnungen sind wirklich gelaufen
+    assert app.source_name == "zweite (schnell, aktuell)"
 
 
 def test_photo_upload_clears_previous_layers(app, tmp_path):

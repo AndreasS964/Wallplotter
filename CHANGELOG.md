@@ -1,5 +1,22 @@
 # Änderungen
 
+## Unveröffentlicht — der letzte Fund: eine überholte Umrechnung gewann
+
+`webapp.render_upload()` schickt die (bei einer Spirale über eine große Wand
+durchaus sekundenlange) Bild- oder SVG-Umrechnung in einen Thread. Wechselt
+jemand währenddessen das Verfahren — der naheliegende nächste Klick, während
+man auf das Ergebnis wartet —, läuft ein zweiter `render_upload()`-Aufruf
+parallel dazu. Ohne Weiteres gewann danach, wer zufällig zuerst *fertig*
+wurde, nicht wer zuletzt *angestoßen* wurde: Die langsamere, längst
+überholte erste Umrechnung konnte das frischere, schon angezeigte Ergebnis
+der zweiten wieder überschreiben. Ein Generationszähler sorgt jetzt dafür,
+dass nur das Ergebnis des zuletzt gestarteten Aufrufs angewendet wird — ein
+überholtes wird verworfen, ohne die Oberfläche noch einmal anzufassen.
+
+Damit sind alle 21 Funde aus der aktuellen Gegenprüfungsrunde behoben (28
+Agenten, 7 Fachbereiche parallel gelesen, jeder Fund einzeln adversarisch
+nachgeprüft — 21 von 21 bestätigt).
+
 ## Unveröffentlicht — `TelnetChannel` gegen gleichzeitige Nutzung abgesichert
 
 Die Web-UI cacht den `FluidNCClient` je Host/Zeitlimit und ruft ihn aus
