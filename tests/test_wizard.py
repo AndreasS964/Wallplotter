@@ -402,6 +402,50 @@ def test_die_flaeche_bleibt_offen_wenn_ecken_fehlen(tmp_path):
     assert any("fehlen" in w for w in dialog.gewarnt)
 
 
+class VerbindungBrichtAb:
+    """Antwortet auf ``position()`` ein paar Mal richtig, dann reißt die
+    Verbindung ab — simuliert einen WLAN-Aussetzer mitten im Einmessen."""
+
+    def __init__(self, positionen, funktioniert_bis: int) -> None:
+        self._positionen = list(positionen)
+        self._funktioniert_bis = funktioniert_bis
+        self._aufrufe = 0
+
+    def position(self):
+        from wallplotter.upload import FluidNCError
+
+        self._aufrufe += 1
+        if self._aufrufe > self._funktioniert_bis:
+            raise FluidNCError("Verbindung weg")
+        return self._positionen[self._aufrufe - 1]
+
+    def jog(self, dx, dy) -> None:  # pragma: no cover - "hier" braucht kein Jog
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def test_bereits_aufgenommene_ecken_ueberleben_einen_verbindungsabbruch(tmp_path):
+    """Bricht die Verbindung bei der dritten Ecke ab, dürfen die ersten
+    beiden nicht verloren gehen — vorher schrieb ein FluidNCError mitten im
+    Einmessen gar nichts, auch nicht das längst Aufgenommene."""
+    factory, _s, _so = board(positionen=FAHRWEG)
+    ctx = kontext(tmp_path, factory)
+    ctx.board_erreichbar = True
+    wizard.schritt_nach_name("standort").ausfuehren(
+        ctx, SkriptDialog([None, "Keller", 2300, 1450, 1470])
+    )
+
+    ctx.client_factory = lambda config: VerbindungBrichtAb(ECKEN, funktioniert_bis=2)
+    dialog = SkriptDialog(["hier", "hier", "hier"])
+    assert wizard.schritt_nach_name("flaeche").ausfuehren(ctx, dialog) is False
+    assert any("Verbindung" in w for w in dialog.gewarnt)
+
+    gespeichert = LocationBook.load(ctx.standorte).get().calibration.points
+    assert set(gespeichert) == {"bottom-left", "bottom-right"}
+
+
 def test_der_servoschritt_laesst_die_werte_wiederholen(tmp_path):
     """Beim ersten Muster passt es selten. Also noch einmal, ohne von vorn."""
     factory, _s, _so = board(positionen=FAHRWEG)

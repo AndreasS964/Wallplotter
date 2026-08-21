@@ -491,6 +491,7 @@ def _tue_flaeche(ctx: Kontext, dialog: Dialog) -> bool:
 
     client = ctx.client()
     aufgenommen = dict(standort.calibration.points)
+    fehler: FluidNCError | None = None
     try:
         for ecke in CORNERS:
             name = ECKEN_NAMEN[ecke]
@@ -523,8 +524,10 @@ def _tue_flaeche(ctx: Kontext, dialog: Dialog) -> bool:
             aufgenommen[ecke] = (x, y)
             dialog.sagen(f"  {name} aufgenommen: {x:.1f} / {y:.1f} mm")
     except FluidNCError as exc:
-        dialog.warnen(f"Verbindung verloren: {exc}")
-        return False
+        # Nicht sofort zurückspringen: Was bis hierhin erfolgreich
+        # aufgenommen wurde, soll trotzdem gespeichert werden — sonst kostet
+        # ein Verbindungsabbruch bei der dritten Ecke auch die ersten beiden.
+        fehler = exc
     finally:
         client.close()
 
@@ -534,6 +537,10 @@ def _tue_flaeche(ctx: Kontext, dialog: Dialog) -> bool:
     buch = ctx.buch()
     buch.add(standort)
     buch.save(ctx.standorte)
+
+    if fehler is not None:
+        dialog.warnen(f"Verbindung verloren: {fehler}")
+        return False
 
     if not standort.calibration.complete:
         fehlen = ", ".join(ECKEN_NAMEN[e] for e in standort.calibration.missing)

@@ -1,5 +1,16 @@
 # Änderungen
 
+## Unveröffentlicht — ein Verbindungsabbruch beim Einmessen kostete alle Ecken
+
+`wallplotter-setup`s Flächenschritt (`_tue_flaeche`) sammelte die
+angefahrenen Ecken in einer lokalen Variable und schrieb sie erst ganz am
+Ende ins Standortbuch. Riss die WLAN-Verbindung mitten in der dritten Ecke ab
+(`FluidNCError`), sprang der Schritt sofort mit „Verbindung verloren" zurück
+— und die ersten beiden, längst erfolgreich aufgenommenen Ecken waren
+mitsamt der Ausnahme weg, nie gespeichert. Wer danach `wallplotter-setup`
+erneut aufrief, fing wieder bei null an. Gespeichert wird jetzt in jedem
+Fall, was bis zum Abbruch aufgenommen wurde; die Warnung bleibt.
+
 ## Unveröffentlicht — eine kaputte Kalibrierdatei sah aus wie eine fehlende
 
 `wallplotter-calibrate`s `_Store.load()` fing `CalibrationError` einheitlich
