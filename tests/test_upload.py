@@ -111,6 +111,32 @@ def test_download_reads_from_the_card():
     assert session.calls[0][1] == "http://wandplotter.local/sd/standorte.json"
 
 
+def test_download_uses_the_configured_remote_dir():
+    """Wie beim Upload: ein Dateiname ohne führenden Schrägstrich liegt unter
+    remote_dir. Vorher las download() immer ab Kartenwurzel — push (schreibt
+    unter remote_dir) und ein folgendes pull trafen sich bei einem remote_dir
+    ungleich "/" nie an derselben Stelle."""
+    session = FakeSession(files={"/gcode/standorte.json": "{}"})
+    sock = FakeFluidNCSocket()
+    config = FluidNCConfig(host="x", remote_dir="/gcode")
+    api = FluidNCClient(
+        config, session, TelnetChannel(config.hostname, 23, 5.0, opener_for(sock))
+    )
+    assert api.download("standorte.json") == "{}"
+    assert session.calls[0][1] == "http://x/sd/gcode/standorte.json"
+
+
+def test_download_with_a_leading_slash_bypasses_remote_dir():
+    session = FakeSession(files={"/anderswo.json": "{}"})
+    sock = FakeFluidNCSocket()
+    config = FluidNCConfig(host="x", remote_dir="/gcode")
+    api = FluidNCClient(
+        config, session, TelnetChannel(config.hostname, 23, 5.0, opener_for(sock))
+    )
+    assert api.download("/anderswo.json") == "{}"
+    assert session.calls[0][1] == "http://x/sd/anderswo.json"
+
+
 def test_list_files_needs_no_action_parameter():
     api, session, _ = client(files={"/wand.gcode": ""})
     listing = api.list_files("/")

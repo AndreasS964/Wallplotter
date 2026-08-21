@@ -436,11 +436,7 @@ class FluidNCClient:
         vorab prüft, ob der Platz reicht.
         """
         payload = data.encode("utf-8") if isinstance(data, str) else data
-        remote_dir = (
-            self.config.remote_dir
-            if self.config.remote_dir.endswith("/")
-            else self.config.remote_dir + "/"
-        )
+        remote_dir = self._remote_dir()
         remote_path = f"{remote_dir}{filename}"
 
         with _as_fluidnc_error(f"Upload von {filename!r} fehlgeschlagen"):
@@ -540,9 +536,24 @@ class FluidNCClient:
             # Die Verbindung bricht ab, WEIL das Board neu startet — Normalfall.
             return f"Neustart angestoßen; das Board hat nicht mehr geantwortet ({exc})"
 
+    def _remote_dir(self) -> str:
+        """``config.remote_dir`` mit Schrägstrich am Ende."""
+        return (
+            self.config.remote_dir
+            if self.config.remote_dir.endswith("/")
+            else self.config.remote_dir + "/"
+        )
+
     def download(self, remote_path: str) -> str:
-        """Datei von der Karte lesen (``GET /sd/<pfad>``, WebDAV-Zweig)."""
-        path = remote_path if remote_path.startswith("/") else f"/{remote_path}"
+        """Datei von der Karte lesen (``GET /sd/<pfad>``, WebDAV-Zweig).
+
+        Wie bei :meth:`upload`: Ein Name ohne führenden Schrägstrich wird
+        relativ zu ``config.remote_dir`` aufgelöst. Ohne das las ``download``
+        immer ab Kartenwurzel — bei einem ``remote_dir`` ungleich ``/`` griff
+        ein ``push`` (schreibt unter ``remote_dir``) an einer anderen Stelle
+        als das folgende ``pull`` (las immer ab ``/``).
+        """
+        path = remote_path if remote_path.startswith("/") else f"{self._remote_dir()}{remote_path}"
         with _as_fluidnc_error(f"Lesen von {path!r} fehlgeschlagen"):
             response = self.session.get(
                 f"{self.config.base_url}/sd{path}", timeout=self.config.timeout_s

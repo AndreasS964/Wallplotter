@@ -1,5 +1,17 @@
 # Änderungen
 
+## Unveröffentlicht — `download()` ignorierte `remote_dir`
+
+`FluidNCClient.upload()` legt eine Datei unter `config.remote_dir` ab —
+`download()` las aber immer ab Kartenwurzel, ganz gleich, was `remote_dir`
+sagte. Solange `remote_dir` bei `/` (der Vorgabe) blieb, fiel das nie auf.
+Bei jedem anderen Wert schrieb `wallplotter-location push` die Standorte
+unter `remote_dir`, und das folgende `pull` suchte sie an der Kartenwurzel —
+zwei verschiedene Pfade, ein `404`. `download()` löst einen Namen ohne
+führenden Schrägstrich jetzt genauso gegen `remote_dir` auf wie `upload()`;
+ein Name *mit* führendem Schrägstrich bleibt weiterhin ein expliziter,
+absoluter Pfad.
+
 ## Unveröffentlicht — drei kleinere Absicherungen
 
 Weiter aus derselben Gegenprüfungsrunde:

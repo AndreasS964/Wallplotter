@@ -57,6 +57,20 @@ def test_push_writes_a_readable_file():
     assert stored["locations"][0]["anchor_span_mm"] == 2300.0
 
 
+def test_push_and_pull_roundtrip_with_a_non_root_remote_dir():
+    """download() ignorierte remote_dir, upload() nicht — bei einem
+    remote_dir ungleich "/" schrieb push dorthin und pull las weiterhin ab
+    Kartenwurzel, traf also nie auf das, was push gerade abgelegt hatte."""
+    card = FakeCard()
+    client = FluidNCClient(FluidNCConfig(host="wandplotter.local", remote_dir="/wallplotter"), card)
+    book = LocationBook()
+    book.add(make_location())
+    push_locations(book, client)
+
+    restored = pull_locations(client)
+    assert set(restored.locations) == {"Keller"}
+
+
 def test_push_and_pull_roundtrip():
     card = FakeCard()
     book = LocationBook()
