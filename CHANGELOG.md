@@ -1,5 +1,23 @@
 # Änderungen
 
+## Unveröffentlicht — `TelnetChannel` gegen gleichzeitige Nutzung abgesichert
+
+Die Web-UI cacht den `FluidNCClient` je Host/Zeitlimit und ruft ihn aus
+eigenen Threads auf (`asyncio.to_thread`) — Jog, Jog-Abbruch, Nullpunkt
+setzen und eine Ecke anfahren teilen sich damit denselben `TelnetChannel`.
+Der hatte keinerlei Sperre um seinen gemeinsamen Socket-Puffer: Liefen zwei
+`send_line()`- oder `status()`-Aufrufe gleichzeitig, konnte die Antwort auf
+die eine Anfrage bei der anderen landen — am naheliegendsten beim Jog-Pad,
+das bei gehaltener Taste mehrere `send_line()`-Aufrufe kurz hintereinander
+auslöst.
+
+`send_line()` und `status()` — beide lesen aus demselben Puffer — teilen sich
+jetzt eine Sperre, die nur eine „Unterhaltung" gleichzeitig zulässt.
+`send_realtime()` (Not-Halt, Jog-Abbruch) nimmt diese Sperre bewusst
+**nicht**: Ein Abbruch darf nicht erst warten, bis eine andere, noch laufende
+Anfrage ihre Antwort fertig eingesammelt hat — genau der Grund, warum es
+dafür überhaupt einen eigenen, unquittierten Kanalweg gibt.
+
 ## Unveröffentlicht — ein Verbindungsabbruch beim Einmessen kostete alle Ecken
 
 `wallplotter-setup`s Flächenschritt (`_tue_flaeche`) sammelte die

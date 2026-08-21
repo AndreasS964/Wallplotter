@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import re
 import socket
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -237,6 +238,15 @@ class TelnetChannel:
         self.timeout_s = timeout_s
         self._opener = opener or socket.create_connection
         self._socket: Any = None
+        # Schützt nur die "Unterhaltungen", die auf eine Antwort warten
+        # (send_line, status) — beide lesen aus demselben _buffer, und ohne
+        # Sperre könnte eine zweite, gleichzeitig laufende Anfrage (die
+        # Web-UI cacht den Client je Host/Zeitlimit, mehrere Bedienelemente
+        # teilen sich also denselben Kanal) Zeilen der ersten abbekommen.
+        # send_realtime() nimmt diese Sperre bewusst NICHT: Ein Not-Halt oder
+        # Jog-Abbruch darf nicht erst warten, bis eine andere Anfrage ihre
+        # Antwort fertig eingesammelt hat.
+        self._lock = threading.Lock()
 
     # -- Verbindung -------------------------------------------------------
 
@@ -300,21 +310,22 @@ class TelnetChannel:
         Ausnahme — stillschweigend „Erfolg" zu melden war genau der Fehler,
         den der HTTP-Weg gemacht hat.
         """
-        self._write(line.rstrip("\n").encode("utf-8") + b"\n")
-        if not expect_ok:
-            return ""
-        collected: list[str] = []
-        while True:
-            answer = self._read_line(self.timeout_s)
-            if answer is None:
-                raise FluidNCError(
-                    f"Keine Quittung auf {line!r} innerhalb von {self.timeout_s:.0f} s"
-                )
-            if _OK_RE.match(answer):
-                return "\n".join(collected)
-            if _ERROR_RE.match(answer):
-                raise FluidNCRejected(f"{line!r} abgelehnt: {answer}")
-            collected.append(answer)
+        with self._lock:
+            self._write(line.rstrip("\n").encode("utf-8") + b"\n")
+            if not expect_ok:
+                return ""
+            collected: list[str] = []
+            while True:
+                answer = self._read_line(self.timeout_s)
+                if answer is None:
+                    raise FluidNCError(
+                        f"Keine Quittung auf {line!r} innerhalb von {self.timeout_s:.0f} s"
+                    )
+                if _OK_RE.match(answer):
+                    return "\n".join(collected)
+                if _ERROR_RE.match(answer):
+                    raise FluidNCRejected(f"{line!r} abgelehnt: {answer}")
+                collected.append(answer)
 
     def send_realtime(self, byte: int) -> None:
         """Ein Realtime-Byte schicken — Halt, Weiter, Reset, Jog-Abbruch.
@@ -329,14 +340,15 @@ class TelnetChannel:
 
     def status(self) -> MachineStatus:
         """``?`` senden und den Statusbericht abholen."""
-        self.send_realtime(ord("?"))
-        deadline = min(self.timeout_s, REALTIME_TIMEOUT_S)
-        while True:
-            line = self._read_line(deadline)
-            if line is None:
-                raise FluidNCError(f"{self.host} antwortet nicht auf die Statusabfrage")
-            if _STATUS_RE.search(line):
-                return parse_status(line)
+        with self._lock:
+            self.send_realtime(ord("?"))
+            deadline = min(self.timeout_s, REALTIME_TIMEOUT_S)
+            while True:
+                line = self._read_line(deadline)
+                if line is None:
+                    raise FluidNCError(f"{self.host} antwortet nicht auf die Statusabfrage")
+                if _STATUS_RE.search(line):
+                    return parse_status(line)
 
 
 class FluidNCClient:

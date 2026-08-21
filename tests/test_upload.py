@@ -10,6 +10,8 @@ HTTP-Weg zurückfällt.
 from __future__ import annotations
 
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -326,6 +328,130 @@ def test_realtime_rejects_impossible_bytes():
     api, _, _ = client()
     with pytest.raises(FluidNCError, match="zwischen 0 und 255"):
         api.send_realtime(256)
+
+
+# ---------------------------------------------------------------------------
+# Gleichzeitige Nutzung eines Kanals
+#
+# Die Web-UI cacht den Client je Host/Zeitlimit — mehrere Bedienelemente
+# (Jog, Nullpunkt, Ecke anfahren) teilen sich also denselben TelnetChannel
+# und laufen in eigenen Threads (asyncio.to_thread). Ohne Sperre könnte eine
+# zweite, gleichzeitig gesendete Zeile die Antwort der ersten abbekommen.
+# ---------------------------------------------------------------------------
+
+
+class _BlockendesSocket:
+    """Eine gesendete *Zeile* hängt, bis der Test sie einzeln freigibt — ein
+    Realtime-Byte (kein Zeilenumbruch) wird dagegen sofort beantwortet, genau
+    wie am echten Board. Jede Zeile bekommt ihr eigenes Ereignis, damit ein
+    ohne Sperre gleichzeitig blockierter zweiter Aufruf nicht versehentlich
+    durch die Freigabe des ersten mitgeweckt wird."""
+
+    def __init__(self) -> None:
+        self.schreibreihenfolge: list[str] = []
+        self._out = bytearray()
+        self._puffer_sperre = threading.Lock()
+        self._ereignisse: dict[str, threading.Event] = {}
+
+    def _ereignis_fuer(self, zeile: str) -> threading.Event:
+        with self._puffer_sperre:
+            return self._ereignisse.setdefault(zeile, threading.Event())
+
+    def freigeben(self, zeile: str) -> None:
+        self._ereignis_fuer(zeile).set()
+
+    def settimeout(self, value: float) -> None:
+        pass
+
+    def sendall(self, data: bytes) -> None:
+        if data.endswith(b"\n"):
+            zeile = data.rstrip(b"\n").decode()
+            with self._puffer_sperre:
+                self.schreibreihenfolge.append(zeile)
+            if not self._ereignis_fuer(zeile).wait(timeout=2.0):
+                raise AssertionError(f"Testfehler: {zeile!r} nie freigegeben")
+            with self._puffer_sperre:
+                self._out += b"ok\n"
+        else:
+            with self._puffer_sperre:
+                self.schreibreihenfolge.append(f"realtime:{data[0]}")
+
+    def recv(self, size: int) -> bytes:
+        with self._puffer_sperre:
+            if not self._out:
+                raise TimeoutError("nichts zu lesen")
+            chunk = bytes(self._out[:size])
+            del self._out[: len(chunk)]
+            return chunk
+
+    def close(self) -> None:
+        pass
+
+
+def test_two_send_line_calls_on_one_channel_do_not_interleave():
+    """Ohne Sperre stünde SECOND schon in schreibreihenfolge, bevor FIRST
+    seine Antwort bekommen hat — mit Sperre wartet der zweite Aufruf, bis der
+    erste die Unterhaltung ganz fertig hat."""
+    sock = _BlockendesSocket()
+    channel = TelnetChannel("x", 23, 5.0, lambda address, timeout: sock)
+    ergebnisse: list[tuple[str, str]] = []
+
+    def sende(befehl: str) -> None:
+        ergebnisse.append((befehl, channel.send_line(befehl)))
+
+    erster = threading.Thread(target=sende, args=("FIRST",))
+    erster.start()
+    for _ in range(200):
+        if "FIRST" in sock.schreibreihenfolge:
+            break
+        time.sleep(0.005)
+    else:
+        raise AssertionError("FIRST wurde nie geschrieben")
+
+    zweiter = threading.Thread(target=sende, args=("SECOND",))
+    zweiter.start()
+    time.sleep(0.1)  # Zeit genug, dass SECOND ohne Sperre längst geschrieben wäre
+    assert sock.schreibreihenfolge == ["FIRST"]
+
+    sock.freigeben("FIRST")
+    erster.join(timeout=2.0)
+    for _ in range(200):
+        if "SECOND" in sock.schreibreihenfolge:
+            break
+        time.sleep(0.005)
+    else:
+        raise AssertionError("SECOND wurde nie geschrieben")
+    sock.freigeben("SECOND")
+    zweiter.join(timeout=2.0)
+
+    assert sock.schreibreihenfolge == ["FIRST", "SECOND"]
+    assert sorted(ergebnisse) == [("FIRST", ""), ("SECOND", "")]
+
+
+def test_send_realtime_does_not_wait_for_an_in_flight_conversation():
+    """Ein Not-Halt/Jog-Abbruch darf nicht so lange warten wie eine noch
+    laufende Unterhaltung — genau der Grund, warum send_realtime() die
+    Sperre bewusst nicht nimmt."""
+    sock = _BlockendesSocket()
+    channel = TelnetChannel("x", 23, 5.0, lambda address, timeout: sock)
+
+    haengend = threading.Thread(target=channel.send_line, args=("JOG",))
+    haengend.start()
+    for _ in range(200):
+        if "JOG" in sock.schreibreihenfolge:
+            break
+        time.sleep(0.005)
+    else:
+        raise AssertionError("JOG wurde nie geschrieben")
+
+    start = time.monotonic()
+    channel.send_realtime(0x85)
+    dauer = time.monotonic() - start
+    assert dauer < 0.5, f"send_realtime wartete {dauer:.2f}s auf die laufende Unterhaltung"
+    assert sock.schreibreihenfolge[-1] == "realtime:133"
+
+    sock.freigeben("JOG")
+    haengend.join(timeout=2.0)
 
 
 # ---------------------------------------------------------------------------
