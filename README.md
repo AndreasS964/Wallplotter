@@ -249,6 +249,10 @@ Erreichbar unter `http://<pc-ip>:8080`, auch vom Handy an der Wand. Drei Reiter:
 
 Auf dem Handy stapeln sich die Karten, das Jog-Pad steht dabei oben.
 
+Wer die Oberfläche auf einem Rechner ohne installiertes Python starten will,
+findet unter [docs/windows-paket.md](docs/windows-paket.md), wie sich daraus
+eine einzelne, eigenständige Datei für Windows bauen lässt.
+
 <table>
 <tr>
 <td width="70%"><img src="docs/images/ui-kalibrieren.png" alt="Reiter Kalibrieren"></td>
@@ -428,6 +432,7 @@ Alles gesetzt und verlinkt unter
 | [Kinematik-Auswertung](docs/kinematik.md) | gerechnete Zahlen für eine Beispielaufhängung |
 | [Projektidee](docs/projektidee.md) | Hardware, Mechanik, Entscheidungen |
 | [Software-Roadmap](docs/software-roadmap.md) | Stufenplan und UI-Architektur |
+| [Windows-Datei](docs/windows-paket.md) | Web-Oberfläche als eigenständige `.exe` bauen |
 | [FluidNC-Konfiguration](config/fluidnc-wallplotter.yaml) | die erzeugte `config.yaml` fürs Rodent-Board |
 
 ## Stand

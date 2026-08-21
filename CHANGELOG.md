@@ -1,5 +1,33 @@
 # Änderungen
 
+## Unveröffentlicht — die Web-Oberfläche als eigenständige Windows-Datei
+
+`wallplotter-web` lässt sich jetzt zu einer einzelnen `Wandplotter.exe`
+bauen — kein installiertes Python nötig, zum Doppelklicken auf einem
+anderen Rechner als dem Entwicklungsrechner. Von Hand über GitHub Actions
+(„Windows-Datei bauen" im Actions-Tab) oder lokal mit PyInstaller, siehe
+[docs/windows-paket.md](docs/windows-paket.md).
+
+Zwei Pakete brauchten dafür mehr als PyInstallers eingebaute Importsuche,
+beide erst am gebauten Programm sichtbar geworden, nicht am Quelltext:
+
+* **NiceGUI** liefert seine Oberfläche über eigene, nicht-Python-Dateien aus
+  (Vue/Quasar-Bausteine, Icons) — ohne die als `--add-data` blieb die
+  ausgelieferte Seite leer.
+* **vpype** entdeckt einen Teil seiner Kommandos über Paket-Metadaten zur
+  Laufzeit statt über normale `import`-Anweisungen; eine seiner
+  Abhängigkeiten (`tomli`) ist mit `mypyc` übersetzt und verweist auf ein
+  lose danebenliegendes Laufzeitmodul, dessen Name vom genauen Build abhängt
+  — `tools/wallplotter-web.spec` sucht ihn deshalb zur Bauzeit, statt ihn
+  fest einzutragen.
+
+Geprüft nicht nur am Bau, sondern an einem laufenden, gebauten Programm:
+Server gestartet, mit einem echten Browser (Playwright) eine SVG-Datei
+hochgeladen und bis zur GCode-Statistik durchgerechnet — auf Linux, weil
+hier kein Windows zur Verfügung steht, aber mit denselben PyInstaller-Flags,
+die der Windows-Bau in der CI verwendet. Genau dabei ist auch der oben
+verzeichnete Upload-Fehler aufgefallen.
+
 ## Unveröffentlicht — jeder echte Upload in der Web-UI schlug fehl
 
 `load_upload()` sprach noch die alte NiceGUI-Schnittstelle an
