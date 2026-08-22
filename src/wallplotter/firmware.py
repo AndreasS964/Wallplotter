@@ -246,6 +246,13 @@ class BoardProfile:
     den Schrittbetrieb sind die Register identisch."""
 
     r_sense_ohms: float = 0.022
+    r_sense_note: tuple[str, str] = (
+        "Bei einem V1.1-Board r_sense_ohms nachprüfen: BTTs rodent.yaml gilt für",
+        'V1.0 (0.022), im V1.1-Pinbild steht "RSENSE 75MR"',
+    )
+    """Zwei Kommentarzeilen zur Kopfzeile — je Board eigene, weil die
+    Unsicherheit (und was dagegen zu tun ist) je nach Revision anders liegt."""
+
     stepping_engine: str = "I2S_STREAM"
     shared_stepper_disable_pin: str = "NO_PIN"
 
@@ -390,7 +397,22 @@ RODENT_V1 = BoardProfile(
     ),
 )
 
-BOARDS: dict[str, BoardProfile] = {"rodent": RODENT_V1}
+RODENT_V1_1 = replace(
+    RODENT_V1,
+    key="rodent-v1.1",
+    name="BTT Rodent V1.1",
+    long_name="BIGTREETECH Rodent V1.1",
+    r_sense_ohms=0.075,
+    r_sense_note=(
+        'r_sense_ohms stammt aus dem V1.1-Pinbild ("RSENSE 75MR"), nicht aus',
+        "BTTs rodent.yaml (die kennt nur V1.0) — am eigenen Board nachmessen.",
+    ),
+)
+"""Wie RODENT_V1, aber r_sense_ohms aus dem V1.1-Pinbild statt BTTs V1.0-rodent.yaml.
+Der Wert steht nirgends offiziell für V1.1 bestätigt — am eigenen Board nachmessen,
+bevor die Motoren zum ersten Mal Strom sehen."""
+
+BOARDS: dict[str, BoardProfile] = {"rodent": RODENT_V1, "rodent-v1.1": RODENT_V1_1}
 
 
 def board_by_name(name: str) -> BoardProfile:
@@ -877,8 +899,8 @@ class FirmwareConfig:
             "# Vor dem ersten Einschalten durchgehen:",
             "#   1. Ankermaße: stehen die des eigenen Standorts drin? (siehe unten)",
             f"#   2. run_amps auf {self.run_amps:g} lassen ({self.motor_label}), nicht höher",
-            "#   3. Bei einem V1.1-Board r_sense_ohms nachprüfen: BTTs rodent.yaml gilt für",
-            f"#      V1.0 ({_fmt(self.board.r_sense_ohms)}), im V1.1-Pinbild steht \"RSENSE 75MR\"",
+            f"#   3. {self.board.r_sense_note[0]}",
+            f"#      {self.board.r_sense_note[1]}",
             "#   4. Nach dem Start ins Log sehen — ein einziges \"[MSG:ERR: Ignored key …]\"",
             "#      bedeutet ConfigAlarm, und dann fährt gar nichts",
             "#",
