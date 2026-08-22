@@ -150,6 +150,69 @@ def test_unknown_pattern_does_not_crash_the_ui(app):
     assert app.gcode is None
 
 
+def test_push_firmware_refuses_without_a_location(tmp_path):
+    from nicegui import ui
+
+    instance = WallplotterUI(ui, locations_path=str(tmp_path / "leer.json"))
+    instance.build_ui()
+    calls: list[str] = []
+    instance.client = lambda timeout=10.0: calls.append("client") or SimpleNamespace()
+    run_handler(instance, instance.push_firmware())
+    assert not calls   # gar nicht erst versucht, das Board zu erreichen
+
+
+def test_push_firmware_uploads_and_restarts_when_the_board_differs(app):
+    """Nachlesen nach dem Schreiben muss zurückgeben, was tatsächlich ankam —
+    sonst prüft die Gegenprobe gegen nichts, siehe :meth:`push_firmware`."""
+    board_state = {"text": "veraltete Fassung"}
+    uploaded: list[str] = []
+    restarted = []
+    stub = SimpleNamespace(
+        download_local=lambda: board_state["text"],
+        upload_local=lambda text: (uploaded.append(text), board_state.__setitem__("text", text)),
+        restart=lambda: restarted.append(True),
+    )
+    app.client = lambda timeout=10.0: stub
+
+    run_handler(app, app.push_firmware())
+
+    assert uploaded and "board: BTT Rodent V1.0" in uploaded[0]
+    assert restarted
+
+
+def test_push_firmware_skips_the_restart_when_the_board_already_matches(app):
+    from wallplotter.firmware import FirmwareConfig
+
+    current = FirmwareConfig.from_location(app.location).render()
+    uploaded: list[str] = []
+    stub = SimpleNamespace(
+        download_local=lambda: current,
+        upload_local=lambda text: uploaded.append(text),
+        restart=lambda: pytest.fail("kein Neustart nötig, wenn sich nichts geändert hat"),
+    )
+    app.client = lambda timeout=10.0: stub
+
+    run_handler(app, app.push_firmware())
+
+    assert not uploaded
+
+
+def test_push_firmware_picks_the_selected_board_profile(app):
+    board_state = {"text": "veraltete Fassung"}
+    uploaded: list[str] = []
+    stub = SimpleNamespace(
+        download_local=lambda: board_state["text"],
+        upload_local=lambda text: (uploaded.append(text), board_state.__setitem__("text", text)),
+        restart=lambda: None,
+    )
+    app.client = lambda timeout=10.0: stub
+    app.board_select.set_value("rodent-v1.1")
+
+    run_handler(app, app.push_firmware())
+
+    assert uploaded and "board: BTT Rodent V1.1" in uploaded[0]
+
+
 def test_create_app_returns_the_ui_module(tmp_path):
     ui = create_app(locations_path=str(tmp_path / "standorte.json"))
     assert hasattr(ui, "run")

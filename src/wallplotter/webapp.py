@@ -21,6 +21,8 @@ from dataclasses import replace
 from .calibration import CORNERS, AreaCalibration
 from .config import WALL_HEIGHT_MM, WALL_WIDTH_MM, FluidNCConfig, PlotConfig
 from .design import LICHT, quasar_colors, stylesheet
+from .firmware import BOARDS, FirmwareConfig, board_by_name
+from .firmware_cli import report as firmware_report
 from .gcode import geometry_to_gcode, layers_to_gcode, prepare_geometry, stats_for
 from .imaging import IMAGE_SUFFIXES, TECHNIQUES, ImagingError
 from .imaging import image_to_lines as image_lines
@@ -584,6 +586,50 @@ class WallplotterUI:
         )
         return True
 
+    async def push_firmware(self) -> None:
+        """``config.yaml`` aus dem aktiven Standort erzeugen und in den Flash schreiben.
+
+        Der Weg, der bisher nur über ``wallplotter-firmware push`` auf der
+        Kommandozeile ging — hier dieselben drei Schritte: prüfen, schreiben,
+        zurücklesen zur Gegenprobe. Ohne die Gegenprobe wäre ein Fehlschlag
+        nicht von einem Erfolg zu unterscheiden, siehe :meth:`send_plot`.
+        """
+        location = self.location
+        if location is None:
+            self.ui.notify("Erst einen Standort anlegen (Reiter Kalibrieren)", type="warning")
+            return
+        board = board_by_name(self.board_select.value or "rodent")
+        config = FirmwareConfig.from_location(location, base=FirmwareConfig(board=board))
+        text = config.render()
+        errors, lines = firmware_report(config, text)
+        if errors:
+            self.ui.notify("\n".join(lines), type="negative", multi_line=True, timeout=15000)
+            return
+
+        def work() -> str:
+            client = self.client(30.0)
+            try:
+                vorher = client.download_local()
+            except FluidNCError:
+                vorher = None
+            if vorher == text:
+                return "Auf dem Board steht bereits genau diese Datei."
+            client.upload_local(text)
+            zurueck = client.download_local()
+            if zurueck != text:
+                raise FluidNCError(
+                    "Board liefert nach dem Hochladen etwas anderes zurück — nicht neu gestartet."
+                )
+            client.restart()
+            return "Geschrieben, zurückgelesen und Board neu gestartet."
+
+        try:
+            result = await asyncio.to_thread(work)
+        except Exception as exc:  # FluidNCError oder ein Netzwerkfehler
+            self.ui.notify(f"Firmware-Übertragung fehlgeschlagen: {exc}", type="negative", multi_line=True)
+            return
+        self.ui.notify(result, type="positive")
+
     async def record_corner(self, corner: str) -> None:
         if self.location is None:
             self.ui.notify("Erst einen Standort anlegen", type="warning")
@@ -965,6 +1011,29 @@ class WallplotterUI:
 
     def _machine_panel(self) -> None:
         ui = self.ui
+        with ui.card().classes("w-96 max-lg:w-full"):
+            ui.label("Firmware").classes("wp-titel")
+            ui.label(
+                "Einmal je Board: config.yaml aus dem aktiven Standort erzeugen und in "
+                "den Flash schreiben. Das Board startet danach neu."
+            ).classes("text-xs text-grey")
+            self.board_select = (
+                ui.select(
+                    {key: BOARDS[key].name for key in sorted(BOARDS)},
+                    value="rodent",
+                )
+                .props("dense outlined")
+                .classes("w-full mt-2")
+                .tooltip(
+                    "Bei V1.1 vorher r_sense_ohms am eigenen Board nachmessen — der Wert "
+                    "stammt nur aus dem Handbuch-Pinbild, nicht aus einer Messung."
+                )
+            )
+            ui.button(
+                "config.yaml erzeugen & übertragen",
+                icon="memory",
+                on_click=self.push_firmware,
+            ).props("outline").classes("w-full mt-2")
         with ui.card().classes("w-96 max-lg:w-full"):
             ui.label("Laufender Job").classes("wp-titel")
             self.progress = ui.linear_progress(value=0, show_value=False).classes("w-full")
