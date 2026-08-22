@@ -768,11 +768,11 @@ class WallplotterUI:
         # Ein Aussehen für Website, Web-UI und Terminal — siehe wallplotter.design.
         ui.colors(**quasar_colors())
         ui.add_head_html(f"<style>{stylesheet()}</style>")
-        # Hell oder dunkel entscheidet das Gerät. An der Wand im Keller steht
-        # abends jemand mit dem Handy, tagsüber jemand am Rechner. `.auto()`
-        # ist nötig, damit auch Quasar umschaltet — sonst folgen nur die
-        # eigenen Farben dem System und die fertigen Bauteile bleiben hell.
-        ui.dark_mode(value=None)
+        # Vorgabe hell: Dunkel folgte bislang dem Gerät (`value=None`), aber am
+        # Bildschirm eines hell eingestellten Systems im Dunkelmodus zu landen,
+        # überraschte mehr, als es half. Wer abends mit dem Handy vor der Wand
+        # steht, schaltet über den Knopf im Kopf gezielt um.
+        self.dark_mode = ui.dark_mode(value=False)
 
         with ui.header().classes("items-center justify-between px-4 py-2"):
             with ui.row().classes("items-center gap-3"):
@@ -795,6 +795,10 @@ class WallplotterUI:
                 self.host_input = (
                     ui.input(value=self.host).props("dense outlined").classes("w-44 wp-zahl")
                 )
+                ui.button(
+                    icon="dark_mode",
+                    on_click=lambda: self.dark_mode.set_value(not self.dark_mode.value),
+                ).props("flat dense round").tooltip("Hell/Dunkel umschalten")
 
         with ui.tabs().classes("w-full") as tabs:
             tab_plot = ui.tab("Plotten", icon="brush")
