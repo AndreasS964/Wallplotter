@@ -31,10 +31,12 @@ from wallplotter import firmware_cli  # noqa: E402
 from wallplotter.config import FluidNCConfig  # noqa: E402
 from wallplotter.firmware import (  # noqa: E402
     RODENT_V1,
+    RODENT_V1_1,
     FirmwareConfig,
     FirmwareError,
     LaserSpindle,
     ServoSpindle,
+    board_by_name,
 )
 from wallplotter.fluidnc_schema import (  # noqa: E402
     ERROR,
@@ -126,6 +128,9 @@ def test_der_kopf_nennt_den_befehl_der_die_datei_wiederherstellt():
             ),
             id="aus-standort",
         ),
+        pytest.param(
+            dataclasses.replace(FirmwareConfig(), board=RODENT_V1_1), id="rodent-v1.1"
+        ),
     ],
 )
 def test_der_genannte_befehl_erzeugt_wirklich_dieselbe_datei(config, tmp_path, monkeypatch):
@@ -186,6 +191,9 @@ def test_der_genannte_befehl_erzeugt_wirklich_dieselbe_datei(config, tmp_path, m
             ),
             id="andere-grenzen",
         ),
+        pytest.param(
+            dataclasses.replace(FirmwareConfig(), board=RODENT_V1_1), id="rodent-v1.1"
+        ),
     ],
 )
 def test_jeder_erzeugte_schluessel_ist_fluidnc_bekannt(config):
@@ -202,6 +210,22 @@ def test_jeder_erzeugte_schluessel_ist_fluidnc_bekannt(config):
 def test_die_erzeugte_datei_hat_keine_ungeprueften_abschnitte():
     """Alles, was drinsteht, ist auch wirklich nachgeschlagen worden."""
     assert [str(f) for f in check_mapping(parsed(FirmwareConfig())) if f.level == INFO] == []
+
+
+def test_rodent_v1_1_hat_einen_eigenen_r_sense_und_hinweis():
+    """BTTs `rodent.yaml` kennt nur V1.0 — für V1.1 gilt ein anderer Wert.
+
+    Der Wert stammt aus dem Pinbild des Handbuchs, nicht aus BTTs eigener
+    `rodent.yaml`; die Kopfzeile muss das auch für Leser klarstellen, die
+    nur die generierte Datei sehen, nicht diesen Quelltext.
+    """
+    assert board_by_name("rodent-v1.1") is RODENT_V1_1
+    assert RODENT_V1_1.r_sense_ohms != RODENT_V1.r_sense_ohms
+
+    text = FirmwareConfig(board=RODENT_V1_1).render()
+    assert "board: BTT Rodent V1.1" in text
+    assert "V1.1-Pinbild" in text
+    assert "nachmessen" in text
 
 
 def test_der_pruefer_erkennt_den_schluessel_der_das_board_lahmgelegt_haette():

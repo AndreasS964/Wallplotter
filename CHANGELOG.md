@@ -1,5 +1,20 @@
 # Änderungen
 
+## Unveröffentlicht — Board-Profil für den Rodent V1.1
+
+Die Hardware ist da: ein BIGTREETECH Rodent **V1.1**. Bislang kannte
+`wallplotter-firmware` nur ein Board-Profil, mit `r_sense_ohms: 0.022` aus
+BTTs eigener `rodent.yaml` — die gilt laut Handbuch nur für V1.0, im
+V1.1-Pinbild steht stattdessen „RSENSE 75MR" (0,075 Ω).
+
+Neues Profil `--board rodent-v1.1` (`RODENT_V1_1` in `firmware.py`, per
+`dataclasses.replace` von `RODENT_V1` abgeleitet) trägt diesen Wert und einen
+eigenen Kopfzeilen-Hinweis. Ungeändert bleibt, was in
+[bauanleitung.md](docs/bauanleitung.md#elektronik) schon davor stand: Der
+Wert stammt aus dem Pinbild, nicht aus einer Messung — **am eigenen Board
+nachmessen, bevor die Motoren zum ersten Mal Strom sehen**, bevor die
+ausgelieferte `config.yaml` auf dieses Profil umgestellt wird.
+
 ## Unveröffentlicht — die Web-Oberfläche als eigenständige Windows-Datei
 
 `wallplotter-web` lässt sich jetzt zu einer einzelnen `Wandplotter.exe`
