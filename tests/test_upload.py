@@ -582,6 +582,72 @@ def test_channel_reports_an_unreachable_board():
         TelnetChannel("x", 23, 1.0, dead).send_line("G21")
 
 
+def test_ein_leseabriss_baut_den_kanal_beim_naechsten_mal_neu_auf():
+    """Ohne das darf ein einziger Verbindungsabbruch den Kanal für den Rest
+    des Prozesses lahmlegen — jede weitere Statusabfrage schlägt dann fehl,
+    ganz gleich, was am Netzwerk oder am Board repariert wird. Genau so sah es
+    in der Web-Oberfläche aus: sie hält ihren Client über `client()` am Leben."""
+
+    class Broken:
+        def settimeout(self, value: float) -> None:
+            pass
+
+        def sendall(self, data: bytes) -> None:
+            pass
+
+        def recv(self, size: int) -> bytes:
+            raise OSError("Connection reset by peer")
+
+        def close(self) -> None:
+            pass
+
+    good = FakeFluidNCSocket()
+    sockets = iter([Broken(), good])
+    opened = []
+
+    def opener(address, timeout=None):
+        sock = next(sockets)
+        opened.append(sock)
+        return sock
+
+    channel = TelnetChannel("x", 23, 1.0, opener)
+
+    with pytest.raises(FluidNCError, match="abgerissen"):
+        channel.status()
+
+    assert channel.status().state == "Idle"
+    assert len(opened) == 2   # zweiter Versuch verbindet neu, statt den toten Socket zu recyceln
+
+
+def test_ein_schreibabriss_baut_den_kanal_beim_naechsten_mal_neu_auf():
+    class Broken:
+        def settimeout(self, value: float) -> None:
+            pass
+
+        def sendall(self, data: bytes) -> None:
+            raise OSError("Broken pipe")
+
+        def recv(self, size: int) -> bytes:
+            raise TimeoutError("nichts zu lesen")
+
+        def close(self) -> None:
+            pass
+
+    good = FakeFluidNCSocket()
+    sockets = iter([Broken(), good])
+
+    def opener(address, timeout=None):
+        return next(sockets)
+
+    channel = TelnetChannel("x", 23, 1.0, opener)
+
+    with pytest.raises(FluidNCError, match="Senden an"):
+        channel.send_line("G21")
+
+    assert channel.send_line("G21") == ""
+    assert good.lines == ["G21"]
+
+
 def test_channel_closes_cleanly():
     sock = FakeFluidNCSocket()
     with TelnetChannel("x", 23, 5.0, opener_for(sock)):

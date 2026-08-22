@@ -287,6 +287,15 @@ class TelnetChannel:
                 return None
             except OSError as exc:
                 self._buffer = b""
+                # Der Socket ist jetzt kaputt, nicht nur gerade langsam — anders
+                # als beim TimeoutError oben, wo der nächste recv() noch etwas
+                # bringen kann. Ohne close() bliebe er in self._socket stehen,
+                # und connect() gäbe ihn immer wieder zurück, statt neu zu
+                # verbinden: Ein einziger Verbindungsabbruch legte den Kanal
+                # dann für den Rest des Prozesses lahm — jede Statusabfrage
+                # danach hätte "antwortet nicht" gemeldet, ganz gleich, was am
+                # Netzwerk oder am Board repariert wurde.
+                self.close()
                 raise FluidNCError(f"Kanal zu {self.host} abgerissen: {exc}") from exc
             if not chunk:
                 self._buffer = buffer
@@ -299,8 +308,15 @@ class TelnetChannel:
     def _write(self, payload: bytes) -> None:
         sock = self.connect()
         with _as_fluidnc_error(f"Senden an {self.host} fehlgeschlagen"):
-            sock.settimeout(self.timeout_s)
-            sock.sendall(payload)
+            try:
+                sock.settimeout(self.timeout_s)
+                sock.sendall(payload)
+            except OSError:
+                # Derselbe Grund wie in _read_line: ein Schreibabriss macht den
+                # Socket unbrauchbar, und ohne close() reichte connect() ihn
+                # beim nächsten Versuch trotzdem wieder heraus.
+                self.close()
+                raise
 
     def send_line(self, line: str, expect_ok: bool = True) -> str:
         """Eine Zeile senden und die Antwort bis ``ok``/``error:`` einsammeln.
